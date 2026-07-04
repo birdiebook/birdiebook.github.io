@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hålkarta">
+<title>SG Hålkarta</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #map { position:absolute; inset:0; background:var(--bg); }
+  .leaflet-container { background:var(--bg); }
+
+  /* topp: hål-väljare + green-avstånd */
+  #top { position:absolute; top:0; left:0; right:0; z-index:1000;
+    padding:env(safe-area-inset-top) 10px 8px; background:linear-gradient(#0c2e22ee,#0c2e2200); }
+  .holebar { display:flex; align-items:center; gap:10px; }
+  .holebar button { background:var(--card); color:var(--ink); border:1px solid var(--line);
+    border-radius:10px; width:40px; height:40px; font-size:20px; }
+  .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
+  .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
+  .greens { display:flex; gap:8px; margin-top:8px; }
+  .greens .g { flex:1; background:var(--card)cc; border:1px solid var(--line);
+    border-radius:12px; padding:8px 4px; text-align:center; }
+  .greens .g b { font-size:22px; display:block; }
+  .greens .g span { color:var(--dim); font-size:12px; }
+
+  /* botten: tap-mät + status */
+  #bottom { position:absolute; left:0; right:0; bottom:0; z-index:1000;
+    padding:8px 10px calc(env(safe-area-inset-bottom) + 8px);
+    background:linear-gradient(#0c2e2200,#0c2e22ee); }
+  #measure { background:var(--card)ee; border:1px solid var(--line); border-radius:12px;
+    padding:10px 12px; font-size:15px; min-height:44px; display:flex; align-items:center;
+    justify-content:space-between; gap:10px; }
+  #measure .big { font-size:20px; font-weight:700; }
+  #measure.hidden { display:none; }
+  .row { display:flex; gap:8px; margin-top:8px; }
+  .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
+    color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:11px;
+    font-size:14px; font-weight:600; }
+  .gpsdot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e26a5a; }
+  .gpsdot.ok { background:var(--accent); }
+  .hint { color:var(--dim); font-size:12px; text-align:center; margin-top:6px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="top">
+  <div class="holebar">
+    <button id="prev">◀</button>
+    <div class="name" id="holeName">Söker hål …</div>
+    <button id="next">▶</button>
+  </div>
+  <div class="greens">
+    <div class="g"><b id="dFront">–</b><span>Fram</span></div>
+    <div class="g"><b id="dCenter">–</b><span>Mitt</span></div>
+    <div class="g"><b id="dBack">–</b><span>Bak</span></div>
+  </div>
+</div>
+
+<div id="bottom">
+  <div id="measure" class="hidden">
+    <span><span class="big" id="mTo">–</span> m dit</span>
+    <span style="color:var(--dim)"><span id="mRem">–</span> m kvar till green</span>
+  </div>
+  <div class="row">
+    <button id="here">📍 Centrera</button>
+    <a href="./index.html">◀ Logga slag</a>
+  </div>
+  <div class="hint"><span class="gpsdot" id="gdot"></span> <span id="gtxt">GPS söker …</span>
+    · tryck på kartan för att mäta</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="./coursemap.js"></script>
+<script>
+"use strict";
+const R = 6371000;
+const rad = d => d * Math.PI / 180;
+function hav(a, b) {              // [lat,lon] par → meter
+  const dphi = rad(b[0]-a[0]), dl = rad(b[1]-a[1]);
+  const s = Math.sin(dphi/2)**2 + Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+const SS = CourseMap.SURFACE_STYLE;
+
+let HOLES = [], hi = 0, pos = null, autoPicked = false;
+let map, layers = L.layerGroup(), meMarker = null, tapMarker = null, tapLine = null;
+
+function fmt(m) { return m == null ? "–" : Math.round(m); }
+
+function drawHole() {
+  layers.clearLayers();
+  const h = HOLES[hi];
+  document.getElementById("holeName").innerHTML =
+    `Hål ${h.hole} <small>${h.loop} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
+
+  // hål-linje
+  if (h.line && h.line.length > 1)
+    L.polyline(h.line, { color: "#e8f5ec", weight: 2, dashArray: "5,6", opacity: .7 }).addTo(layers);
+  // hinder
+  for (const hz of h.hazards || []) {
+    const st = hz.type === "water" ? SS.water_hazard : SS.bunker;
+    L.polygon(hz.poly, { color: st.color, weight: 1, fillColor: st.fill, fillOpacity: .5, interactive: false }).addTo(layers);
+  }
+  // green
+  if (h.green && h.green.length)
+    L.polygon(h.green, { color: SS.green.color, weight: 2, fillColor: SS.green.fill, fillOpacity: .45, interactive: false }).addTo(layers);
+  // pin
+  L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
+
+  // passa vyn till hålet (green + tees + linje)
+  const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
+  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  clearTap();
+  updateDistances();
+}
+
+function nearestFarthest(from, ring) {   // min/max avstånd till en polygon-ring
+  let near = Infinity, far = 0;
+  for (const p of ring) { const d = hav(from, p); if (d < near) near = d; if (d > far) far = d; }
+  return { near, far };
+}
+
+function updateDistances() {
+  const h = HOLES[hi];
+  const F = document.getElementById("dFront"), C = document.getElementById("dCenter"), B = document.getElementById("dBack");
+  if (!pos) { F.textContent = C.textContent = B.textContent = "–"; return; }
+  if (h.green && h.green.length) {
+    const nf = nearestFarthest(pos, h.green);
+    F.textContent = fmt(nf.near); B.textContent = fmt(nf.far);
+  } else { F.textContent = B.textContent = "–"; }
+  C.textContent = fmt(hav(pos, h.green_center));
+}
+
+function setPos(lat, lon, acc) {
+  pos = [lat, lon];
+  const g = document.getElementById("gdot"), t = document.getElementById("gtxt");
+  g.className = "gpsdot" + (acc <= 15 ? " ok" : "");
+  t.textContent = `GPS ±${Math.round(acc)} m`;
+  if (!meMarker) meMarker = L.circleMarker(pos, { radius: 7, color: "#fff", weight: 2, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(map);
+  else meMarker.setLatLng(pos);
+  if (!autoPicked) { autoPicked = true; pickNearestHole(); }
+  updateDistances();
+  if (tapMarker) updateTap(tapMarker.getLatLng());
+}
+
+function pickNearestHole() {
+  if (!pos) return;
+  let best = 0, bd = Infinity;
+  HOLES.forEach((h, i) => { const d = hav(pos, h.green_center); if (d < bd) { bd = d; best = i; } });
+  hi = best; drawHole();
+}
+
+function clearTap() {
+  if (tapMarker) { map.removeLayer(tapMarker); tapMarker = null; }
+  if (tapLine) { map.removeLayer(tapLine); tapLine = null; }
+  document.getElementById("measure").classList.add("hidden");
+}
+function updateTap(latlng) {
+  const target = [latlng.lat, latlng.lng];
+  document.getElementById("measure").classList.remove("hidden");
+  document.getElementById("mTo").textContent = pos ? fmt(hav(pos, target)) : "–";
+  document.getElementById("mRem").textContent = fmt(hav(target, HOLES[hi].green_center));
+  if (tapLine) map.removeLayer(tapLine);
+  if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
+}
+function onTap(e) {
+  if (tapMarker) tapMarker.setLatLng(e.latlng);
+  else tapMarker = L.marker(e.latlng).addTo(map);
+  updateTap(e.latlng);
+}
+
+async function init() {
+  map = L.map("map", { zoomControl: false, attributionControl: false });
+  CourseMap.esriLayer().addTo(map);
+  layers.addTo(map);
+  map.setView([55.618, 13.07], 15);
+  map.on("click", onTap);
+  document.getElementById("prev").onclick = () => { hi = (hi - 1 + HOLES.length) % HOLES.length; drawHole(); };
+  document.getElementById("next").onclick = () => { hi = (hi + 1) % HOLES.length; drawHole(); };
+  document.getElementById("here").onclick = () => { if (pos) map.panTo(pos); };
+
+  try {
+    const data = await (await fetch("./data/burlov.json")).json();
+    HOLES = data.holes;
+    drawHole();
+  } catch (e) {
+    document.getElementById("holeName").textContent = "Kunde ej ladda bandata";
+    return;
+  }
+  if ("geolocation" in navigator)
+    navigator.geolocation.watchPosition(
+      p => setPos(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+      () => {}, { enableHighAccuracy: true, maximumAge: 0 });
+}
+init();
+</script>
+</body>
+</html>
