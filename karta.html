@@ -20,6 +20,8 @@
   /* topp: hål-väljare + green-avstånd */
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
     padding:env(safe-area-inset-top) 10px 8px; background:linear-gradient(#0c2e22ee,#0c2e2200); }
+  #roundSel { width:100%; margin-bottom:8px; padding:9px 10px; border-radius:10px;
+    border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:15px; font-weight:600; }
   .holebar { display:flex; align-items:center; gap:10px; }
   .holebar button { background:var(--card); color:var(--ink); border:1px solid var(--line);
     border-radius:10px; width:40px; height:40px; font-size:20px; }
@@ -53,6 +55,11 @@
 <div id="map"></div>
 
 <div id="top">
+  <select id="roundSel">
+    <option value="1-18">Spelar 1–18</option>
+    <option value="10-27">Spelar 10–27</option>
+    <option value="19-9">Spelar 19–9</option>
+  </select>
   <div class="holebar">
     <button id="prev">◀</button>
     <div class="name" id="holeName">Söker hål …</div>
@@ -91,16 +98,40 @@ function hav(a, b) {              // [lat,lon] par → meter
 }
 const SS = CourseMap.SURFACE_STYLE;
 
-let HOLES = [], hi = 0, pos = null, autoPicked = false;
+// Fast global hålnumrering — varje fysiskt hål har ett fast nummer även om
+// vilken 18-hålskombo man spelar roterar: Blå 1–9, Gul 10–18, Svart 19–27.
+// En runda = två slingor i följd (19–9 varvar runt). Byt här om klubben
+// numrerar slingorna annorlunda.
+const GLOBAL_BASE = { "Blue Course": 0, "Yellow Course": 9, "Black Course": 18 };
+const LOOP_SHORT = { "Blue Course": "Blå", "Yellow Course": "Gul", "Black Course": "Svart" };
+const ROUND_SEQ = {
+  "1-18":  Array.from({ length: 18 }, (_, i) => i + 1),
+  "10-27": Array.from({ length: 18 }, (_, i) => i + 10),
+  "19-9":  [...Array.from({ length: 9 }, (_, i) => i + 19),
+            ...Array.from({ length: 9 }, (_, i) => i + 1)],
+};
+
+let HOLES = [], byGlobal = {}, ROUND = [], roundName = "1-18";
+let hi = 0, pos = null, autoPicked = false;
+
+function setRound(name) {
+  roundName = name;
+  const sel = document.getElementById("roundSel");
+  if (sel && sel.value !== name) sel.value = name;
+  ROUND = ROUND_SEQ[name].map(g => byGlobal[g]).filter(Boolean);
+  hi = 0;
+  if (pos) pickNearestHole(); else drawHole();
+}
 let map, layers = L.layerGroup(), meMarker = null, tapMarker = null, tapLine = null;
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
 
 function drawHole() {
   layers.clearLayers();
-  const h = HOLES[hi];
+  const h = ROUND[hi];
+  if (!h) return;
   document.getElementById("holeName").innerHTML =
-    `Hål ${h.hole} <small>${h.loop} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
+    `Hål ${h.global} <small>${LOOP_SHORT[h.loop] || h.loop} ${h.hole} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
 
   // hål-linje
   if (h.line && h.line.length > 1)
@@ -130,7 +161,8 @@ function nearestFarthest(from, ring) {   // min/max avstånd till en polygon-rin
 }
 
 function updateDistances() {
-  const h = HOLES[hi];
+  const h = ROUND[hi];
+  if (!h) return;
   const F = document.getElementById("dFront"), C = document.getElementById("dCenter"), B = document.getElementById("dBack");
   if (!pos) { F.textContent = C.textContent = B.textContent = "–"; return; }
   if (h.green && h.green.length) {
@@ -153,9 +185,9 @@ function setPos(lat, lon, acc) {
 }
 
 function pickNearestHole() {
-  if (!pos) return;
+  if (!pos || !ROUND.length) return;
   let best = 0, bd = Infinity;
-  HOLES.forEach((h, i) => { const d = hav(pos, h.green_center); if (d < bd) { bd = d; best = i; } });
+  ROUND.forEach((h, i) => { const d = hav(pos, h.green_center); if (d < bd) { bd = d; best = i; } });
   hi = best; drawHole();
 }
 
@@ -168,7 +200,7 @@ function updateTap(latlng) {
   const target = [latlng.lat, latlng.lng];
   document.getElementById("measure").classList.remove("hidden");
   document.getElementById("mTo").textContent = pos ? fmt(hav(pos, target)) : "–";
-  document.getElementById("mRem").textContent = fmt(hav(target, HOLES[hi].green_center));
+  document.getElementById("mRem").textContent = fmt(hav(target, ROUND[hi].green_center));
   if (tapLine) map.removeLayer(tapLine);
   if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
 }
@@ -184,14 +216,16 @@ async function init() {
   layers.addTo(map);
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
-  document.getElementById("prev").onclick = () => { hi = (hi - 1 + HOLES.length) % HOLES.length; drawHole(); };
-  document.getElementById("next").onclick = () => { hi = (hi + 1) % HOLES.length; drawHole(); };
+  document.getElementById("prev").onclick = () => { hi = (hi - 1 + ROUND.length) % ROUND.length; drawHole(); };
+  document.getElementById("next").onclick = () => { hi = (hi + 1) % ROUND.length; drawHole(); };
   document.getElementById("here").onclick = () => { if (pos) map.panTo(pos); };
+  document.getElementById("roundSel").onchange = e => setRound(e.target.value);
 
   try {
     const data = await (await fetch("./data/burlov.json")).json();
     HOLES = data.holes;
-    drawHole();
+    for (const h of HOLES) { h.global = GLOBAL_BASE[h.loop] + h.hole; byGlobal[h.global] = h; }
+    setRound(roundName);
   } catch (e) {
     document.getElementById("holeName").textContent = "Kunde ej ladda bandata";
     return;

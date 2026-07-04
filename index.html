@@ -257,6 +257,8 @@ function renderSetup() {
       <label>Bana</label>
       <input type="text" id="course" value="${esc(S.course)}">
       <button class="big" id="start">Starta runda</button>
+      <div style="text-align:center;margin-top:10px">
+        <a class="link" href="./karta.html">🗺 Öppna hålkarta &amp; avstånd</a></div>
     </div>
     <div class="card hint">
       <b>Så funkar det</b><br>
@@ -302,6 +304,8 @@ function renderHole() {
       <button id="next2">▶</button>
     </div>
     <div style="text-align:center"><span id="gpschip">${gpsChipHtml()}</span></div>
+    <div style="text-align:center;margin-top:6px">
+      <a class="link" href="./karta.html">🗺 Hålkarta &amp; avstånd</a></div>
 
     <div class="card">
       <button class="shotbtn" id="shot" ${busy ? "disabled" : ""}>
