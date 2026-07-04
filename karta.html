@@ -30,9 +30,8 @@
     border-radius:10px; padding:5px 4px; text-align:center; white-space:nowrap; }
   .greens .g b { font-size:17px; }
   .greens .g span { color:var(--dim); font-size:11px; margin-left:4px; }
-  #wind { margin-top:6px; background:var(--card)cc; border:1px solid var(--line);
-    border-radius:10px; padding:6px 10px; font-size:13px; text-align:center; white-space:nowrap;
-    overflow:hidden; text-overflow:ellipsis; }
+  #wind { margin-top:8px; background:var(--card)cc; border:1px solid var(--line);
+    border-radius:12px; padding:8px 12px; font-size:14px; text-align:center; }
   #wind b { color:var(--ink); }
 
   /* botten: tap-mät + status */
@@ -67,13 +66,13 @@
     <div class="g"><b id="dCenter">–</b><span>Mitt</span></div>
     <div class="g"><b id="dBack">–</b><span>Bak</span></div>
   </div>
-  <div id="wind">🌬 <span id="windTxt">vind …</span></div>
+  <div id="wind"><span id="windTxt">vind …</span></div>
 </div>
 
 <div id="bottom">
   <div id="measure" class="hidden">
-    <span><span class="big" id="mTo">–</span> m dit</span>
-    <span style="color:var(--dim)"><span id="mRem">–</span> m kvar till green</span>
+    <span><span class="big" id="mTo">–</span> m · spelas <b id="mPlay">–</b></span>
+    <span style="color:var(--dim)"><span id="mRem">–</span> m kvar</span>
   </div>
   <div class="row">
     <button id="here">📍 Centrera</button>
@@ -179,23 +178,58 @@ async function fetchPlayerElev() {
   updateWind();
 }
 
+// "spelas som"-avstånd till en punkt: geometriskt + vind (range medelvind–by) + ev. slope.
+// Returnerar null om vind eller position saknas. Byn antas komma från samma håll som
+// medelvinden → along skalas med gust/medel.
+function playAsRange(target, slope) {
+  if (!pos || !WIND) return null;
+  const D = hav(pos, target);
+  const rw = relWind(bearing(pos, target), WIND.ms, WIND.dir);
+  const windShift = -windAlongShift(rw.along, D);
+  const gustAlong = (WIND.gust != null && WIND.ms > 0) ? rw.along * WIND.gust / WIND.ms : rw.along;
+  const gustShift = -windAlongShift(gustAlong, D);
+  slope = slope || 0;
+  const lo = Math.round(D + Math.min(windShift, gustShift) + slope);
+  const hi = Math.round(D + Math.max(windShift, gustShift) + slope);
+  const str = (hi - lo >= GUST_SPAN_MIN_M) ? `${lo}–${hi} m` : `${Math.round(D + windShift + slope)} m`;
+  return { str, label: rw.label, side: rw.side };
+}
+
 function updateWind() {
   const el = document.getElementById("windTxt");
   if (!WIND) { el.textContent = "vind ej tillgänglig"; return; }
-  // En kompakt rad: spelar-som-avstånd först, sedan kort vindnot.
+  let s = `${WIND.ms.toFixed(1)} m/s från ${compass(WIND.dir)}`;
+  if (WIND.gust != null) s += ` (by ${WIND.gust.toFixed(0)})`;
   if (pos && ROUND[hi]) {
     const h = ROUND[hi];
     const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
+    s += ` · <b>${rw.label} ${Math.abs(rw.along).toFixed(1)}</b>`;
+    if (rw.side) s += ` · sid ${rw.cross.toFixed(1)} ${rw.side === "H" ? "→H" : "←V"}`;
     const D = hav(pos, h.green_center);
+    // + = spelar LÄNGRE (motsatt tecken mot flygskiftet). Byn antas komma
+    // från samma håll som medelvinden → along skalas med gust/medel.
     const windShift = -windAlongShift(rw.along, D);
-    let slope = 0;
-    if (h.green_elev_m != null && PLAYER_ELEV != null) slope = h.green_elev_m - PLAYER_ELEV;
-    const playAs = Math.round(D + windShift + slope);
-    const side = rw.side ? " " + (rw.side === "H" ? "→H" : "←V") : "";
-    el.innerHTML = `spelar <b>${playAs} m</b> · ${WIND.ms.toFixed(1)} m/s ${rw.label}${side}`;
-    return;
+    const gustAlong = (WIND.gust != null && WIND.ms > 0)
+      ? rw.along * WIND.gust / WIND.ms : rw.along;
+    const gustShift = -windAlongShift(gustAlong, D);
+    let slope = 0, slopeTxt = "";
+    if (h.green_elev_m != null && PLAYER_ELEV != null) {
+      slope = h.green_elev_m - PLAYER_ELEV;          // uppför positiv (+distans)
+      const r = Math.round(slope);
+      if (r !== 0) slopeTxt = `, ${r > 0 ? "uppför +" : "nedför −"}${Math.abs(r)}`;
+    }
+    const sgn = v => `${v >= 0 ? "+" : ""}${Math.round(v)}`;
+    const pLo = Math.round(D + Math.min(windShift, gustShift) + slope);
+    const pHi = Math.round(D + Math.max(windShift, gustShift) + slope);
+    if (pHi - pLo >= GUST_SPAN_MIN_M) {   // byig vind → spann i stället för punkt
+      s += `<br>→ spelar som <b>${pLo}–${pHi} m</b> `
+         + `(vind ${sgn(windShift)}/${sgn(gustShift)} i byar${slopeTxt})`;
+    } else {
+      s += `<br>→ spelar som <b>${Math.round(D + windShift + slope)} m</b> `
+         + `(vind ${sgn(windShift)}${slopeTxt})`;
+    }
   }
-  el.innerHTML = `${WIND.ms.toFixed(1)} m/s från ${compass(WIND.dir)}`;
+  el.innerHTML = s;
 }
 
 // riktning tee→green för hålet (grader 0=N), null om data saknas
@@ -290,6 +324,8 @@ function updateTap(latlng) {
   document.getElementById("measure").classList.remove("hidden");
   document.getElementById("mTo").textContent = pos ? fmt(hav(pos, target)) : "–";
   document.getElementById("mRem").textContent = fmt(hav(target, ROUND[hi].green_center));
+  const pa = playAsRange(target, 0);   // vind (range medel–by); slope okänd för fri punkt
+  document.getElementById("mPlay").textContent = pa ? pa.str : "–";
   if (tapLine) map.removeLayer(tapLine);
   if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
 }
