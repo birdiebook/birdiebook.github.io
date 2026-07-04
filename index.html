@@ -210,6 +210,28 @@ async function doCopy(btn) {
     btn.textContent = "Kopierad ✓";
   } catch (e) { alert("Kunde inte kopiera — använd Ladda ner i stället."); }
 }
+async function doSend(btn) {
+  const base = (localStorage.getItem("sg_base") || "").trim().replace(/\/+$/, "");
+  const token = (localStorage.getItem("sg_token") || "").trim();
+  if (!base || !token) { alert("Ange analys-adress och din token först (⚙ Analys-koppling)."); return; }
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Skickar …";
+  try {
+    const r = await fetch(base + "/api/rounds/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Auth-Token": token },
+      body: JSON.stringify(exportData()),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("Kunde inte importera: " + (d.detail || r.status)); btn.textContent = old; btn.disabled = false; return; }
+    let msg = `✓ Skickad! ${d.shots} slag, score ${d.total_score ?? "–"}.`;
+    if (d.warnings && d.warnings.length) msg += "\n\n⚠ " + d.warnings.join("\n");
+    alert(msg);
+    btn.textContent = "Skickad ✓";
+  } catch (e) {
+    alert("Nådde inte analys-servern — är datorn och tunneln igång? (" + e.message + ")");
+    btn.textContent = old; btn.disabled = false;
+  }
+}
 
 /* ---------- vyer ---------- */
 const app = document.getElementById("app");
@@ -384,19 +406,42 @@ function renderSummary() {
       ${noGreen.length ? `<div class="banner">Hål ${noGreen.join(", ")} saknar green-position — går att importera, men första-puttens längd uppskattas.</div>` : ""}
     </div>
     <div class="card">
-      <button class="big" id="share">📤 Dela filen</button>
+      <button class="big" id="send">📊 Skicka till analys</button>
+      <button class="big" id="share" style="margin-top:10px;background:#1a4c38;color:var(--ink)">📤 Dela filen</button>
       <div class="row" style="margin-top:10px">
         <button class="ghost" id="dl">Ladda ner</button>
         <button class="ghost" id="copy">Kopiera</button>
       </div>
-      <div class="hint" style="margin-top:10px">Skicka JSON-filen till den som har
-        SG-appen (importeras med <i>import_mobile_round.py</i>).</div>
+      <details style="margin-top:12px" ${localStorage.getItem("sg_base") ? "" : "open"}>
+        <summary class="hint" style="cursor:pointer">⚙ Analys-koppling (URL + token)</summary>
+        <input id="cfgBase" placeholder="https://…ts.net"
+          value="${esc(localStorage.getItem("sg_base") || "")}"
+          style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:15px">
+        <input id="cfgToken" placeholder="din token" type="password"
+          value="${esc(localStorage.getItem("sg_token") || "")}"
+          style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:15px">
+        <div class="row" style="margin-top:8px">
+          <button class="ghost" id="cfgSave">Spara koppling</button>
+          <a class="ghost" id="viewLink" href="${esc(localStorage.getItem("sg_base") || "#")}"
+             target="_blank" rel="noopener" style="text-align:center;text-decoration:none;line-height:1.6">→ Se din analys</a>
+        </div>
+        <div class="hint" style="margin-top:8px">Adressen får du av den som kör SG-appen;
+          token är din personliga. Kräver att datorn/tunneln är igång.</div>
+      </details>
     </div>
     <button class="big" id="back" style="background:#1a4c38;color:var(--ink)">◀ Fortsätt runda</button>
     <div style="text-align:center"><button class="link" id="new">Ny runda (rensar allt)</button></div>`;
+  document.getElementById("send").onclick = e => { stashLast(); doSend(e.currentTarget); };
   document.getElementById("share").onclick = () => { stashLast(); doShare(); };
   document.getElementById("dl").onclick = () => { stashLast(); doDownload(); };
   document.getElementById("copy").onclick = e => { stashLast(); doCopy(e.target); };
+  document.getElementById("cfgSave").onclick = () => {
+    const b = document.getElementById("cfgBase").value.trim().replace(/\/+$/, "");
+    const t = document.getElementById("cfgToken").value.trim();
+    localStorage.setItem("sg_base", b); localStorage.setItem("sg_token", t);
+    const vl = document.getElementById("viewLink"); if (vl) vl.href = b || "#";
+    alert("Kopplingen sparad.");
+  };
   document.getElementById("back").onclick = () => { S.view = "hole"; S.endedAt = null; save(); render(); };
   document.getElementById("new").onclick = () => {
     if (!confirm("Rensa rundan och börja om? Se till att filen är delad/nedladdad först.")) return;
