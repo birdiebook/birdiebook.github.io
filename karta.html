@@ -24,7 +24,7 @@
     border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:15px; font-weight:600; }
   .holebar { display:flex; align-items:center; gap:10px; }
   .holebar button { background:var(--card); color:var(--ink); border:1px solid var(--line);
-    border-radius:10px; width:40px; height:40px; font-size:20px; }
+    border-radius:12px; width:64px; height:52px; font-size:26px; }
   .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
   .greens { display:flex; gap:8px; margin-top:8px; }
@@ -83,6 +83,8 @@
   </div>
   <div class="row">
     <button id="here">📍 Centrera</button>
+    <button id="orient">⛳ Hål upp</button>
+    <button id="north">🧭 Norr</button>
     <a href="./index.html">◀ Logga slag</a>
   </div>
   <div class="hint"><span class="gpsdot" id="gdot"></span> <span id="gtxt">GPS söker …</span>
@@ -90,6 +92,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <script src="./coursemap.js"></script>
 <script>
 "use strict";
@@ -198,6 +201,19 @@ function updateWind() {
   el.innerHTML = s;
 }
 
+// riktning tee→green för hålet (grader 0=N), null om data saknas
+function holeHeading(h) {
+  const a = (h.line && h.line.length > 1) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+  const b = h.green_center || h.pin;
+  return (a && b) ? bearing(a, b) : null;
+}
+function orientToHole() {
+  const h = ROUND[hi];
+  const hd = h ? holeHeading(h) : null;
+  if (hd != null) map.setBearing(-hd);   // negativt = riktningen pekar uppåt
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -219,7 +235,8 @@ function drawHole() {
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
 
-  // passa vyn till hålet (green + tees + linje)
+  // rotera så hålet pekar uppåt, passa sedan vyn (green + tees + linje)
+  orientToHole();
   const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
   if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
   clearTap();
@@ -286,7 +303,8 @@ function onTap(e) {
 }
 
 async function init() {
-  map = L.map("map", { zoomControl: false, attributionControl: false });
+  map = L.map("map", { zoomControl: false, attributionControl: false,
+    rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
   CourseMap.esriLayer().addTo(map);
   layers.addTo(map);
   map.setView([55.618, 13.07], 15);
@@ -294,6 +312,8 @@ async function init() {
   document.getElementById("prev").onclick = () => { hi = (hi - 1 + ROUND.length) % ROUND.length; drawHole(); };
   document.getElementById("next").onclick = () => { hi = (hi + 1) % ROUND.length; drawHole(); };
   document.getElementById("here").onclick = () => { if (pos) map.panTo(pos); };
+  document.getElementById("north").onclick = () => map.setBearing(0);
+  document.getElementById("orient").onclick = orientToHole;
   document.getElementById("roundSel").onchange = e => setRound(e.target.value);
 
   try {
