@@ -149,9 +149,17 @@ function relWind(shotBearing, ms, dirDeg) {  // vinden kommer FRÅN dirDeg
            label: along >= 0 ? "medvind" : "motvind" };
 }
 
-// "Spelar som" — meter per m/s vid 230 m, skalas med avståndet (samma modell som
-// planner._wind_shift). Motvind förlänger mer än medvind förkortar. TUNABLE.
-const WIND_HEAD = 2.4, WIND_TAIL = 1.4, WIND_REF = 230;
+// "Spelar som" — samma modell som planner.wind_along_shift (håll dem i synk):
+// motvind PROGRESSIV (lin + kvadrat — mer luftfart → mer lyft/drag, bollen
+// ballongar), medvind linjär. TrackMan-kalibrerad vid 230 m, skalas med avståndet.
+const WIND_HEAD_LIN = 2.0, WIND_HEAD_QUAD = 0.15, WIND_TAIL = 1.6, WIND_REF = 230;
+const GUST_SPAN_MIN_M = 3;   // visa spann först när byn flyttar ≥ så här många m
+function windAlongShift(alongMs, shotLen) {  // + = bollen flyger längre
+  const sc = shotLen / WIND_REF;
+  if (alongMs >= 0) return WIND_TAIL * alongMs * sc;
+  const w = -alongMs;
+  return -(WIND_HEAD_LIN * w + WIND_HEAD_QUAD * w * w) * sc;
+}
 
 let WIND = null;   // {ms, dir, gust}
 async function fetchWind() {
@@ -188,15 +196,28 @@ function updateWind() {
     s += ` · <b>${rw.label} ${Math.abs(rw.along).toFixed(1)}</b>`;
     if (rw.side) s += ` · sid ${rw.cross.toFixed(1)} ${rw.side === "H" ? "→H" : "←V"}`;
     const D = hav(pos, h.green_center);
-    const windShift = (rw.along < 0 ? WIND_HEAD * -rw.along : -WIND_TAIL * rw.along) * (D / WIND_REF);
+    // + = spelar LÄNGRE (motsatt tecken mot flygskiftet). Byn antas komma
+    // från samma håll som medelvinden → along skalas med gust/medel.
+    const windShift = -windAlongShift(rw.along, D);
+    const gustAlong = (WIND.gust != null && WIND.ms > 0)
+      ? rw.along * WIND.gust / WIND.ms : rw.along;
+    const gustShift = -windAlongShift(gustAlong, D);
     let slope = 0, slopeTxt = "";
     if (h.green_elev_m != null && PLAYER_ELEV != null) {
       slope = h.green_elev_m - PLAYER_ELEV;          // uppför positiv (+distans)
       const r = Math.round(slope);
       if (r !== 0) slopeTxt = `, ${r > 0 ? "uppför +" : "nedför −"}${Math.abs(r)}`;
     }
-    s += `<br>→ spelar som <b>${Math.round(D + windShift + slope)} m</b> `
-       + `(vind ${windShift >= 0 ? "+" : ""}${Math.round(windShift)}${slopeTxt})`;
+    const sgn = v => `${v >= 0 ? "+" : ""}${Math.round(v)}`;
+    const pLo = Math.round(D + Math.min(windShift, gustShift) + slope);
+    const pHi = Math.round(D + Math.max(windShift, gustShift) + slope);
+    if (pHi - pLo >= GUST_SPAN_MIN_M) {   // byig vind → spann i stället för punkt
+      s += `<br>→ spelar som <b>${pLo}–${pHi} m</b> `
+         + `(vind ${sgn(windShift)}/${sgn(gustShift)} i byar${slopeTxt})`;
+    } else {
+      s += `<br>→ spelar som <b>${Math.round(D + windShift + slope)} m</b> `
+         + `(vind ${sgn(windShift)}${slopeTxt})`;
+    }
   }
   el.innerHTML = s;
 }
