@@ -34,7 +34,7 @@
   .card { background: #123c2d; border: 1px solid var(--line); border-radius: 14px;
           padding: 14px; margin: 10px 0; }
   label { display: block; font-size: 13px; color: var(--dim); margin: 10px 0 4px; }
-  input[type=text] { width: 100%; font-size: 17px; padding: 12px; border-radius: 10px;
+  input[type=text], select.field { width: 100%; font-size: 17px; padding: 12px; border-radius: 10px;
           border: 1px solid var(--line); background: #0e332656; color: var(--ink); }
   button { font-family: inherit; border: none; border-radius: 12px; cursor: pointer; }
   .big { width: 100%; padding: 16px; font-size: 18px; font-weight: 700;
@@ -256,6 +256,12 @@ function renderSetup() {
       <input type="text" id="player" value="${esc(S.player)}" placeholder="Förnamn Efternamn" autocomplete="name">
       <label>Bana</label>
       <input type="text" id="course" value="${esc(S.course)}">
+      <label>Vilken runda spelar du? <span style="color:var(--dim)">(för hålkartan)</span></label>
+      <select class="field" id="round">
+        <option value="1-18">1–18</option>
+        <option value="10-27">10–27</option>
+        <option value="19-9">19–9</option>
+      </select>
       <button class="big" id="start">Starta runda</button>
       <div style="text-align:center;margin-top:10px">
         <a class="link" href="./karta.html">🗺 Öppna hålkarta &amp; avstånd</a></div>
@@ -269,11 +275,17 @@ function renderSetup() {
       5. Efter rundan: <b>Avsluta</b> → dela filen till den som har appen.
     </div>
     ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
+  // rundval (1–18/10–27/19–9) delas med hålkartan via localStorage; påverkar inte
+  // loggningen/exporten — kartan läser 'sg_round' och startar i rätt runda.
+  const roundSel = document.getElementById("round");
+  roundSel.value = localStorage.getItem("sg_round") || "1-18";
+  roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
   document.getElementById("start").onclick = () => {
     const p = document.getElementById("player").value.trim();
     if (!p) { alert("Fyll i ditt namn."); return; }
     S.player = p;
     S.course = document.getElementById("course").value.trim() || DEFAULT_COURSE;
+    localStorage.setItem("sg_round", roundSel.value);
     if (!S.startedAt) S.startedAt = new Date().toISOString();
     S.view = "hole";
     startWatch(); save(); render();

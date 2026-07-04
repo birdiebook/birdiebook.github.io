@@ -32,6 +32,9 @@
     border-radius:12px; padding:8px 4px; text-align:center; }
   .greens .g b { font-size:22px; display:block; }
   .greens .g span { color:var(--dim); font-size:12px; }
+  #wind { margin-top:8px; background:var(--card)cc; border:1px solid var(--line);
+    border-radius:12px; padding:8px 12px; font-size:14px; text-align:center; }
+  #wind b { color:var(--ink); }
 
   /* botten: tap-mät + status */
   #bottom { position:absolute; left:0; right:0; bottom:0; z-index:1000;
@@ -70,6 +73,7 @@
     <div class="g"><b id="dCenter">–</b><span>Mitt</span></div>
     <div class="g"><b id="dBack">–</b><span>Bak</span></div>
   </div>
+  <div id="wind">🌬 <span id="windTxt">vind …</span></div>
 </div>
 
 <div id="bottom">
@@ -126,6 +130,74 @@ let map, layers = L.layerGroup(), meMarker = null, tapMarker = null, tapLine = n
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
 
+// ---- vind (Open-Meteo, gratis; samma konvention som src/api/wind.py) ----
+const COMPASS = ["N", "NO", "O", "SO", "S", "SV", "V", "NV"];
+const compass = deg => deg == null ? "" : COMPASS[Math.round(deg / 45) % 8];
+function bearing(a, b) {                    // [lat,lon] → grader 0=N,90=Ö
+  const p1 = rad(a[0]), p2 = rad(b[0]), dl = rad(b[1] - a[1]);
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function relWind(shotBearing, ms, dirDeg) {  // vinden kommer FRÅN dirDeg
+  const d = rad(dirDeg - shotBearing);
+  const along = -ms * Math.cos(d), right = -ms * Math.sin(d);
+  return { along, cross: Math.abs(right), side: Math.abs(right) < 0.3 ? null : (right > 0 ? "H" : "V"),
+           label: along >= 0 ? "medvind" : "motvind" };
+}
+
+// "Spelar som" — meter per m/s vid 230 m, skalas med avståndet (samma modell som
+// planner._wind_shift). Motvind förlänger mer än medvind förkortar. TUNABLE.
+const WIND_HEAD = 2.4, WIND_TAIL = 1.4, WIND_REF = 230;
+
+let WIND = null;   // {ms, dir, gust}
+async function fetchWind() {
+  const loc = pos || (ROUND[hi] && ROUND[hi].green_center) || [55.618, 13.07];
+  try {
+    const u = `https://api.open-meteo.com/v1/forecast?latitude=${loc[0]}&longitude=${loc[1]}`
+      + `&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms`;
+    const c = (await (await fetch(u)).json()).current;
+    WIND = { ms: c.wind_speed_10m, dir: c.wind_direction_10m, gust: c.wind_gusts_10m };
+  } catch (e) { WIND = null; }
+  updateWind();
+}
+// spelarens höjd (Open-Meteo Elevation, strypt till rörelse >25 m)
+let PLAYER_ELEV = null, elevAt = null;
+async function fetchPlayerElev() {
+  if (!pos || (elevAt && hav(pos, elevAt) < 25)) return;
+  elevAt = pos;
+  try {
+    const e = (await (await fetch(
+      `https://api.open-meteo.com/v1/elevation?latitude=${pos[0]}&longitude=${pos[1]}`)).json()).elevation;
+    PLAYER_ELEV = Array.isArray(e) ? e[0] : e;
+  } catch (err) { PLAYER_ELEV = null; }
+  updateWind();
+}
+
+function updateWind() {
+  const el = document.getElementById("windTxt");
+  if (!WIND) { el.textContent = "vind ej tillgänglig"; return; }
+  let s = `${WIND.ms.toFixed(1)} m/s från ${compass(WIND.dir)}`;
+  if (WIND.gust != null) s += ` (by ${WIND.gust.toFixed(0)})`;
+  if (pos && ROUND[hi]) {
+    const h = ROUND[hi];
+    const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
+    s += ` · <b>${rw.label} ${Math.abs(rw.along).toFixed(1)}</b>`;
+    if (rw.side) s += ` · sid ${rw.cross.toFixed(1)} ${rw.side === "H" ? "→H" : "←V"}`;
+    const D = hav(pos, h.green_center);
+    const windShift = (rw.along < 0 ? WIND_HEAD * -rw.along : -WIND_TAIL * rw.along) * (D / WIND_REF);
+    let slope = 0, slopeTxt = "";
+    if (h.green_elev_m != null && PLAYER_ELEV != null) {
+      slope = h.green_elev_m - PLAYER_ELEV;          // uppför positiv (+distans)
+      const r = Math.round(slope);
+      if (r !== 0) slopeTxt = `, ${r > 0 ? "uppför +" : "nedför −"}${Math.abs(r)}`;
+    }
+    s += `<br>→ spelar som <b>${Math.round(D + windShift + slope)} m</b> `
+       + `(vind ${windShift >= 0 ? "+" : ""}${Math.round(windShift)}${slopeTxt})`;
+  }
+  el.innerHTML = s;
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -152,6 +224,7 @@ function drawHole() {
   if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
   clearTap();
   updateDistances();
+  updateWind();
 }
 
 function nearestFarthest(from, ring) {   // min/max avstånd till en polygon-ring
@@ -181,6 +254,8 @@ function setPos(lat, lon, acc) {
   else meMarker.setLatLng(pos);
   if (!autoPicked) { autoPicked = true; pickNearestHole(); }
   updateDistances();
+  updateWind();
+  fetchPlayerElev();
   if (tapMarker) updateTap(tapMarker.getLatLng());
 }
 
@@ -222,10 +297,12 @@ async function init() {
   document.getElementById("roundSel").onchange = e => setRound(e.target.value);
 
   try {
-    const data = await (await fetch("./data/burlov.json")).json();
+    const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
     HOLES = data.holes;
     for (const h of HOLES) { h.global = GLOBAL_BASE[h.loop] + h.hole; byGlobal[h.global] = h; }
-    setRound(roundName);
+    setRound(localStorage.getItem("sg_round") || roundName);   // val från startsidan
+    fetchWind();                                   // aktuell vind (Open-Meteo)
+    setInterval(fetchWind, 5 * 60 * 1000);         // uppdatera var 5:e min
   } catch (e) {
     document.getElementById("holeName").textContent = "Kunde ej ladda bandata";
     return;
