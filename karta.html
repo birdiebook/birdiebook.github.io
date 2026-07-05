@@ -15,7 +15,9 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
-          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0; }
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
+          /* lätt skuggad grön bakom text i inramningarna (hål, avstånd, mät) */
+          --framebg:linear-gradient(rgba(55,176,107,.20),rgba(55,176,107,.20)), #123c2dee; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
@@ -25,13 +27,13 @@
   /* topp: hål-väljare + green-avstånd */
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
     padding:env(safe-area-inset-top) 10px 8px; }
-  .holebar { display:flex; align-items:center; gap:10px; }
-  .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px;
-    background:var(--card)cc; border:1px solid var(--line); border-radius:12px;
-    padding:8px 10px; box-shadow:0 2px 8px #0007; }
+  .holebar { display:flex; align-items:center; justify-content:center; gap:10px; }
+  .holebar .name { flex:0 0 auto; text-align:center; font-weight:700; font-size:17px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:8px 18px; box-shadow:0 2px 8px #0007; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
   #windrow { margin-top:8px; display:flex; align-items:center; gap:10px; }
-  #wind { flex:1; min-width:0; background:var(--card)cc; border:1px solid var(--line);
+  #wind { flex:1; min-width:0; background:var(--framebg); border:1px solid var(--line);
     border-radius:12px; padding:8px 10px; box-shadow:0 2px 8px #0007; }
   #windTxt { min-width:0; }
   #windTxt .play { font-size:18px; }
@@ -53,16 +55,17 @@
     font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
-  #measure { background:var(--card)ee; border:1px solid var(--line); border-radius:12px;
+  #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
     padding:8px 20px; min-height:44px; text-align:center; width:max-content; margin:0 auto 6px; }
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .play .by { color:var(--ink); font-size:15px; }
   #measure .sub { color:var(--ink); font-size:15px; margin-top:2px; }
   #measure.hidden { display:none; }
-  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Fast nere till
-     höger, i höjd med avståndssiffran i #measure. */
-  #modeToggle { display:flex; gap:4px; position:absolute; right:10px; top:8px;
+  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Fast längst upp
+     till vänster. */
+  #modeToggle { display:flex; gap:4px; position:fixed; left:10px;
+    top:calc(env(safe-area-inset-top) + 8px); z-index:1100;
     background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
   #modeToggle button { background:none; border:0; color:var(--dim);
     font-size:13px; font-weight:700; padding:6px 16px; border-radius:9px; }
