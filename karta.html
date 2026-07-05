@@ -16,8 +16,9 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
-          /* lätt skuggad grön bakom text i inramningarna (hål, avstånd, mät) */
-          --framebg:linear-gradient(rgba(55,176,107,.20),rgba(55,176,107,.20)), #123c2dee; }
+          /* lätt skuggad grön bakom text i inramningarna (hål, avstånd, mät) —
+             halvgenomskinlig så kartan skiner igenom */
+          --framebg:linear-gradient(rgba(55,176,107,.30),rgba(55,176,107,.30)), rgba(18,60,45,.5); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
@@ -27,12 +28,14 @@
   /* topp: hål-väljare + green-avstånd */
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
     padding:env(safe-area-inset-top) 10px 8px; }
-  .holebar { display:flex; align-items:center; justify-content:center; gap:10px; }
-  .holebar .name { flex:0 0 auto; text-align:center; font-weight:700; font-size:17px;
+  /* toppraden: toggle vänster · hål mitten · kompass höger — space-between så
+     de aldrig överlappar oavsett skärmbredd */
+  .holebar { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .holebar .name { flex:0 1 auto; text-align:center; font-weight:700; font-size:16px;
     background:var(--framebg); border:1px solid var(--line); border-radius:12px;
-    padding:8px 18px; box-shadow:0 2px 8px #0007; }
+    padding:7px 12px; box-shadow:0 2px 8px #0007; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
-  #windrow { margin-top:8px; display:flex; align-items:center; gap:10px; }
+  #windrow { margin-top:4px; display:flex; align-items:center; gap:10px; }
   #wind { flex:1; min-width:0; background:var(--framebg); border:1px solid var(--line);
     border-radius:12px; padding:8px 10px; box-shadow:0 2px 8px #0007; }
   #windTxt { min-width:0; }
@@ -62,13 +65,12 @@
   #measure .play .by { color:var(--ink); font-size:15px; }
   #measure .sub { color:var(--ink); font-size:15px; margin-top:2px; }
   #measure.hidden { display:none; }
-  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Fast längst upp
-     till vänster. */
-  #modeToggle { display:flex; gap:4px; position:fixed; left:10px;
-    top:calc(env(safe-area-inset-top) + 8px); z-index:1100;
+  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Ligger i
+     toppraden längst till vänster (kompakt så den ryms bredvid hål-rutan). */
+  #modeToggle { flex:0 0 auto; display:flex; gap:3px;
     background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
   #modeToggle button { background:none; border:0; color:var(--dim);
-    font-size:13px; font-weight:700; padding:6px 16px; border-radius:9px; }
+    font-size:12px; font-weight:700; padding:6px 9px; border-radius:9px; }
   #modeToggle button.on { background:#1a4c38; color:var(--ink); }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
@@ -84,11 +86,12 @@
 
 <div id="top">
   <div class="holebar">
+    <div id="modeToggle">
+      <button data-mode="play">Spelar som</button>
+      <button data-mode="gps">GPS</button>
+    </div>
     <div class="name" id="holeName">Söker hål …</div>
-  </div>
-  <div id="windrow">
-    <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
-    <svg id="rose" viewBox="0 0 64 64" width="86" height="86">
+    <svg id="rose" viewBox="0 0 64 64" width="74" height="74">
       <g id="roseRing">
         <circle cx="32" cy="32" r="29" fill="#cfd6d2" stroke="#3a4a42" stroke-width="2" opacity=".95"/>
         <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="#123c2d">N</text>
@@ -104,13 +107,12 @@
       <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="#123c2d"></text>
     </svg>
   </div>
+  <div id="windrow">
+    <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
+  </div>
 </div>
 
 <div id="bottom">
-  <div id="modeToggle">
-    <button data-mode="play">Spelar som</button>
-    <button data-mode="gps">GPS</button>
-  </div>
   <div id="measure" class="hidden">
     <div class="play" id="mPlay">–</div>
     <div class="sub" id="mSub">–</div>
