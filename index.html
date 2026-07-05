@@ -124,7 +124,7 @@ function save() {
 function hole(n) {
   const k = String(n);
   if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
-                                  putts: 0, pen: 0, holedOut: false };
+                                  putts: 0, pen: 0, holedOut: false, adj: 0 };
   return S.holes[k];
 }
 
@@ -191,9 +191,10 @@ const fmtT = iso => new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit",
 function exportData() {
   const holes = Object.keys(S.holes).map(Number).sort((a, b) => a - b)
     .map(n => ({ n, h: S.holes[String(n)] }))
-    .filter(x => x.h.shots.length)
+    .filter(x => x.h.shots.length + x.h.putts + x.h.pen + (x.h.adj || 0) > 0)
     .map(x => ({ hole: x.n, shots: x.h.shots, green: x.h.green, pin: x.h.pin,
-                 putts: x.h.putts, penalties: x.h.pen, holed_out: x.h.holedOut }));
+                 putts: x.h.putts, penalties: x.h.pen, holed_out: x.h.holedOut,
+                 score_adjust: x.h.adj || 0 }));
   return { format: "golf-sg-mobil", version: 1, player: S.player.trim(),
            course: S.course.trim(), started_at: S.startedAt,
            ended_at: S.endedAt || new Date().toISOString(), holes };
@@ -358,8 +359,8 @@ function renderHole() {
         <button class="ghost holedbtn ${h.holedOut ? "on" : ""}" id="holed">
           ${h.holedOut ? "✓ I hål utan putt (chip-in)" : "I hål utan putt (chip-in)?"}</button>
       </div>` : ""}
-      ${pts.length ? `<div class="ok-note">Score hål ${S.current}: <b>${pts.length + h.putts + h.pen}</b>
-        (${pts.length} slag + ${h.putts} putt${h.pen ? " + " + h.pen + " plikt" : ""})</div>` : ""}
+      ${pts.length ? `<div class="ok-note">Score hål ${S.current}: <b>${pts.length + h.putts + h.pen + (h.adj || 0)}</b>
+        (${pts.length} slag + ${h.putts} putt${h.pen ? " + " + h.pen + " plikt" : ""}${h.adj ? ` ${h.adj > 0 ? "+" : "−"} ${Math.abs(h.adj)} just.` : ""})</div>` : ""}
     </div>
 
     <button class="big" id="next">Nästa hål ▶</button>
@@ -410,14 +411,15 @@ function nextHole() {
 
 function renderSummary() {
   const played = Object.keys(S.holes).map(Number).sort((a, b) => a - b)
-    .filter(n => S.holes[String(n)].shots.length);
+    .filter(n => { const h = S.holes[String(n)];
+                   return h.shots.length + h.putts + h.pen + (h.adj || 0) > 0; });
   const rows = played.map(n => {
     const h = S.holes[String(n)];
-    return `<tr><td>Hål ${n}</td><td>${h.shots.length}</td><td>${h.putts}</td>
-            <td>${h.pen || ""}</td><td><b>${h.shots.length + h.putts + h.pen}</b></td></tr>`;
+    return `<tr><td>Hål ${n}</td><td>${h.shots.length}${h.adj ? `<span style="color:var(--warn)">${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)}</span>` : ""}</td><td>${h.putts}</td>
+            <td>${h.pen || ""}</td><td><b>${h.shots.length + h.putts + h.pen + (h.adj || 0)}</b></td></tr>`;
   }).join("");
   const tot = played.reduce((s, n) => {
-    const h = S.holes[String(n)]; return s + h.shots.length + h.putts + h.pen; }, 0);
+    const h = S.holes[String(n)]; return s + h.shots.length + h.putts + h.pen + (h.adj || 0); }, 0);
   const shots = played.reduce((s, n) => s + S.holes[String(n)].shots.length, 0);
   const noGreen = played.filter(n => {
     const h = S.holes[String(n)]; return h.putts > 0 && !h.green; });

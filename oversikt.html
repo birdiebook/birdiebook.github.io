@@ -29,6 +29,16 @@
   th { color:var(--dim); font-weight:600; font-size:13px; }
   tr.now td { background:#1a4c38; }
   tr.hole { cursor:pointer; }
+  tr.edit td { background:#0e3326; padding:10px 6px; }
+  .step { display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .step button { width:44px; height:44px; font-size:22px; font-weight:700; border:none;
+    border-radius:10px; background:#1a4c38; color:var(--ink); flex:none; cursor:pointer; }
+  .step button:disabled { opacity:.4; }
+  .step .val { font-size:20px; font-weight:800; min-width:34px; text-align:center; }
+  .step .lbl { color:var(--dim); font-size:13px; flex:1; text-align:left; }
+  .adjnote { color:var(--warn); font-size:12px; margin:2px 0 6px; text-align:left; }
+  .openlink { display:inline-block; margin-top:4px; color:var(--dim); font-size:13px;
+    text-decoration:underline; cursor:pointer; }
   td.under { color:#7ee2a8; font-weight:700; }
   td.over { color:var(--danger); font-weight:700; }
   td.empty { color:var(--dim); }
@@ -70,8 +80,9 @@ function loadState() {
 function holeScore(S, n) {
   const h = S && S.holes && S.holes[String(n)];
   if (!h) return null;
-  const score = (h.shots ? h.shots.length : 0) + (h.putts || 0) + (h.pen || 0);
-  return score > 0 ? { score, shots: h.shots.length, putts: h.putts || 0, pen: h.pen || 0 } : null;
+  const shots = (h.shots ? h.shots.length : 0) + (h.adj || 0);
+  const score = shots + (h.putts || 0) + (h.pen || 0);
+  return score > 0 ? { score, shots, putts: h.putts || 0, pen: h.pen || 0, adj: h.adj || 0 } : null;
 }
 function goToHole(n) {
   try {
@@ -80,6 +91,51 @@ function goToHole(n) {
     if (S) { S.current = n; localStorage.setItem(KEY, JSON.stringify(S)); }
   } catch (e) {}
   location.href = "./index.html";
+}
+
+/* ---------- redigering (samma state som rundloggen) ---------- */
+let editing = null;   // globalt hålnr med öppen editor
+function ensureHole(S, n) {
+  const k = String(n);
+  if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
+                                  putts: 0, pen: 0, holedOut: false, adj: 0 };
+  if (S.holes[k].adj == null) S.holes[k].adj = 0;
+  return S.holes[k];
+}
+// fält: 'adj' (glömda/extra slag, kan bli negativ ned till −loggade), 'putts', 'pen'
+function bump(n, field, delta) {
+  const S = loadState();
+  if (!S) return;
+  const h = ensureHole(S, n);
+  if (field === "adj") {
+    const next = (h.adj || 0) + delta;
+    if (h.shots.length + next < 0) return;   // totala slag kan inte bli negativa
+    h.adj = next;
+  } else {
+    h[field] = Math.max(0, (h[field] || 0) + delta);
+    if (field === "putts" && h[field] > 0) h.holedOut = false;
+  }
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+  render();
+}
+function editorRow(S, g) {
+  const h = (S && S.holes && S.holes[String(g)]) ||
+            { shots: [], putts: 0, pen: 0, adj: 0 };
+  const shots = h.shots.length + (h.adj || 0);
+  const step = (field, val, lbl, minusDis) => `
+    <div class="step">
+      <button data-bump="${field}" data-d="-1" ${minusDis ? "disabled" : ""}>−</button>
+      <span class="val">${val}</span>
+      <button data-bump="${field}" data-d="1">+</button>
+      <span class="lbl">${lbl}</span>
+    </div>`;
+  return `<tr class="edit" data-editrow="${g}"><td colspan="5">
+    ${step("adj", shots, "slag", shots <= 0)}
+    ${h.adj ? `<div class="adjnote">${Math.abs(h.adj)} slag ${h.adj > 0 ? "tillagt" : "borttaget"} manuellt (utan GPS-position — påverkar score, inte analysen)</div>` : ""}
+    ${step("putts", h.putts || 0, "puttar", (h.putts || 0) <= 0)}
+    ${step("pen", h.pen || 0, "pliktslag", (h.pen || 0) <= 0)}
+    <span class="openlink" data-open="${g}">⛳ Öppna hålet i Logga slag</span>
+  </td></tr>`;
 }
 
 async function render() {
@@ -106,12 +162,12 @@ async function render() {
     }
     if (sc) { totScore += sc.score; totPutts += sc.putts; played++; if (par != null) totPar += par; }
     return `<tr class="hole ${g === current ? "now" : ""}" data-hole="${g}">
-      <td>${g}${h ? ` <span style="color:var(--dim);font-size:12px">${LOOP_SHORT[h.loop] || ""} ${h.hole}</span>` : ""}</td>
+      <td>${g}${h ? ` <span style="color:var(--dim);font-size:12px">${LOOP_SHORT[h.loop] || ""} ${h.hole}</span>` : ""}${sc && sc.adj ? ` <span style="color:var(--warn)">✎</span>` : ""}</td>
       <td>${par != null ? par : "–"}</td>
       <td${sc ? "" : ' class="empty"'}>${sc ? sc.score : "–"}</td>
       <td${sc && sc.putts ? "" : ' class="empty"'}>${sc ? sc.putts : "–"}</td>
       ${diffCell}
-    </tr>`;
+    </tr>${g === editing ? editorRow(S, g) : ""}`;
   }).join("");
 
   const totDiff = totScore - totPar;
@@ -128,9 +184,18 @@ async function render() {
           <td>${played && totPar ? (totDiff === 0 ? "0" : (totDiff > 0 ? "+" + totDiff : totDiff)) : "–"}</td></tr>
       </table>
     </div>
-    <div class="hint">Tryck på ett hål för att logga det.</div>`;
+    <div class="hint">Tryck på ett hål för att rätta score eller öppna det.</div>`;
   document.querySelectorAll("tr.hole").forEach(tr =>
-    tr.onclick = () => goToHole(+tr.dataset.hole));
+    tr.onclick = () => {
+      if (!S) { alert("Starta en runda i Logga slag först."); return; }
+      const g = +tr.dataset.hole;
+      editing = editing === g ? null : g;
+      render();
+    });
+  document.querySelectorAll("[data-bump]").forEach(b =>
+    b.onclick = e => { e.stopPropagation(); bump(editing, b.dataset.bump, +b.dataset.d); });
+  document.querySelectorAll("[data-open]").forEach(el =>
+    el.onclick = e => { e.stopPropagation(); goToHole(+el.dataset.open); });
 }
 render();
 // uppdatera om man kommer tillbaka hit med ny data
