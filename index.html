@@ -59,6 +59,8 @@
           font-size: 14px; padding: 10px; }
   .row { display: flex; gap: 10px; align-items: center; }
   .row > * { flex: 1; }
+  .colstack { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .colstack .ghost { flex: 1; }
   .holehead { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
   .holehead button { background: #1a4c38; color: var(--ink); font-size: 22px;
           width: 52px; height: 52px; border-radius: 12px; flex: none; }
@@ -358,19 +360,23 @@ function renderHole() {
     </div>
 
     <div class="card">
-      <div class="row">
-        <button class="ghost ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
-          ${h.green ? "🟢 Green sparad ✓" + greenDist : "🟢 Boll på green"}</button>
-        <button class="ghost ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
-          ${h.pin ? "📍 Pin sparad ✓" : "📍 Markera pin"}</button>
-      </div>
-      <div class="step">
-        <button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button>
-        <span class="lbl">puttar</span>
-      </div>
-      <div class="step">
-        <button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button>
-        <span class="lbl">pliktslag</span>
+      <div class="row" style="align-items:stretch">
+        <div style="flex:1">
+          <div class="step">
+            <button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button>
+            <span class="lbl">puttar</span>
+          </div>
+          <div class="step">
+            <button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button>
+            <span class="lbl">pliktslag</span>
+          </div>
+        </div>
+        <div class="colstack">
+          <button class="ghost ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
+            ${h.green ? "🟢 Green sparad ✓" + greenDist : "🟢 Boll på green"}</button>
+          <button class="ghost ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
+            ${h.pin ? "📍 Pin sparad ✓" : "📍 Markera pin"}</button>
+        </div>
       </div>
       ${h.putts === 0 && pts.length ? `
       <div class="step">

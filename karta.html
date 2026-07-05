@@ -24,7 +24,7 @@
 
   /* topp: hål-väljare + green-avstånd */
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
-    padding:env(safe-area-inset-top) 10px 8px; background:linear-gradient(#0c2e22ee,#0c2e2200); }
+    padding:env(safe-area-inset-top) 10px 8px; }
   .holebar { display:flex; align-items:center; gap:10px; }
   .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
@@ -42,7 +42,7 @@
   /* botten: tap-mät + status */
   #bottom { position:absolute; left:0; right:0; z-index:1000;
     bottom:calc(env(safe-area-inset-bottom) + 62px);
-    padding:8px 10px; background:linear-gradient(#0c2e2200,#0c2e22ee); }
+    padding:8px 10px; }
   /* gemensam flik-rad (samma på alla sidor) */
   .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
@@ -251,8 +251,7 @@ function updateWind() {
   const el = document.getElementById("windTxt");
   // GPS-läge: rått avstånd till green, oberoende av vinddata
   if (mode === "gps" && pos && ROUND[hi]) {
-    el.innerHTML = `<div class="play"><b>${Math.round(hav(pos, ROUND[hi].green_center))} m</b>`
-      + ` <span class="by">till green</span></div>`;
+    el.innerHTML = `<div class="play"><span class="by">Till green</span> <b>${Math.round(hav(pos, ROUND[hi].green_center))} m</b></div>`;
     return;
   }
   if (!WIND) { el.innerHTML = `<span class="sub">vind ej tillgänglig</span>`; return; }
@@ -274,7 +273,7 @@ function updateWind() {
     ? h.green_elev_m - PLAYER_ELEV : 0;      // uppför positiv, bakas in tyst
   const pMean = Math.round(D + windShift + slope);
   const pGust = Math.round(D + gustShift + slope);
-  let s = `<div class="play">Spelar som <b>${pMean} m</b>`;
+  let s = `<div class="play"><span class="by">Till green</span> <b>${pMean} m</b>`;
   if (Math.abs(pGust - pMean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pGust}</span>`;
   s += `</div>`;
   el.innerHTML = s;
@@ -355,7 +354,7 @@ function updateTap(latlng) {
   const rem = fmt(hav(target, ROUND[hi].green_center));
   const pa = playAsRange(target, 0);   // vind (medel + by); slope okänd för fri punkt
   if (mode === "play" && pa) {
-    let s = `Spelar som <b>${pa.mean} m</b>`;
+    let s = `<b>${pa.mean} m</b>`;
     if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
     document.getElementById("mPlay").innerHTML = s;
     document.getElementById("mSub").textContent = `${rem} m kvar`;
