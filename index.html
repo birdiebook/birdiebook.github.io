@@ -240,6 +240,15 @@ async function doSend(btn) {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { alert("Kunde inte importera: " + (d.detail || r.status)); btn.textContent = old; btn.disabled = false; return; }
+    // spara SG-analysen så översikten kan visa den (matchas på started_at)
+    try {
+      localStorage.setItem("sg_analysis", JSON.stringify({
+        started_at: S.startedAt, saved_at: new Date().toISOString(),
+        total_score: d.total_score ?? null,
+        total_sg: d.total_sg_tee_to_green ?? null,
+        by_category: d.sg_by_category || {},
+      }));
+    } catch (e) {}
     let msg = `✓ Skickad! ${d.shots} slag, score ${d.total_score ?? "–"}.`;
     if (d.warnings && d.warnings.length) msg += "\n\n⚠ " + d.warnings.join("\n");
     alert(msg);
