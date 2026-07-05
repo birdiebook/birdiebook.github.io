@@ -26,17 +26,19 @@
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
     padding:env(safe-area-inset-top) 10px 8px; }
   .holebar { display:flex; align-items:center; gap:10px; }
-  .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
+  .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px;
+    background:var(--card)cc; border:1px solid var(--line); border-radius:12px;
+    padding:8px 10px; box-shadow:0 2px 8px #0007; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
   #windrow { margin-top:8px; display:flex; align-items:center; gap:10px; }
   #wind { flex:1; min-width:0; background:var(--card)cc; border:1px solid var(--line);
-    border-radius:12px; padding:8px 10px; }
+    border-radius:12px; padding:8px 10px; box-shadow:0 2px 8px #0007; }
   #windTxt { min-width:0; }
-  #windTxt .play { font-size:16px; }
-  #windTxt .play b { font-size:19px; color:var(--ink); }
-  #windTxt .play .by { color:var(--ink); font-size:14px; }
+  #windTxt .play { font-size:18px; }
+  #windTxt .play b { font-size:22px; color:var(--ink); }
+  #windTxt .play .by { color:var(--ink); font-size:15px; }
   #windTxt .sub { color:var(--dim); font-size:12px; margin-top:2px; }
-  #rose { flex:0 0 auto; }
+  #rose { flex:0 0 auto; filter:drop-shadow(0 2px 5px #00000099); }
   #rose g { transition:transform .4s; transform-origin:32px 32px; transform-box:view-box; }
 
   /* botten: tap-mät + status */
@@ -52,14 +54,15 @@
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   #measure { background:var(--card)ee; border:1px solid var(--line); border-radius:12px;
-    padding:8px 12px; min-height:44px; }
-  #measure .play { font-size:16px; }
-  #measure .play b { font-size:19px; color:var(--ink); }
-  #measure .play .by { color:var(--ink); font-size:14px; }
-  #measure .sub { color:var(--ink); font-size:14px; margin-top:2px; }
+    padding:8px 20px; min-height:44px; text-align:center; width:max-content; margin:0 auto 6px; }
+  #measure .play { font-size:18px; }
+  #measure .play b { font-size:22px; color:var(--ink); }
+  #measure .play .by { color:var(--ink); font-size:15px; }
+  #measure .sub { color:var(--ink); font-size:15px; margin-top:2px; }
   #measure.hidden { display:none; }
-  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått */
-  #modeToggle { display:flex; gap:4px; width:max-content; margin:0 auto 6px;
+  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Fast nere till
+     höger, i höjd med avståndssiffran i #measure. */
+  #modeToggle { display:flex; gap:4px; position:absolute; right:10px; top:8px;
     background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
   #modeToggle button { background:none; border:0; color:var(--dim);
     font-size:13px; font-weight:700; padding:6px 16px; border-radius:9px; }
@@ -82,20 +85,20 @@
   </div>
   <div id="windrow">
     <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
-    <svg id="rose" viewBox="0 0 64 64" width="76" height="76">
+    <svg id="rose" viewBox="0 0 64 64" width="86" height="86">
       <g id="roseRing">
-        <circle cx="32" cy="32" r="29" fill="none" stroke="var(--dim)" stroke-width="2" opacity=".7"/>
-        <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">N</text>
-        <circle cx="55" cy="32" r="1.5" fill="var(--dim)"/>
-        <circle cx="32" cy="55" r="1.5" fill="var(--dim)"/>
-        <circle cx="9"  cy="32" r="1.5" fill="var(--dim)"/>
+        <circle cx="32" cy="32" r="29" fill="#cfd6d2" stroke="#3a4a42" stroke-width="2" opacity=".95"/>
+        <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="#123c2d">N</text>
+        <circle cx="55" cy="32" r="1.5" fill="#3a4a42"/>
+        <circle cx="32" cy="55" r="1.5" fill="#3a4a42"/>
+        <circle cx="9"  cy="32" r="1.5" fill="#3a4a42"/>
       </g>
       <g id="roseArrow" visibility="hidden">
         <path d="M32 4 L32 20 M27 15 L32 21 L37 15" fill="none"
               stroke="#e23b3b" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
       </g>
-      <text id="roseMs" x="32" y="35" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">–</text>
-      <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink)"></text>
+      <text id="roseMs" x="32" y="35" text-anchor="middle" font-size="15" font-weight="700" fill="#123c2d">–</text>
+      <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="#123c2d"></text>
     </svg>
   </div>
 </div>
@@ -292,6 +295,30 @@ function orientToHole() {
   if (hd != null) map.setBearing(-hd);   // negativt = riktningen pekar uppåt
 }
 
+// fast startzoom: tee (underkant) → bortre kanten av green ("ovankant" när hålet
+// pekar uppåt) ska rymmas mellan toppanelen och mät-rutan, oavsett hål —
+// annars hoppar zoomen beroende på hazards/greenform.
+function fitHoleView(h) {
+  const teePt = (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+  if (!teePt || !h.green || !h.green.length) return false;
+  let farPt = h.green[0], farD = -1;
+  for (const gp of h.green) {
+    const d = hav(teePt, gp);
+    if (d > farD) { farD = d; farPt = gp; }
+  }
+  const topBottomY = document.getElementById("top").getBoundingClientRect().bottom;
+  const measureTopY = document.getElementById("bottom").getBoundingClientRect().top;
+  const mapRect = document.getElementById("map").getBoundingClientRect();
+  const padTop = Math.max(0, topBottomY - mapRect.top) + 10;
+  const padBottom = Math.max(0, mapRect.bottom - measureTopY) + 10;
+  map.fitBounds(L.latLngBounds([teePt, farPt]), {
+    paddingTopLeft: [40, padTop],
+    paddingBottomRight: [40, padBottom]
+  });
+  return true;
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -313,10 +340,12 @@ function drawHole() {
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
 
-  // rotera så hålet pekar uppåt, passa sedan vyn (green + tees + linje)
+  // rotera så hålet pekar uppåt, passa sedan vyn tee→green mellan UI-panelerna
   orientToHole();
-  const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
-  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  if (!fitHoleView(h)) {
+    const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  }
   clearTap();
   updateWind();
 }

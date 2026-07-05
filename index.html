@@ -344,6 +344,11 @@ function renderHole() {
       ${i === pts.length - 1 ? `<button class="del" data-del="${i}">✕</button>` : ""}</li>`;
   }).join("");
   const greenDist = h.green && pts.length ? ` (${fmtM(hav(pts[pts.length - 1], h.green))} från sista slaget)` : "";
+  // Score = slag vid bollen (GPS-loggade + manuella via adj) + puttar + plikt.
+  // adj låter score bli rätt även om alla slag inte GPS-taggats — score-siffran
+  // väger tyngre än att varje slag har position. Samma fält som Översikt redigerar.
+  const shotsN = pts.length + (h.adj || 0);
+  const score = shotsN + h.putts + h.pen;
   app.innerHTML = `
     <div class="holehead">
       <button id="prev" ${S.current <= 1 ? "disabled" : ""}>◀</button>
@@ -383,8 +388,11 @@ function renderHole() {
         <button class="ghost holedbtn ${h.holedOut ? "on" : ""}" id="holed">
           ${h.holedOut ? "✓ I hål utan putt (chip-in)" : "I hål utan putt (chip-in)?"}</button>
       </div>` : ""}
-      ${pts.length ? `<div class="ok-note">Score hål ${S.current}: <b>${pts.length + h.putts + h.pen + (h.adj || 0)}</b>
-        (${pts.length} slag + ${h.putts} putt${h.pen ? " + " + h.pen + " plikt" : ""}${h.adj ? ` ${h.adj > 0 ? "+" : "−"} ${Math.abs(h.adj)} just.` : ""})</div>` : ""}
+      <div class="step" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+        <button id="sm" ${shotsN <= 0 ? "disabled" : ""}>−</button><span class="val">${score}</span><button id="sp">+</button>
+        <span class="lbl">score</span>
+      </div>
+      <div class="hint">${shotsN} slag${h.putts ? " + " + h.putts + " putt" : ""}${h.pen ? " + " + h.pen + " plikt" : ""}${h.adj ? ` · ${Math.abs(h.adj)} slag ${h.adj > 0 ? "tillagt" : "borttaget"} utan GPS` : ""}</div>
     </div>
 
     <button class="big" id="next">Nästa hål ▶</button>
@@ -414,6 +422,13 @@ function renderHole() {
   document.getElementById("pp").onclick = () => { h.putts++; h.holedOut = false; save(); render(); };
   document.getElementById("fm").onclick = () => { h.pen = Math.max(0, h.pen - 1); save(); render(); };
   document.getElementById("fp").onclick = () => { h.pen++; save(); render(); };
+  // score +/−: justerar antalet slag vid bollen via adj (utan GPS-position), så
+  // score kan sättas rätt även när alla slag inte loggats. − stoppar vid 0 slag.
+  document.getElementById("sp").onclick = () => { h.adj = (h.adj || 0) + 1; save(); render(); };
+  document.getElementById("sm").onclick = () => {
+    if (pts.length + (h.adj || 0) <= 0) return;
+    h.adj = (h.adj || 0) - 1; save(); render();
+  };
   const ho = document.getElementById("holed");
   if (ho) ho.onclick = () => { h.holedOut = !h.holedOut; save(); render(); };
   document.getElementById("prev").onclick = () => { S.current--; save(); render(); };
