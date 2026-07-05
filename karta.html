@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#0c2e22">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hålkarta">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>SG Hålkarta</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
@@ -21,22 +26,15 @@
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
     padding:env(safe-area-inset-top) 10px 8px; background:linear-gradient(#0c2e22ee,#0c2e2200); }
   .holebar { display:flex; align-items:center; gap:10px; }
-  .holebar button { background:var(--card); color:var(--ink); border:1px solid var(--line);
-    border-radius:12px; width:56px; height:44px; font-size:22px; }
   .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
-  .greens { display:flex; gap:6px; margin-top:6px; }
-  .greens .g { flex:1; background:var(--card)cc; border:1px solid var(--line);
-    border-radius:10px; padding:5px 4px; text-align:center; white-space:nowrap; }
-  .greens .g b { font-size:17px; }
-  .greens .g span { color:var(--dim); font-size:11px; margin-left:4px; }
   #windrow { margin-top:8px; display:flex; align-items:center; gap:10px; }
   #wind { flex:1; min-width:0; background:var(--card)cc; border:1px solid var(--line);
     border-radius:12px; padding:8px 10px; }
   #windTxt { min-width:0; }
   #windTxt .play { font-size:16px; }
   #windTxt .play b { font-size:19px; color:var(--ink); }
-  #windTxt .play .by { color:var(--dim); font-size:14px; }
+  #windTxt .play .by { color:var(--ink); font-size:14px; }
   #windTxt .sub { color:var(--dim); font-size:12px; margin-top:2px; }
   #rose { flex:0 0 auto; }
   #rose g { transition:transform .4s; transform-origin:32px 32px; transform-box:view-box; }
@@ -57,9 +55,15 @@
     padding:8px 12px; min-height:44px; }
   #measure .play { font-size:16px; }
   #measure .play b { font-size:19px; color:var(--ink); }
-  #measure .play .by { color:var(--dim); font-size:14px; }
-  #measure .sub { color:var(--dim); font-size:12px; margin-top:2px; }
+  #measure .play .by { color:var(--ink); font-size:14px; }
+  #measure .sub { color:var(--ink); font-size:14px; margin-top:2px; }
   #measure.hidden { display:none; }
+  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått */
+  #modeToggle { display:flex; gap:4px; width:max-content; margin:0 auto 6px;
+    background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
+  #modeToggle button { background:none; border:0; color:var(--dim);
+    font-size:13px; font-weight:700; padding:6px 16px; border-radius:9px; }
+  #modeToggle button.on { background:#1a4c38; color:var(--ink); }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
     color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:8px 4px;
@@ -74,14 +78,7 @@
 
 <div id="top">
   <div class="holebar">
-    <button id="prev">◀</button>
     <div class="name" id="holeName">Söker hål …</div>
-    <button id="next">▶</button>
-  </div>
-  <div class="greens">
-    <div class="g"><b id="dFront">–</b><span>Fram</span></div>
-    <div class="g"><b id="dCenter">–</b><span>Mitt</span></div>
-    <div class="g"><b id="dBack">–</b><span>Bak</span></div>
   </div>
   <div id="windrow">
     <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
@@ -104,6 +101,10 @@
 </div>
 
 <div id="bottom">
+  <div id="modeToggle">
+    <button data-mode="play">Spelar som</button>
+    <button data-mode="gps">GPS</button>
+  </div>
   <div id="measure" class="hidden">
     <div class="play" id="mPlay">–</div>
     <div class="sub" id="mSub">–</div>
@@ -134,12 +135,23 @@ function hav(a, b) {              // [lat,lon] par → meter
 const SS = CourseMap.SURFACE_STYLE;
 
 // Numrering/rundsekvenser delas via round.js (SGRound). UI:t visar spelarens
-// hålnummer (1–18 = position i vald runda); banans globala nummer syns bara i
-// beskrivningsraden ("Gul 1 · par 3 …").
-const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
+// hålnummer (1–18 = position i vald runda) och par; banans globala nummer
+// används bara internt för att slå upp håldata.
+const { GLOBAL_BASE } = SGRound;
 
 let HOLES = [], byGlobal = {}, ROUND = [], roundName = "1-18";
 let hi = 0, pos = null;
+// "play" = Spelar som (vind + slope), "gps" = råa GPS-mått. Alltid synlig toggle.
+let mode = "play";
+try { mode = localStorage.getItem("sg_map_mode") || "play"; } catch (e) {}
+function setMode(m) {
+  mode = m;
+  try { localStorage.setItem("sg_map_mode", m); } catch (e) {}
+  for (const b of document.querySelectorAll("#modeToggle button"))
+    b.classList.toggle("on", b.dataset.mode === m);
+  updateWind();
+  if (tapMarker) updateTap(tapMarker.getLatLng());
+}
 
 function setRound(name) {
   roundName = name;
@@ -237,6 +249,12 @@ function updateRose() {
 function updateWind() {
   updateRose();
   const el = document.getElementById("windTxt");
+  // GPS-läge: rått avstånd till green, oberoende av vinddata
+  if (mode === "gps" && pos && ROUND[hi]) {
+    el.innerHTML = `<div class="play"><b>${Math.round(hav(pos, ROUND[hi].green_center))} m</b>`
+      + ` <span class="by">till green</span></div>`;
+    return;
+  }
   if (!WIND) { el.innerHTML = `<span class="sub">vind ej tillgänglig</span>`; return; }
   if (!pos || !ROUND[hi]) {
     el.innerHTML = `<div class="play"><b>${WIND.ms.toFixed(0)} m/s</b> från ${compass(WIND.dir)}</div>`
@@ -244,8 +262,8 @@ function updateWind() {
     return;
   }
   const h = ROUND[hi];
-  const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
   const D = hav(pos, h.green_center);
+  const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
   // + = spelar LÄNGRE (motsatt tecken mot flygskiftet). Byn antas komma
   // från samma håll som medelvinden → along skalas med gust/medel.
   const windShift = -windAlongShift(rw.along, D);
@@ -280,7 +298,7 @@ function drawHole() {
   const h = ROUND[hi];
   if (!h) return;
   document.getElementById("holeName").innerHTML =
-    `Hål ${hi + 1} <small>${LOOP_SHORT[h.loop] || h.loop} ${h.hole} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
+    `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
   // hål-linje
   if (h.line && h.line.length > 1)
@@ -301,26 +319,7 @@ function drawHole() {
   const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
   if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
   clearTap();
-  updateDistances();
   updateWind();
-}
-
-function nearestFarthest(from, ring) {   // min/max avstånd till en polygon-ring
-  let near = Infinity, far = 0;
-  for (const p of ring) { const d = hav(from, p); if (d < near) near = d; if (d > far) far = d; }
-  return { near, far };
-}
-
-function updateDistances() {
-  const h = ROUND[hi];
-  if (!h) return;
-  const F = document.getElementById("dFront"), C = document.getElementById("dCenter"), B = document.getElementById("dBack");
-  if (!pos) { F.textContent = C.textContent = B.textContent = "–"; return; }
-  if (h.green && h.green.length) {
-    const nf = nearestFarthest(pos, h.green);
-    F.textContent = fmt(nf.near); B.textContent = fmt(nf.far);
-  } else { F.textContent = B.textContent = "–"; }
-  C.textContent = fmt(hav(pos, h.green_center));
 }
 
 function setPos(lat, lon, acc) {
@@ -330,24 +329,18 @@ function setPos(lat, lon, acc) {
   t.textContent = `GPS ±${Math.round(acc)} m`;
   if (!meMarker) meMarker = L.circleMarker(pos, { radius: 7, color: "#fff", weight: 2, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(map);
   else meMarker.setLatLng(pos);
-  updateDistances();
   updateWind();
   fetchPlayerElev();
   if (tapMarker) updateTap(tapMarker.getLatLng());
 }
 
-// Hålet styrs av rundloggen via localStorage-nyckeln sg_hole (spelarens hål
-// 1–18, dvs. positionen i vald runda): kartan visar alltid samma hål som
-// score-sidan — inget GPS-gissande. ◀/▶ här skriver tillbaka samma nyckel så
-// score-sidan följer med när man går tillbaka.
+// Hålet styrs helt av rundloggen via localStorage-nyckeln sg_hole (spelarens
+// hål 1–18, dvs. positionen i vald runda): kartan visar alltid samma hål som
+// score-sidan — inget GPS-gissande och inget hålbyte här. Byt hål från
+// "Logga slag".
 function syncHole() {
   const rel = SGRound.migrateSgHole();   // konverterar ev. gammalt globalt värde
   if (rel >= 1 && rel <= ROUND.length) hi = rel - 1;
-  drawHole();
-}
-function setHole(i) {
-  hi = i;
-  try { localStorage.setItem("sg_hole", hi + 1); } catch (e) {}
   drawHole();
 }
 
@@ -361,16 +354,15 @@ function updateTap(latlng) {
   document.getElementById("measure").classList.remove("hidden");
   const rem = fmt(hav(target, ROUND[hi].green_center));
   const pa = playAsRange(target, 0);   // vind (medel + by); slope okänd för fri punkt
-  if (pa) {
+  if (mode === "play" && pa) {
     let s = `Spelar som <b>${pa.mean} m</b>`;
     if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
     document.getElementById("mPlay").innerHTML = s;
-    document.getElementById("mSub").textContent =
-      `${fmt(hav(pos, target))} m gps · ${pa.label} ${Math.abs(pa.along).toFixed(0)} m/s · ${rem} m kvar`;
+    document.getElementById("mSub").textContent = `${rem} m kvar`;
   } else {
     document.getElementById("mPlay").innerHTML =
       pos ? `<b>${fmt(hav(pos, target))} m</b>` : "–";
-    document.getElementById("mSub").textContent = `${rem} m kvar till green`;
+    document.getElementById("mSub").textContent = `${rem} m kvar`;
   }
   if (tapLine) map.removeLayer(tapLine);
   if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
@@ -389,8 +381,9 @@ async function init() {
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
   map.on("rotate", updateRose);   // rosen följer kartans rotation
-  document.getElementById("prev").onclick = () => setHole((hi - 1 + ROUND.length) % ROUND.length);
-  document.getElementById("next").onclick = () => setHole((hi + 1) % ROUND.length);
+  for (const b of document.querySelectorAll("#modeToggle button"))
+    b.onclick = () => setMode(b.dataset.mode);
+  setMode(mode);   // sätter aktiv knapp + första renderingen
   const rs = document.getElementById("roundSel");
   if (rs) rs.onchange = e => setRound(e.target.value);
 
@@ -415,6 +408,25 @@ async function init() {
       () => {}, { enableHighAccuracy: true, maximumAge: 0 });
 }
 init();
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
+   iOS länkar till andra sidor i en Safari-ruta (kryss + adressfält uppe, ladda
+   om/tillbaka nere). Vi fångar interna länkklick och navigerar via location,
+   vilket behåller helskärmsläget. Ingen effekt i vanlig webbläsare. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
 </script>
 </body>
 </html>

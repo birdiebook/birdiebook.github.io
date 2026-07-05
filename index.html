@@ -521,5 +521,24 @@ window.addEventListener("beforeunload", e => {
 if (S.view !== "setup") startWatch();
 render();
 </script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
+   iOS länkar till andra sidor i en Safari-ruta (kryss + adressfält uppe, ladda
+   om/tillbaka nere). Vi fångar interna länkklick och navigerar via location,
+   vilket behåller helskärmsläget. Ingen effekt i vanlig webbläsare. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
 </body>
 </html>

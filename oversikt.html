@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#0c2e22">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Översikt">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>SG Översikt</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
@@ -350,6 +355,25 @@ async function render() {
 render();
 // uppdatera om man kommer tillbaka hit med ny data
 window.addEventListener("pageshow", render);
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
+   iOS länkar till andra sidor i en Safari-ruta (kryss + adressfält uppe, ladda
+   om/tillbaka nere). Vi fångar interna länkklick och navigerar via location,
+   vilket behåller helskärmsläget. Ingen effekt i vanlig webbläsare. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
 </script>
 </body>
 </html>
