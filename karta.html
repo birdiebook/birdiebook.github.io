@@ -121,6 +121,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <script src="./coursemap.js"></script>
+<script src="./round.js"></script>
 <script>
 "use strict";
 const R = 6371000;
@@ -132,18 +133,10 @@ function hav(a, b) {              // [lat,lon] par → meter
 }
 const SS = CourseMap.SURFACE_STYLE;
 
-// Fast global hålnumrering — varje fysiskt hål har ett fast nummer även om
-// vilken 18-hålskombo man spelar roterar: Blå 1–9, Gul 10–18, Svart 19–27.
-// En runda = två slingor i följd (19–9 varvar runt). Byt här om klubben
-// numrerar slingorna annorlunda.
-const GLOBAL_BASE = { "Blue Course": 0, "Yellow Course": 9, "Black Course": 18 };
-const LOOP_SHORT = { "Blue Course": "Blå", "Yellow Course": "Gul", "Black Course": "Svart" };
-const ROUND_SEQ = {
-  "1-18":  Array.from({ length: 18 }, (_, i) => i + 1),
-  "10-27": Array.from({ length: 18 }, (_, i) => i + 10),
-  "19-9":  [...Array.from({ length: 9 }, (_, i) => i + 19),
-            ...Array.from({ length: 9 }, (_, i) => i + 1)],
-};
+// Numrering/rundsekvenser delas via round.js (SGRound). UI:t visar spelarens
+// hålnummer (1–18 = position i vald runda); banans globala nummer syns bara i
+// beskrivningsraden ("Gul 1 · par 3 …").
+const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
 
 let HOLES = [], byGlobal = {}, ROUND = [], roundName = "1-18";
 let hi = 0, pos = null;
@@ -152,7 +145,7 @@ function setRound(name) {
   roundName = name;
   const sel = document.getElementById("roundSel");
   if (sel && sel.value !== name) sel.value = name;
-  ROUND = ROUND_SEQ[name].map(g => byGlobal[g]).filter(Boolean);
+  ROUND = SGRound.ROUND_SEQ[name].map(g => byGlobal[g]).filter(Boolean);
   hi = 0;
   syncHole();
 }
@@ -287,7 +280,7 @@ function drawHole() {
   const h = ROUND[hi];
   if (!h) return;
   document.getElementById("holeName").innerHTML =
-    `Hål ${h.global} <small>${LOOP_SHORT[h.loop] || h.loop} ${h.hole} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
+    `Hål ${hi + 1} <small>${LOOP_SHORT[h.loop] || h.loop} ${h.hole} · par ${h.par ?? "–"}${h.length_m ? " · " + Math.round(h.length_m) + " m" : ""}</small>`;
 
   // hål-linje
   if (h.line && h.line.length > 1)
@@ -343,18 +336,18 @@ function setPos(lat, lon, acc) {
   if (tapMarker) updateTap(tapMarker.getLatLng());
 }
 
-// Hålet styrs av rundloggen via localStorage-nyckeln sg_hole (globalt hålnummer):
-// kartan visar alltid samma hål som score-sidan — inget GPS-gissande. ◀/▶ här
-// skriver tillbaka samma nyckel så score-sidan följer med när man går tillbaka.
+// Hålet styrs av rundloggen via localStorage-nyckeln sg_hole (spelarens hål
+// 1–18, dvs. positionen i vald runda): kartan visar alltid samma hål som
+// score-sidan — inget GPS-gissande. ◀/▶ här skriver tillbaka samma nyckel så
+// score-sidan följer med när man går tillbaka.
 function syncHole() {
-  const g = parseInt(localStorage.getItem("sg_hole"), 10);
-  const i = ROUND.findIndex(h => h && h.global === g);
-  if (i >= 0) hi = i;
+  const rel = SGRound.migrateSgHole();   // konverterar ev. gammalt globalt värde
+  if (rel >= 1 && rel <= ROUND.length) hi = rel - 1;
   drawHole();
 }
 function setHole(i) {
   hi = i;
-  if (ROUND[hi]) { try { localStorage.setItem("sg_hole", ROUND[hi].global); } catch (e) {} }
+  try { localStorage.setItem("sg_hole", hi + 1); } catch (e) {}
   drawHole();
 }
 
@@ -405,7 +398,7 @@ async function init() {
     const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
     HOLES = data.holes;
     for (const h of HOLES) { h.global = GLOBAL_BASE[h.loop] + h.hole; byGlobal[h.global] = h; }
-    setRound(localStorage.getItem("sg_round") || roundName);   // val från startsidan
+    setRound(SGRound.roundName());   // val från startsidan
     // om man byter hål i rundloggen och kommer tillbaka hit: synka igen
     window.addEventListener("pageshow", syncHole);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) syncHole(); });

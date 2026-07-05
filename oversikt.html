@@ -98,17 +98,13 @@
   <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
   <a href="./oversikt.html" class="active"><span class="ico">📋</span>Översikt</a>
 </nav>
+<script src="./round.js"></script>
 <script>
 "use strict";
-// Samma globala hålnumrering och rundsekvenser som karta.html — håll i synk.
-const GLOBAL_BASE = { "Blue Course": 0, "Yellow Course": 9, "Black Course": 18 };
-const LOOP_SHORT = { "Blue Course": "Blå", "Yellow Course": "Gul", "Black Course": "Svart" };
-const ROUND_SEQ = {
-  "1-18":  Array.from({ length: 18 }, (_, i) => i + 1),
-  "10-27": Array.from({ length: 18 }, (_, i) => i + 10),
-  "19-9":  [...Array.from({ length: 9 }, (_, i) => i + 19),
-            ...Array.from({ length: 9 }, (_, i) => i + 1)],
-};
+// Numrering/rundsekvenser delas via round.js (SGRound). Tabellen och all
+// state (S.holes, sg_hole) använder spelarens hålnummer 1–18; banans globala
+// nummer syns bara i den lilla beskrivningen ("Gul 1").
+const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
 const KEY = "sg-rundlogg-v1";
 const SG_LABEL = { off_the_tee: "Utslag", approach: "Inspel", around_green: "Närspel" };
 
@@ -141,7 +137,7 @@ const fmtDiff = d => d === 0 ? "0" : (d > 0 ? "+" + d : String(d));
 const fmtSg = v => (v > 0 ? "+" : "") + v.toFixed(1);
 
 /* ---------- redigering (samma state som rundloggen) ---------- */
-let editing = null;   // globalt hålnr med öppen editor
+let editing = null;   // spelarens hålnr (1–18) med öppen editor
 function ensureHole(S, n) {
   const k = String(n);
   if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
@@ -277,8 +273,8 @@ function parHtml(t) {
 
 async function render() {
   const S = loadState();
-  const roundName = localStorage.getItem("sg_round") || "1-18";
-  const seq = ROUND_SEQ[roundName] || ROUND_SEQ["1-18"];
+  const roundName = SGRound.roundName();
+  const seq = SGRound.seq();
   let byGlobal = {};
   try {
     const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
@@ -289,10 +285,12 @@ async function render() {
   const t = { totScore: 0, totPar: 0, totPutts: 0, played: 0, nHoles: seq.length,
               dist: { birdie: 0, par: 0, bogey: 0, dbl: 0 },
               byPar: {}, worstHole: null };
-  const rows = seq.map(g => {
+  // rel = spelarens hål (1–18); bandata slås upp via det globala numret
+  const rows = seq.map((g, i) => {
+    const rel = i + 1;
     const h = byGlobal[g];
     const par = h && h.par != null ? h.par : null;
-    const sc = holeScore(S, g);
+    const sc = holeScore(S, rel);
     let diffCell = `<td class="empty">–</td>`;
     if (sc && par != null) {
       const d = sc.score - par;
@@ -304,16 +302,16 @@ async function render() {
       else t.dist.dbl++;
       const bp = t.byPar[par] || (t.byPar[par] = { sum: 0, n: 0 });
       bp.sum += sc.score; bp.n++;
-      if (!t.worstHole || d > t.worstHole.d) t.worstHole = { g, d };
+      if (!t.worstHole || d > t.worstHole.d) t.worstHole = { g: rel, d };
     }
     if (sc) { t.totScore += sc.score; t.totPutts += sc.putts; t.played++; if (par != null) t.totPar += par; }
-    return `<tr class="hole ${g === current ? "now" : ""}" data-hole="${g}">
-      <td>${g}${h ? ` <span style="color:var(--dim);font-size:12px">${LOOP_SHORT[h.loop] || ""} ${h.hole}</span>` : ""}${sc && sc.adj ? ` <span style="color:var(--warn)">✎</span>` : ""}</td>
+    return `<tr class="hole ${rel === current ? "now" : ""}" data-hole="${rel}">
+      <td>${rel}${h ? ` <span style="color:var(--dim);font-size:12px">${LOOP_SHORT[h.loop] || ""} ${h.hole}</span>` : ""}${sc && sc.adj ? ` <span style="color:var(--warn)">✎</span>` : ""}</td>
       <td>${par != null ? par : "–"}</td>
       <td${sc ? "" : ' class="empty"'}>${sc ? sc.score : "–"}</td>
       <td${sc && sc.putts ? "" : ' class="empty"'}>${sc ? sc.putts : "–"}</td>
       ${diffCell}
-    </tr>${g === editing ? editorRow(S, g) : ""}`;
+    </tr>${rel === editing ? editorRow(S, rel) : ""}`;
   }).join("");
 
   const A = loadAnalysis(S);
