@@ -91,6 +91,74 @@
           border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 10px 0; }
   .hint { color: var(--dim); font-size: 13px; line-height: 1.5; }
   .ok-note { color: #7ee2a8; font-size: 14px; margin-top: 8px; }
+
+  /* ===== Logga slag – revamp ===== */
+  #app { display: flex; flex-direction: column; }
+  /* header med rundade pilar + GPS-undertext */
+  .holehead .htitle { text-align: center; flex: 1; }
+  .holehead .htitle .nr { font-size: 30px; font-weight: 800; line-height: 1.05; }
+  .holehead button { border-radius: 50%; font-size: 24px; background: #16412f;
+          border: 1px solid var(--line); }
+  .gpsprec { font-size: 13px; color: var(--dim); }
+  .gpsprec.good { color: #7ee2a8; } .gpsprec.ok { color: var(--warn); } .gpsprec.bad { color: var(--danger); }
+
+  /* stora logga-slag-kortet */
+  .logwrap { border: 1px solid var(--line); border-radius: 18px; background: var(--card);
+          margin: 12px 0; padding: 6px; }
+  .logcard { display: flex; flex-direction: column; align-items: center; gap: 14px;
+          width: 100%; background: none; color: var(--ink); padding: 22px 16px; }
+  .logcard .logtitle { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+  .logcard .logicon { width: 84px; height: 84px; color: var(--accent);
+          transition: height .18s, width .18s, opacity .18s; }
+  .logcard .loghint { border: 1px solid var(--line); border-radius: 99px;
+          padding: 10px 18px; color: var(--dim); font-size: 14px; }
+  .logcard:active { transform: translateY(1px); }
+  .logcard:disabled { opacity: .6; }
+  .logwrap.compact .logcard { padding: 16px; gap: 10px; }
+  .logwrap.compact .logicon { width: 44px; height: 44px; }
+  .logwrap.compact .loghint { display: none; }
+  /* avstånds-slinga (horisontell, aldrig vertikal tillväxt) */
+  .trail { display: flex; align-items: center; gap: 8px; overflow-x: auto;
+          padding: 4px 10px 12px; scrollbar-width: none; }
+  .trail::-webkit-scrollbar { display: none; }
+  .trail .node { flex: none; display: inline-flex; align-items: center; justify-content: center;
+          width: 30px; height: 30px; border-radius: 50%; background: #1a4c38;
+          border: 1px solid var(--line); font-size: 14px; font-weight: 700; position: relative; }
+  .trail .seg { flex: none; color: var(--dim); font-size: 13px; white-space: nowrap; }
+  .trail .node.last { background: var(--accent); color: var(--accent-ink); }
+  .trail .tdel { position: absolute; top: -7px; right: -9px; width: 20px; height: 20px;
+          border-radius: 50%; background: var(--danger); color: #2a0a06; font-size: 12px;
+          line-height: 1; display: flex; align-items: center; justify-content: center; }
+
+  /* 3 stat-kort */
+  .statgrid { display: flex; gap: 8px; }
+  .statgrid .stat { flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line);
+          border-radius: 14px; padding: 12px 4px 10px; text-align: center; }
+  .stat .stat-lbl { color: var(--dim); font-size: 13px; }
+  .stat .stat-ico { width: 22px; height: 22px; color: var(--dim); margin: 6px 0; }
+  .stat .stat-ctl { display: flex; align-items: center; justify-content: center; gap: 3px; }
+  .stat .stat-ctl button { width: 32px; height: 32px; font-size: 21px; font-weight: 700;
+          background: #1a4c38; color: var(--ink); flex: none; }
+  .stat .stat-ctl button:disabled { opacity: .4; }
+  .stat .stat-ctl .val { font-size: 23px; font-weight: 800; min-width: 20px; }
+  .stat .stat-sub { color: var(--dim); font-size: 11px; margin-top: 4px; height: 14px; }
+
+  /* toggles green / pin */
+  .togglerow { display: flex; gap: 10px; margin: 12px 0 4px; }
+  .toggle { flex: 1; display: flex; align-items: center; gap: 10px; text-align: left;
+          background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          padding: 12px; color: var(--ink); font-size: 13px; font-weight: 700; line-height: 1.15; }
+  .toggle .knob { flex: none; width: 44px; height: 26px; border-radius: 99px;
+          background: #0e3326; border: 1px solid var(--line); position: relative;
+          transition: background .15s; }
+  .toggle .knob::after { content: ""; position: absolute; top: 2px; left: 2px;
+          width: 20px; height: 20px; border-radius: 50%; background: #cfe6d8;
+          transition: transform .15s; }
+  .toggle.on.green .knob { background: var(--accent); border-color: var(--accent); }
+  .toggle.on.pin .knob { background: var(--danger); border-color: var(--danger); }
+  .toggle.on .knob::after { transform: translateX(18px); }
+  .tstatus { min-height: 16px; color: var(--dim); font-size: 12px; margin: 0 2px 6px; }
+  .tstatus .ok { color: #7ee2a8; }
 </style>
 </head>
 <body>
@@ -172,9 +240,9 @@ async function capture(label) {
   finally { busy = false; }
 }
 function gpsChipHtml() {
-  if (!lastFix) return '<span class="gps">GPS: söker …</span>';
+  if (!lastFix) return '<span class="gpsprec">GPS: söker …</span>';
   const a = lastFix.acc, cls = a <= 8 ? "good" : a <= 15 ? "ok" : "bad";
-  return `<span class="gps ${cls}">GPS ±${Math.round(a)} m</span>`;
+  return `<span class="gpsprec ${cls}">GPS Precision: ±${Math.round(a)} m</span>`;
 }
 function updateGpsChip() {
   const el = document.getElementById("gpschip");
@@ -412,65 +480,75 @@ function renderSetup() {
 function renderHole() {
   const h = hole(S.current);
   const pts = h.shots;
-  const shotRows = pts.map((p, i) => {
-    const dist = i > 0 ? ` · ${fmtM(hav(pts[i - 1], p))} från förra` : "";
-    return `<li>Slag ${i + 1}${dist}
-      <span class="meta">±${Math.round(p.acc)} m · ${fmtT(p.ts)}</span>
-      ${i === pts.length - 1 ? `<button class="del" data-del="${i}">✕</button>` : ""}</li>`;
+  // Avstånds-slinga: horisontell, en rad. Visar bara avståndet mellan slagen
+  // (±precision/tid finns kvar i sparad runda/översikt). ✕ tar bort sista slaget.
+  const trail = pts.map((p, i) => {
+    const seg = i > 0 ? `<span class="seg">${fmtM(hav(pts[i - 1], p))}</span>` : "";
+    const last = i === pts.length - 1;
+    return `${seg}<span class="node${last ? " last" : ""}">${i + 1}${last ? `<button class="tdel" data-del="${i}">✕</button>` : ""}</span>`;
   }).join("");
   const greenDist = h.green && pts.length ? ` (${fmtM(hav(pts[pts.length - 1], h.green))} från sista slaget)` : "";
+  const gStat = h.green ? `<span class="ok">✓ Green</span>${greenDist}` : "";
+  const pStat = h.pin ? `<span class="ok">✓ Pin</span>` : "";
+  const tstatus = [gStat, pStat].filter(Boolean).join(" · ");
   // Score = slag vid bollen (GPS-loggade + manuella via adj) + puttar + plikt.
   // adj låter score bli rätt även om alla slag inte GPS-taggats — score-siffran
   // väger tyngre än att varje slag har position. Samma fält som Översikt redigerar.
   const shotsN = pts.length + (h.adj || 0);
   const score = shotsN + h.putts + h.pen;
+  const ICO_FLAG = `<svg class="logicon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M24 11 L24 46"/><path d="M24 11 L45 17 L24 25 Z"/><ellipse cx="30" cy="50" rx="18" ry="5"/><circle cx="19" cy="47" r="4"/></svg>`;
+  const ICO_PUTT = `<svg class="stat-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3v11"/><path d="M15 14h5"/></svg>`;
+  const ICO_PEN = `<svg class="stat-ico" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18"/><path d="M6 4h11l-3 4 3 4H6"/></svg>`;
+  const ICO_SCORE = `<svg class="stat-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>`;
   app.innerHTML = `
     <div class="holehead">
-      <button id="prev" ${S.current <= 1 ? "disabled" : ""}>◀</button>
-      <div class="nr">Hål ${S.current}</div>
-      <button id="next2">▶</button>
-    </div>
-    <div style="text-align:center"><span id="gpschip">${gpsChipHtml()}</span></div>
-
-    <div class="card">
-      <button class="shotbtn" id="shot" ${busy ? "disabled" : ""}>
-        ${busy ? "HÄMTAR GPS …" : "⛳ SLAG"}</button>
-      <div class="hint" style="margin-top:8px">Tryck när du står vid bollen, innan du slår.</div>
-      ${pts.length ? `<ul class="shots">${shotRows}</ul>` : ""}
-    </div>
-
-    <div class="card">
-      <div class="row" style="align-items:stretch">
-        <div style="flex:1">
-          <div class="step">
-            <button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button>
-            <span class="lbl">puttar</span>
-          </div>
-          <div class="step">
-            <button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button>
-            <span class="lbl">pliktslag</span>
-          </div>
-        </div>
-        <div class="colstack">
-          <button class="ghost ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
-            ${h.green ? "🟢 Green sparad ✓" + greenDist : "🟢 Boll på green"}</button>
-          <button class="ghost ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
-            ${h.pin ? "📍 Pin sparad ✓" : "📍 Markera pin"}</button>
-        </div>
+      <button id="prev" ${S.current <= 1 ? "disabled" : ""}>‹</button>
+      <div class="htitle">
+        <div class="nr">Hål ${S.current}</div>
+        <span id="gpschip">${gpsChipHtml()}</span>
       </div>
-      ${h.putts === 0 && pts.length ? `
-      <div class="step">
-        <button class="ghost holedbtn ${h.holedOut ? "on" : ""}" id="holed">
-          ${h.holedOut ? "✓ I hål utan putt (chip-in)" : "I hål utan putt (chip-in)?"}</button>
-      </div>` : ""}
-      <div class="step" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-        <button id="sm" ${shotsN <= 0 ? "disabled" : ""}>−</button><span class="val">${score}</span><button id="sp">+</button>
-        <span class="lbl">score</span>
-      </div>
-      <div class="hint">${shotsN} slag${h.putts ? " + " + h.putts + " putt" : ""}${h.pen ? " + " + h.pen + " plikt" : ""}${h.adj ? ` · ${Math.abs(h.adj)} slag ${h.adj > 0 ? "tillagt" : "borttaget"} utan GPS` : ""}</div>
+      <button id="next2">›</button>
     </div>
 
-    <button class="big" id="next">Nästa hål ▶</button>
+    <div class="logwrap ${pts.length ? "compact" : ""}">
+      <button class="logcard" id="shot" ${busy ? "disabled" : ""}>
+        <div class="logtitle">${busy ? "HÄMTAR GPS …" : "LOGGA SLAG"}</div>
+        ${ICO_FLAG}
+        <div class="loghint">Tryck vid bollen innan du slår.</div>
+      </button>
+      ${pts.length ? `<div class="trail">${trail}</div>` : ""}
+    </div>
+
+    <div class="statgrid">
+      <div class="stat">
+        <div class="stat-lbl">Puttar</div>${ICO_PUTT}
+        <div class="stat-ctl"><button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button></div>
+        <div class="stat-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Pliktslag</div>${ICO_PEN}
+        <div class="stat-ctl"><button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button></div>
+        <div class="stat-sub"></div>
+      </div>
+      <div class="stat">
+        <div class="stat-lbl">Score</div>${ICO_SCORE}
+        <div class="stat-ctl"><button id="sm" ${shotsN <= 0 ? "disabled" : ""}>−</button><span class="val">${score}</span><button id="sp">+</button></div>
+        <div class="stat-sub">${shotsN} slag${h.adj ? ` (${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)})` : ""}</div>
+      </div>
+    </div>
+
+    <div class="togglerow">
+      <button class="toggle green ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
+        <span class="knob"></span><span>BOLL PÅ GREEN</span></button>
+      <button class="toggle pin ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
+        <span class="knob"></span><span>MARKERA PINN</span></button>
+    </div>
+    <div class="tstatus">${tstatus}</div>
+    ${h.putts === 0 && pts.length ? `
+      <button class="ghost holedbtn ${h.holedOut ? "on" : ""}" id="holed" style="width:100%">
+        ${h.holedOut ? "✓ I hål utan putt (chip-in)" : "I hål utan putt (chip-in)?"}</button>` : ""}
+
+    <button class="big" id="next">Nästa hål ›</button>
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
 
   document.getElementById("shot").onclick = async () => {
