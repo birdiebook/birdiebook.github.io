@@ -274,10 +274,85 @@ const app = document.getElementById("app");
 function esc(s) { return String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
+/* ---------- tile-preload: värm hålets kartrutor medan man loggar ----------
+   Medan du loggar slag på ett hål hämtas i bakgrunden (låg prio, avdubblat) de
+   ortofoto-rutor som hålkartan kommer att visa för samma hål + nästa. Rutorna
+   hamnar i webbläsarens HTTP-cache som delas med karta.html → Karta-fliken
+   renderar direkt ur cachen i stället för att ladda/blinka grönt. Rör inget
+   annat: bara same-origin GET av samma tile-URL:er som kartan ändå begär.
+   Tile-matematiken är verifierad att ge exakt samma {z,x,y} som Leaflet. */
+const TilePreload = (() => {
+  // Kartans initiala hålvy landar på z17 (par 4/5, även 500 m ger fit ~16,7→17)
+  // eller z18 (par 3, kortare → högre zoom) — aldrig z16. Värm därför bara den
+  // nivå hålet faktiskt öppnar i: par 3 → z17+z18 (z18 = initial, z17 = ett steg
+  // ut), övriga → bara z17. z18 på par 4/5 behövs först vid aktiv inzoomning och
+  // hämtas då live → utanför preloaden, sparar mobildata.
+  const zoomsFor = h => (h.par && h.par <= 3) ? [17, 18] : [17];
+  const seen = new Set();            // avdubbling över alla anrop
+  let holesP = null, lastRel = null, cfg = { min: 13, max: 19 };
+  function loadHoles() {
+    if (holesP) return holesP;
+    holesP = Promise.all([
+      fetch("data/burlov.json").then(r => r.json()).then(d => d.holes),
+      fetch("tiles/manifest.json").then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([holes, man]) => {
+      if (man) cfg = { min: man.min_zoom, max: man.max_zoom };
+      const by = {};
+      for (const h of holes) by[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
+      return by;
+    }).catch(() => ({}));
+    return holesP;
+  }
+  const xtile = (lon, z) => Math.floor((lon + 180) / 360 * (1 << z));
+  const ytile = (lat, z) => { const r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z)); };
+  function bbox(h) {
+    let s = 90, n = -90, w = 180, e = -180;
+    const eat = (la, lo) => { if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo; };
+    (h.green || []).forEach(p => eat(p[0], p[1]));
+    (h.line || []).forEach(p => eat(p[0], p[1]));
+    (h.tees || []).forEach(t => eat(t.lat, t.lon));
+    if (h.pin) eat(h.pin[0], h.pin[1]);
+    return (e >= w && n >= s) ? { s, n, w, e } : null;
+  }
+  function warm(url) {
+    if (seen.has(url)) return;
+    seen.add(url);
+    const im = new Image(); im.decoding = "async"; im.src = url;
+  }
+  function preload(h) {
+    const b = bbox(h); if (!b) return;
+    for (const z of zoomsFor(h)) {
+      if (z < cfg.min || z > cfg.max) continue;
+      // +1 rutas marginal åt varje håll → täcker roterade hörn (som keepBuffer)
+      const x0 = xtile(b.w, z) - 1, x1 = xtile(b.e, z) + 1;
+      const y0 = ytile(b.n, z) - 1, y1 = ytile(b.s, z) + 1;   // n = mindre y
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 80) continue;        // säkerhetsspärr
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
+        warm(`tiles/${z}/${x}/${y}.webp`);
+    }
+  }
+  // preloada spelarens hål `rel` (+ nästa) när webbläsaren är ledig; bara vid byte
+  function forHole(rel) {
+    if (rel == null || rel === lastRel) return;
+    lastRel = rel;
+    const idle = window.requestIdleCallback || (cb => setTimeout(cb, 200));
+    idle(() => loadHoles().then(by => {
+      for (const r of [rel, rel + 1]) {
+        const g = SGRound.relToGlobal(r);
+        if (g && by[g]) preload(by[g]);
+      }
+    }));
+  }
+  return { forHole };
+})();
+
 function render() {
   if (S.view === "setup") renderSetup();
   else if (S.view === "hole") renderHole();
   else renderSummary();
+  // värm hålkartans rutor för aktuellt hål (+ nästa) medan man loggar
+  if (S.view === "hole") TilePreload.forHole(S.current);
 }
 
 function renderSetup() {
