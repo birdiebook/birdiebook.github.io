@@ -7,7 +7,23 @@ window.CourseMap = {
   // Esri World Imagery — gratis satellit, ingen nyckel.
   ESRI_URL:
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  // CSS-filter som gör satellit-/ortofoto-tiles ljusare & friskare (Google Maps-
+  // känsla). Verkar på tile-panelerna (Esri + Lantmäteriets ortofoto + imagery-
+  // pane) men INTE på overlayPane, så banytornas vektorfärger lämnas orörda.
+  // Justera hela kartans ljus/färg genom att ändra denna enda rad.
+  MAP_FILTER: "brightness(1.50) saturate(1.46) contrast(0.99) sepia(0.06)",
+  _filterInjected: false,
+  applyImageFilter() {
+    if (this._filterInjected || typeof document === "undefined") return;
+    this._filterInjected = true;
+    const st = document.createElement("style");
+    st.textContent =
+      `.leaflet-tile-pane,.leaflet-imagery-pane{filter:${this.MAP_FILTER};}`;
+    document.head.appendChild(st);
+  },
+
   esriLayer() {
+    this.applyImageFilter();
     return L.tileLayer(this.ESRI_URL, {
       maxZoom: 21, maxNativeZoom: 19,
       attribution:
@@ -17,14 +33,14 @@ window.CourseMap = {
 
   // Ytfärger (delas av kartvy + strategivy + ev. legend).
   SURFACE_STYLE: {
-    fairway:      { color: "#3a7d34", fill: "#4c9e44", label: "Fairway" },
-    green:        { color: "#2fae57", fill: "#54d57e", label: "Green" },
-    bunker:       { color: "#c9a24b", fill: "#e8c878", label: "Bunker" },
-    water_hazard: { color: "#2f7fae", fill: "#4aa6e0", label: "Vatten" },
-    tee:          { color: "#7d5bd0", fill: "#9d7ef0", label: "Tee" },
-    ob:           { color: "#d04545", fill: "#e06666", label: "OB" },
-    heavy_rough:  { color: "#6b7a2a", fill: "#8a9a3d", label: "Tjockruff" },
-    mask:         { color: "#1f5c33", fill: "#2e7a46", label: "Mask (träd)" },
+    fairway:      { color: "#4f9e3f", fill: "#6cc257", label: "Fairway" },
+    green:        { color: "#4fd07a", fill: "#8ef0a6", label: "Green" },
+    bunker:       { color: "#e8c46a", fill: "#f7e3a3", label: "Bunker" },
+    water_hazard: { color: "#3f9fd8", fill: "#6fc8f2", label: "Vatten" },
+    tee:          { color: "#9d7ef0", fill: "#c3aefd", label: "Tee" },
+    ob:           { color: "#e05555", fill: "#f08a8a", label: "OB" },
+    heavy_rough:  { color: "#8a9a3d", fill: "#aec257", label: "Tjockruff" },
+    mask:         { color: "#2e7a46", fill: "#49a86a", label: "Mask (träd)" },
   },
 
   // fetch-JSON med snäll feltext (plockar FastAPI:s {detail} om den finns).

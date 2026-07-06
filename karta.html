@@ -325,9 +325,11 @@ function orientToHole() {
   if (hd != null) map.setBearing(-hd);   // negativt = riktningen pekar uppåt
 }
 
-// fast startzoom: tee (underkant) → bortre kanten av green ("ovankant" när hålet
-// pekar uppåt) ska rymmas mellan toppanelen och mät-rutan, oavsett hål —
-// annars hoppar zoomen beroende på hazards/greenform.
+// fast startzoom: bakersta teen (61) precis ovanför GPS-raden och greenens
+// bortre kant precis under green-måttet, oavsett hål. Räknas exakt (bråkdels-
+// zoom + pixeloffset) i stället för fitBounds, som snappar till hela zoomsteg
+// och därför blir olika grov beroende på hållängd.
+const FIT_GAP_PX = 8;   // luft mellan tee/green och UI-panelerna
 function fitHoleView(h) {
   const teePt = (h.line && h.line.length) ? h.line[0]
     : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
@@ -337,15 +339,26 @@ function fitHoleView(h) {
     const d = hav(teePt, gp);
     if (d > farD) { farD = d; farPt = gp; }
   }
-  const topBottomY = document.getElementById("top").getBoundingClientRect().bottom;
-  const measureTopY = document.getElementById("bottom").getBoundingClientRect().top;
   const mapRect = document.getElementById("map").getBoundingClientRect();
-  const padTop = Math.max(0, topBottomY - mapRect.top) + 10;
-  const padBottom = Math.max(0, mapRect.bottom - measureTopY) + 10;
-  map.fitBounds(L.latLngBounds([teePt, farPt]), {
-    paddingTopLeft: [40, padTop],
-    paddingBottomRight: [40, padBottom]
-  });
+  // green-måttets ruta (vindrutan) nedkant → GPS-radens ovankant = bandet
+  const topY = document.getElementById("wind").getBoundingClientRect().bottom
+    - mapRect.top + FIT_GAP_PX;
+  const botY = document.querySelector("#bottom .hint").getBoundingClientRect().top
+    - mapRect.top - FIT_GAP_PX;
+  const availPx = botY - topY;
+  if (availPx < 50) return false;
+  // zoom så att tee→bortre green täcker exakt bandet (web-mercator-skala)
+  const D = hav(teePt, farPt);
+  const midLat = (teePt[0] + farPt[0]) / 2;
+  const z = Math.log2(40075016.686 * Math.cos(rad(midLat)) * availPx / (256 * D));
+  const mid = [midLat, (teePt[1] + farPt[1]) / 2];
+  map.setView(mid, z, { animate: false });
+  // skjut mittpunkten från kartans mitt till bandets mitt: punkten som ligger
+  // speglat under bandmitten görs till nytt centrum (skärmkoordinater, så det
+  // funkar även med roterad karta — panBy räknar i oroterad pixelrymd)
+  const cy = (topY + botY) / 2;
+  map.setView(map.containerPointToLatLng([mapRect.width / 2, mapRect.height - cy]),
+    z, { animate: false });
   return true;
 }
 
@@ -427,6 +440,7 @@ function onTap(e) {
 
 async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
+    zoomSnap: 0,   // bråkdels-zoom — krävs för att fitHoleView ska bli exakt
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
   CourseMap.esriLayer().addTo(map);
   // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
