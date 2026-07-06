@@ -15,7 +15,10 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
-          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0; }
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
+          /* lätt skuggad grön bakom text i inramningarna (hål, avstånd, mät) —
+             halvgenomskinlig så kartan skiner igenom */
+          --framebg:linear-gradient(rgba(55,176,107,.30),rgba(55,176,107,.30)), rgba(18,60,45,.5); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
@@ -24,25 +27,29 @@
 
   /* topp: hål-väljare + green-avstånd */
   #top { position:absolute; top:0; left:0; right:0; z-index:1000;
-    padding:env(safe-area-inset-top) 10px 8px; background:linear-gradient(#0c2e22ee,#0c2e2200); }
-  .holebar { display:flex; align-items:center; gap:10px; }
-  .holebar .name { flex:1; text-align:center; font-weight:700; font-size:17px; }
+    padding:env(safe-area-inset-top) 10px 8px; }
+  /* toppraden: toggle vänster · hål mitten · kompass höger — space-between så
+     de aldrig överlappar oavsett skärmbredd */
+  .holebar { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .holebar .name { flex:0 1 auto; text-align:center; font-weight:700; font-size:16px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:7px 12px; box-shadow:0 2px 8px #0007; }
   .holebar .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
-  #windrow { margin-top:8px; display:flex; align-items:center; gap:10px; }
-  #wind { flex:1; min-width:0; background:var(--card)cc; border:1px solid var(--line);
-    border-radius:12px; padding:8px 10px; }
+  #windrow { margin-top:4px; display:flex; align-items:center; gap:10px; }
+  #wind { flex:1; min-width:0; background:var(--framebg); border:1px solid var(--line);
+    border-radius:12px; padding:8px 10px; box-shadow:0 2px 8px #0007; }
   #windTxt { min-width:0; }
-  #windTxt .play { font-size:16px; }
-  #windTxt .play b { font-size:19px; color:var(--ink); }
-  #windTxt .play .by { color:var(--ink); font-size:14px; }
+  #windTxt .play { font-size:18px; }
+  #windTxt .play b { font-size:22px; color:var(--ink); }
+  #windTxt .play .by { color:var(--ink); font-size:15px; }
   #windTxt .sub { color:var(--dim); font-size:12px; margin-top:2px; }
-  #rose { flex:0 0 auto; }
+  #rose { flex:0 0 auto; filter:drop-shadow(0 2px 5px #00000099); }
   #rose g { transition:transform .4s; transform-origin:32px 32px; transform-box:view-box; }
 
   /* botten: tap-mät + status */
   #bottom { position:absolute; left:0; right:0; z-index:1000;
     bottom:calc(env(safe-area-inset-bottom) + 62px);
-    padding:8px 10px; background:linear-gradient(#0c2e2200,#0c2e22ee); }
+    padding:8px 10px; }
   /* gemensam flik-rad (samma på alla sidor) */
   .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
@@ -51,18 +58,19 @@
     font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
-  #measure { background:var(--card)ee; border:1px solid var(--line); border-radius:12px;
-    padding:8px 12px; min-height:44px; }
-  #measure .play { font-size:16px; }
-  #measure .play b { font-size:19px; color:var(--ink); }
-  #measure .play .by { color:var(--ink); font-size:14px; }
-  #measure .sub { color:var(--ink); font-size:14px; margin-top:2px; }
+  #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:8px 20px; min-height:44px; text-align:center; width:max-content; margin:0 auto 6px; }
+  #measure .play { font-size:18px; }
+  #measure .play b { font-size:22px; color:var(--ink); }
+  #measure .play .by { color:var(--ink); font-size:15px; }
+  #measure .sub { color:var(--ink); font-size:15px; margin-top:2px; }
   #measure.hidden { display:none; }
-  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått */
-  #modeToggle { display:flex; gap:4px; width:max-content; margin:0 auto 6px;
+  /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Ligger i
+     toppraden längst till vänster (kompakt så den ryms bredvid hål-rutan). */
+  #modeToggle { flex:0 0 auto; display:flex; gap:3px;
     background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
   #modeToggle button { background:none; border:0; color:var(--dim);
-    font-size:13px; font-weight:700; padding:6px 16px; border-radius:9px; }
+    font-size:12px; font-weight:700; padding:6px 9px; border-radius:9px; }
   #modeToggle button.on { background:#1a4c38; color:var(--ink); }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
@@ -78,33 +86,33 @@
 
 <div id="top">
   <div class="holebar">
+    <div id="modeToggle">
+      <button data-mode="play">Spelar som</button>
+      <button data-mode="gps">GPS</button>
+    </div>
     <div class="name" id="holeName">Söker hål …</div>
-  </div>
-  <div id="windrow">
-    <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
-    <svg id="rose" viewBox="0 0 64 64" width="76" height="76">
+    <svg id="rose" viewBox="0 0 64 64" width="74" height="74">
       <g id="roseRing">
-        <circle cx="32" cy="32" r="29" fill="none" stroke="var(--dim)" stroke-width="2" opacity=".7"/>
-        <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">N</text>
-        <circle cx="55" cy="32" r="1.5" fill="var(--dim)"/>
-        <circle cx="32" cy="55" r="1.5" fill="var(--dim)"/>
-        <circle cx="9"  cy="32" r="1.5" fill="var(--dim)"/>
+        <circle cx="32" cy="32" r="29" fill="#cfd6d2" stroke="#3a4a42" stroke-width="2" opacity=".95"/>
+        <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="#123c2d">N</text>
+        <circle cx="55" cy="32" r="1.5" fill="#3a4a42"/>
+        <circle cx="32" cy="55" r="1.5" fill="#3a4a42"/>
+        <circle cx="9"  cy="32" r="1.5" fill="#3a4a42"/>
       </g>
       <g id="roseArrow" visibility="hidden">
         <path d="M32 4 L32 20 M27 15 L32 21 L37 15" fill="none"
               stroke="#e23b3b" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
       </g>
-      <text id="roseMs" x="32" y="35" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">–</text>
-      <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink)"></text>
+      <text id="roseMs" x="32" y="35" text-anchor="middle" font-size="15" font-weight="700" fill="#123c2d">–</text>
+      <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="#123c2d"></text>
     </svg>
+  </div>
+  <div id="windrow">
+    <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
   </div>
 </div>
 
 <div id="bottom">
-  <div id="modeToggle">
-    <button data-mode="play">Spelar som</button>
-    <button data-mode="gps">GPS</button>
-  </div>
   <div id="measure" class="hidden">
     <div class="play" id="mPlay">–</div>
     <div class="sub" id="mSub">–</div>
@@ -217,13 +225,35 @@ async function fetchPlayerElev() {
   updateWind();
 }
 
+// tee-punkt för ett hål: i första hand teen märkt MY_TEE (etikett från
+// tee_overrides.json via export_rangefinder.py), annars linjens start /
+// bakersta teen. "Näst längst bak" duger inte — 61 och 57 kan ligga jämsides.
+const MY_TEE = "57";
+function teePoint(h) {
+  const mine = (h.tees || []).find(t => t.label === MY_TEE);
+  if (mine) return [mine.lat, mine.lon];
+  return (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+}
+// utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
+// från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
+const FAR_FROM_HOLE_M = 1000;
+function measureOrigin() {
+  const h = ROUND[hi];
+  if (h && pos && hav(pos, h.green_center) > FAR_FROM_HOLE_M) {
+    const tp = teePoint(h);
+    if (tp) return { pt: tp, fromTee: true };
+  }
+  return { pt: pos, fromTee: false };
+}
+
 // "spelas som"-avstånd till en punkt: geometriskt + vind (range medelvind–by) + ev. slope.
-// Returnerar null om vind eller position saknas. Byn antas komma från samma håll som
+// Returnerar null om vind eller utgångspunkt saknas. Byn antas komma från samma håll som
 // medelvinden → along skalas med gust/medel.
-function playAsRange(target, slope) {
-  if (!pos || !WIND) return null;
-  const D = hav(pos, target);
-  const rw = relWind(bearing(pos, target), WIND.ms, WIND.dir);
+function playAsRange(origin, target, slope) {
+  if (!origin || !WIND) return null;
+  const D = hav(origin, target);
+  const rw = relWind(bearing(origin, target), WIND.ms, WIND.dir);
   const windShift = -windAlongShift(rw.along, D);
   const gustAlong = (WIND.gust != null && WIND.ms > 0) ? rw.along * WIND.gust / WIND.ms : rw.along;
   const gustShift = -windAlongShift(gustAlong, D);
@@ -249,32 +279,34 @@ function updateRose() {
 function updateWind() {
   updateRose();
   const el = document.getElementById("windTxt");
+  const o = measureOrigin();
+  const teeTag = o.fromTee ? ` <span class="by">(från tee)</span>` : "";
   // GPS-läge: rått avstånd till green, oberoende av vinddata
-  if (mode === "gps" && pos && ROUND[hi]) {
-    el.innerHTML = `<div class="play"><b>${Math.round(hav(pos, ROUND[hi].green_center))} m</b>`
-      + ` <span class="by">till green</span></div>`;
+  if (mode === "gps" && o.pt && ROUND[hi]) {
+    el.innerHTML = `<div class="play"><span class="by">Till green</span> <b>${Math.round(hav(o.pt, ROUND[hi].green_center))} m</b>${teeTag}</div>`;
     return;
   }
   if (!WIND) { el.innerHTML = `<span class="sub">vind ej tillgänglig</span>`; return; }
-  if (!pos || !ROUND[hi]) {
+  if (!o.pt || !ROUND[hi]) {
     el.innerHTML = `<div class="play"><b>${WIND.ms.toFixed(0)} m/s</b> från ${compass(WIND.dir)}</div>`
       + (WIND.gust != null ? `<div class="sub">byar ${WIND.gust.toFixed(0)} m/s</div>` : "");
     return;
   }
   const h = ROUND[hi];
-  const D = hav(pos, h.green_center);
-  const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
+  const D = hav(o.pt, h.green_center);
+  const rw = relWind(bearing(o.pt, h.green_center), WIND.ms, WIND.dir);
   // + = spelar LÄNGRE (motsatt tecken mot flygskiftet). Byn antas komma
   // från samma håll som medelvinden → along skalas med gust/medel.
   const windShift = -windAlongShift(rw.along, D);
   const gustAlong = (WIND.gust != null && WIND.ms > 0)
     ? rw.along * WIND.gust / WIND.ms : rw.along;
   const gustShift = -windAlongShift(gustAlong, D);
-  const slope = (h.green_elev_m != null && PLAYER_ELEV != null)
+  // slope bara när måttet utgår från spelaren — spelarens höjd säger inget om tee
+  const slope = (!o.fromTee && h.green_elev_m != null && PLAYER_ELEV != null)
     ? h.green_elev_m - PLAYER_ELEV : 0;      // uppför positiv, bakas in tyst
   const pMean = Math.round(D + windShift + slope);
   const pGust = Math.round(D + gustShift + slope);
-  let s = `<div class="play">Spelar som <b>${pMean} m</b>`;
+  let s = `<div class="play"><span class="by">Till green</span> <b>${pMean} m</b>${teeTag}`;
   if (Math.abs(pGust - pMean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pGust}</span>`;
   s += `</div>`;
   el.innerHTML = s;
@@ -293,6 +325,30 @@ function orientToHole() {
   if (hd != null) map.setBearing(-hd);   // negativt = riktningen pekar uppåt
 }
 
+// fast startzoom: tee (underkant) → bortre kanten av green ("ovankant" när hålet
+// pekar uppåt) ska rymmas mellan toppanelen och mät-rutan, oavsett hål —
+// annars hoppar zoomen beroende på hazards/greenform.
+function fitHoleView(h) {
+  const teePt = (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+  if (!teePt || !h.green || !h.green.length) return false;
+  let farPt = h.green[0], farD = -1;
+  for (const gp of h.green) {
+    const d = hav(teePt, gp);
+    if (d > farD) { farD = d; farPt = gp; }
+  }
+  const topBottomY = document.getElementById("top").getBoundingClientRect().bottom;
+  const measureTopY = document.getElementById("bottom").getBoundingClientRect().top;
+  const mapRect = document.getElementById("map").getBoundingClientRect();
+  const padTop = Math.max(0, topBottomY - mapRect.top) + 10;
+  const padBottom = Math.max(0, mapRect.bottom - measureTopY) + 10;
+  map.fitBounds(L.latLngBounds([teePt, farPt]), {
+    paddingTopLeft: [40, padTop],
+    paddingBottomRight: [40, padBottom]
+  });
+  return true;
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -300,24 +356,18 @@ function drawHole() {
   document.getElementById("holeName").innerHTML =
     `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
-  // hål-linje
+  // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green)
   if (h.line && h.line.length > 1)
-    L.polyline(h.line, { color: "#e8f5ec", weight: 2, dashArray: "5,6", opacity: .7 }).addTo(layers);
-  // hinder
-  for (const hz of h.hazards || []) {
-    const st = hz.type === "water" ? SS.water_hazard : SS.bunker;
-    L.polygon(hz.poly, { color: st.color, weight: 1, fillColor: st.fill, fillOpacity: .5, interactive: false }).addTo(layers);
-  }
-  // green
-  if (h.green && h.green.length)
-    L.polygon(h.green, { color: SS.green.color, weight: 2, fillColor: SS.green.fill, fillOpacity: .45, interactive: false }).addTo(layers);
+    L.polyline(h.line, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
 
-  // rotera så hålet pekar uppåt, passa sedan vyn (green + tees + linje)
+  // rotera så hålet pekar uppåt, passa sedan vyn tee→green mellan UI-panelerna
   orientToHole();
-  const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
-  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  if (!fitHoleView(h)) {
+    const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  }
   clearTap();
   updateWind();
 }
@@ -352,20 +402,22 @@ function clearTap() {
 function updateTap(latlng) {
   const target = [latlng.lat, latlng.lng];
   document.getElementById("measure").classList.remove("hidden");
+  const o = measureOrigin();
   const rem = fmt(hav(target, ROUND[hi].green_center));
-  const pa = playAsRange(target, 0);   // vind (medel + by); slope okänd för fri punkt
+  const sub = `${rem} m kvar` + (o.fromTee ? " · från tee" : "");
+  const pa = playAsRange(o.pt, target, 0);   // vind (medel + by); slope okänd för fri punkt
   if (mode === "play" && pa) {
-    let s = `Spelar som <b>${pa.mean} m</b>`;
+    let s = `<b>${pa.mean} m</b>`;
     if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
     document.getElementById("mPlay").innerHTML = s;
-    document.getElementById("mSub").textContent = `${rem} m kvar`;
+    document.getElementById("mSub").textContent = sub;
   } else {
     document.getElementById("mPlay").innerHTML =
-      pos ? `<b>${fmt(hav(pos, target))} m</b>` : "–";
-    document.getElementById("mSub").textContent = `${rem} m kvar`;
+      o.pt ? `<b>${fmt(hav(o.pt, target))} m</b>` : "–";
+    document.getElementById("mSub").textContent = sub;
   }
   if (tapLine) map.removeLayer(tapLine);
-  if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
+  if (o.pt) tapLine = L.polyline([o.pt, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
 }
 function onTap(e) {
   if (tapMarker) tapMarker.setLatLng(e.latlng);
@@ -377,6 +429,30 @@ async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
   CourseMap.esriLayer().addTo(map);
+  // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
+  // skarpare än Esri och funkar offline när webbläsaren cachat rutorna.
+  // Egen pane strax ovanför Esri; banritning/markörer ligger kvar ovanpå.
+  fetch("tiles/manifest.json", { cache: "no-cache" })
+    .then(r => r.ok ? r.json() : null)
+    .then(t => {
+      if (!t) return;
+      const pane = map.getPane("imagery") || map.createPane("imagery");
+      pane.style.zIndex = 250;
+      L.tileLayer("tiles/{z}/{x}/{y}.webp", {
+        pane: "imagery", bounds: t.bounds,
+        minNativeZoom: t.min_zoom, maxNativeZoom: t.max_zoom,
+        minZoom: t.min_zoom, maxZoom: 21,
+        attribution: t.attribution,
+      }).addTo(map);
+      // CC BY 4.0 kräver synlig attribution — attributionControl är av,
+      // så en egen diskret rad i kartans hörn.
+      const cred = document.createElement("div");
+      cred.textContent = "Ortofoto © Lantmäteriet (CC BY 4.0)";
+      cred.style.cssText = "position:absolute;right:4px;bottom:2px;z-index:800;" +
+        "font-size:9px;color:#fff;text-shadow:0 0 3px #000;pointer-events:none;";
+      document.getElementById("map").appendChild(cred);
+    })
+    .catch(() => {});   // utan tiles → bara Esri, som förr
   layers.addTo(map);
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
