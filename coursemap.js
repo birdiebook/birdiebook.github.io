@@ -11,7 +11,7 @@ window.CourseMap = {
   // känsla). Verkar på tile-panelerna (Esri + Lantmäteriets ortofoto + imagery-
   // pane) men INTE på overlayPane, så banytornas vektorfärger lämnas orörda.
   // Justera hela kartans ljus/färg genom att ändra denna enda rad.
-  MAP_FILTER: "brightness(1.50) saturate(1.46) contrast(0.99) sepia(0.06)",
+  MAP_FILTER: "brightness(1.60) saturate(1.44) contrast(0.92) sepia(0.05)",
   _filterInjected: false,
   applyImageFilter() {
     if (this._filterInjected || typeof document === "undefined") return;
