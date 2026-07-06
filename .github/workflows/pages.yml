@@ -1,0 +1,42 @@
+name: Deploy to GitHub Pages
+
+# Egen Pages-deploy (ersätter den klassiska "pages build and deployment").
+# Viktigast: concurrency med cancel-in-progress:true → en ny deploy AVBRYTER en
+# som fastnat "in progress" i stället för att köa bakom den för evigt (det var
+# därför deployen förr fastnade i "queued" och aldrig gick vidare).
+#
+# KRÄVER en engångsinställning: Settings → Pages → Build and deployment →
+# Source = "GitHub Actions" (inte "Deploy from a branch").
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # gör att du kan trigga en deploy manuellt från Actions-fliken
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
