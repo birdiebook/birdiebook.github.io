@@ -22,12 +22,15 @@ window.CourseMap = {
     document.head.appendChild(st);
   },
 
-  esriLayer() {
+  // opts slås ihop med bas-optionerna → anropare kan skicka t.ex.
+  // {updateWhenIdle:false, keepBuffer:6} (kartvyn på mobil, roterad karta).
+  esriLayer(opts = {}) {
     this.applyImageFilter();
     return L.tileLayer(this.ESRI_URL, {
       maxZoom: 21, maxNativeZoom: 19,
       attribution:
         "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+      ...opts,
     });
   },
 

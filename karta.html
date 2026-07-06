@@ -383,6 +383,10 @@ function drawHole() {
   }
   clearTap();
   updateWind();
+  // Efter att vyn satts (och layouten satt sig): tvinga en tile-uppdatering så
+  // hela utsnittet fylls direkt, utan att användaren behöver zooma/panorera.
+  // pan:false → ingen förflyttning, inramningen från fitHoleView bevaras.
+  requestAnimationFrame(() => { if (map) map.invalidateSize({ pan: false }); });
 }
 
 function setPos(lat, lon, acc) {
@@ -442,7 +446,12 @@ async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
     zoomSnap: 0,   // bråkdels-zoom — krävs för att fitHoleView ska bli exakt
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
-  CourseMap.esriLayer().addTo(map);
+  // updateWhenIdle:false = ladda tiles direkt (inte först när kartan blir idle);
+  // keepBuffer:6 = håll extra rutor runt viewporten. Roterad karta täcker en
+  // STÖRRE yta diagonalt än den oroterade viewporten → default keepBuffer 2
+  // lämnar hörnen tomma tills en gest tvingar omritning ("laddar först vid zoom").
+  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6 };
+  CourseMap.esriLayer(TILE_OPTS).addTo(map);
   // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
   // skarpare än Esri och funkar offline när webbläsaren cachat rutorna.
   // Läggs i standard-tilePane ovanpå Esri via zIndex. En egen pane funkar INTE
@@ -459,6 +468,7 @@ async function init() {
         minNativeZoom: t.min_zoom, maxNativeZoom: t.max_zoom,
         minZoom: t.min_zoom, maxZoom: 21,
         attribution: t.attribution,
+        ...TILE_OPTS,
       }).addTo(map);
       // CC BY 4.0 kräver synlig attribution — attributionControl är av,
       // så en egen diskret rad i kartans hörn.
