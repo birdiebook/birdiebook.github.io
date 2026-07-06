@@ -225,13 +225,35 @@ async function fetchPlayerElev() {
   updateWind();
 }
 
+// tee-punkt för ett hål: i första hand teen märkt MY_TEE (etikett från
+// tee_overrides.json via export_rangefinder.py), annars linjens start /
+// bakersta teen. "Näst längst bak" duger inte — 61 och 57 kan ligga jämsides.
+const MY_TEE = "57";
+function teePoint(h) {
+  const mine = (h.tees || []).find(t => t.label === MY_TEE);
+  if (mine) return [mine.lat, mine.lon];
+  return (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+}
+// utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
+// från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
+const FAR_FROM_HOLE_M = 1000;
+function measureOrigin() {
+  const h = ROUND[hi];
+  if (h && pos && hav(pos, h.green_center) > FAR_FROM_HOLE_M) {
+    const tp = teePoint(h);
+    if (tp) return { pt: tp, fromTee: true };
+  }
+  return { pt: pos, fromTee: false };
+}
+
 // "spelas som"-avstånd till en punkt: geometriskt + vind (range medelvind–by) + ev. slope.
-// Returnerar null om vind eller position saknas. Byn antas komma från samma håll som
+// Returnerar null om vind eller utgångspunkt saknas. Byn antas komma från samma håll som
 // medelvinden → along skalas med gust/medel.
-function playAsRange(target, slope) {
-  if (!pos || !WIND) return null;
-  const D = hav(pos, target);
-  const rw = relWind(bearing(pos, target), WIND.ms, WIND.dir);
+function playAsRange(origin, target, slope) {
+  if (!origin || !WIND) return null;
+  const D = hav(origin, target);
+  const rw = relWind(bearing(origin, target), WIND.ms, WIND.dir);
   const windShift = -windAlongShift(rw.along, D);
   const gustAlong = (WIND.gust != null && WIND.ms > 0) ? rw.along * WIND.gust / WIND.ms : rw.along;
   const gustShift = -windAlongShift(gustAlong, D);
@@ -257,31 +279,34 @@ function updateRose() {
 function updateWind() {
   updateRose();
   const el = document.getElementById("windTxt");
+  const o = measureOrigin();
+  const teeTag = o.fromTee ? ` <span class="by">(från tee)</span>` : "";
   // GPS-läge: rått avstånd till green, oberoende av vinddata
-  if (mode === "gps" && pos && ROUND[hi]) {
-    el.innerHTML = `<div class="play"><span class="by">Till green</span> <b>${Math.round(hav(pos, ROUND[hi].green_center))} m</b></div>`;
+  if (mode === "gps" && o.pt && ROUND[hi]) {
+    el.innerHTML = `<div class="play"><span class="by">Till green</span> <b>${Math.round(hav(o.pt, ROUND[hi].green_center))} m</b>${teeTag}</div>`;
     return;
   }
   if (!WIND) { el.innerHTML = `<span class="sub">vind ej tillgänglig</span>`; return; }
-  if (!pos || !ROUND[hi]) {
+  if (!o.pt || !ROUND[hi]) {
     el.innerHTML = `<div class="play"><b>${WIND.ms.toFixed(0)} m/s</b> från ${compass(WIND.dir)}</div>`
       + (WIND.gust != null ? `<div class="sub">byar ${WIND.gust.toFixed(0)} m/s</div>` : "");
     return;
   }
   const h = ROUND[hi];
-  const D = hav(pos, h.green_center);
-  const rw = relWind(bearing(pos, h.green_center), WIND.ms, WIND.dir);
+  const D = hav(o.pt, h.green_center);
+  const rw = relWind(bearing(o.pt, h.green_center), WIND.ms, WIND.dir);
   // + = spelar LÄNGRE (motsatt tecken mot flygskiftet). Byn antas komma
   // från samma håll som medelvinden → along skalas med gust/medel.
   const windShift = -windAlongShift(rw.along, D);
   const gustAlong = (WIND.gust != null && WIND.ms > 0)
     ? rw.along * WIND.gust / WIND.ms : rw.along;
   const gustShift = -windAlongShift(gustAlong, D);
-  const slope = (h.green_elev_m != null && PLAYER_ELEV != null)
+  // slope bara när måttet utgår från spelaren — spelarens höjd säger inget om tee
+  const slope = (!o.fromTee && h.green_elev_m != null && PLAYER_ELEV != null)
     ? h.green_elev_m - PLAYER_ELEV : 0;      // uppför positiv, bakas in tyst
   const pMean = Math.round(D + windShift + slope);
   const pGust = Math.round(D + gustShift + slope);
-  let s = `<div class="play"><span class="by">Till green</span> <b>${pMean} m</b>`;
+  let s = `<div class="play"><span class="by">Till green</span> <b>${pMean} m</b>${teeTag}`;
   if (Math.abs(pGust - pMean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pGust}</span>`;
   s += `</div>`;
   el.innerHTML = s;
@@ -331,17 +356,9 @@ function drawHole() {
   document.getElementById("holeName").innerHTML =
     `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
-  // hål-linje
+  // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green)
   if (h.line && h.line.length > 1)
-    L.polyline(h.line, { color: "#e8f5ec", weight: 2, dashArray: "5,6", opacity: .7 }).addTo(layers);
-  // hinder
-  for (const hz of h.hazards || []) {
-    const st = hz.type === "water" ? SS.water_hazard : SS.bunker;
-    L.polygon(hz.poly, { color: st.color, weight: 1, fillColor: st.fill, fillOpacity: .5, interactive: false }).addTo(layers);
-  }
-  // green
-  if (h.green && h.green.length)
-    L.polygon(h.green, { color: SS.green.color, weight: 2, fillColor: SS.green.fill, fillOpacity: .45, interactive: false }).addTo(layers);
+    L.polyline(h.line, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
 
@@ -385,20 +402,22 @@ function clearTap() {
 function updateTap(latlng) {
   const target = [latlng.lat, latlng.lng];
   document.getElementById("measure").classList.remove("hidden");
+  const o = measureOrigin();
   const rem = fmt(hav(target, ROUND[hi].green_center));
-  const pa = playAsRange(target, 0);   // vind (medel + by); slope okänd för fri punkt
+  const sub = `${rem} m kvar` + (o.fromTee ? " · från tee" : "");
+  const pa = playAsRange(o.pt, target, 0);   // vind (medel + by); slope okänd för fri punkt
   if (mode === "play" && pa) {
     let s = `<b>${pa.mean} m</b>`;
     if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
     document.getElementById("mPlay").innerHTML = s;
-    document.getElementById("mSub").textContent = `${rem} m kvar`;
+    document.getElementById("mSub").textContent = sub;
   } else {
     document.getElementById("mPlay").innerHTML =
-      pos ? `<b>${fmt(hav(pos, target))} m</b>` : "–";
-    document.getElementById("mSub").textContent = `${rem} m kvar`;
+      o.pt ? `<b>${fmt(hav(o.pt, target))} m</b>` : "–";
+    document.getElementById("mSub").textContent = sub;
   }
   if (tapLine) map.removeLayer(tapLine);
-  if (pos) tapLine = L.polyline([pos, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
+  if (o.pt) tapLine = L.polyline([o.pt, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
 }
 function onTap(e) {
   if (tapMarker) tapMarker.setLatLng(e.latlng);
@@ -410,6 +429,30 @@ async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
   CourseMap.esriLayer().addTo(map);
+  // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
+  // skarpare än Esri och funkar offline när webbläsaren cachat rutorna.
+  // Egen pane strax ovanför Esri; banritning/markörer ligger kvar ovanpå.
+  fetch("tiles/manifest.json", { cache: "no-cache" })
+    .then(r => r.ok ? r.json() : null)
+    .then(t => {
+      if (!t) return;
+      const pane = map.getPane("imagery") || map.createPane("imagery");
+      pane.style.zIndex = 250;
+      L.tileLayer("tiles/{z}/{x}/{y}.webp", {
+        pane: "imagery", bounds: t.bounds,
+        minNativeZoom: t.min_zoom, maxNativeZoom: t.max_zoom,
+        minZoom: t.min_zoom, maxZoom: 21,
+        attribution: t.attribution,
+      }).addTo(map);
+      // CC BY 4.0 kräver synlig attribution — attributionControl är av,
+      // så en egen diskret rad i kartans hörn.
+      const cred = document.createElement("div");
+      cred.textContent = "Ortofoto © Lantmäteriet (CC BY 4.0)";
+      cred.style.cssText = "position:absolute;right:4px;bottom:2px;z-index:800;" +
+        "font-size:9px;color:#fff;text-shadow:0 0 3px #000;pointer-events:none;";
+      document.getElementById("map").appendChild(cred);
+    })
+    .catch(() => {});   // utan tiles → bara Esri, som förr
   layers.addTo(map);
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
