@@ -450,7 +450,15 @@ async function init() {
   // keepBuffer:6 = håll extra rutor runt viewporten. Roterad karta täcker en
   // STÖRRE yta diagonalt än den oroterade viewporten → default keepBuffer 2
   // lämnar hörnen tomma tills en gest tvingar omritning ("laddar först vid zoom").
-  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6 };
+  // detectRetina: på högupplösta skärmar (alla moderna telefoner) hämtar Leaflet
+  // en zoomnivå DJUPARE och ritar den i samma yta → dubbel bildupplösning, utnyttjar
+  // att ortofotot är 0,16 m/px (äkta detalj ner till ~z19). Gör kartan skarp även
+  // utzoomad över ett helt par 5. Kostar ~4× fler rutor per vy (mobildata).
+  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6, detectRetina: true };
+  // detectRetina begär URL-zoom = native-zoom + 1. Cappa därför native en nivå
+  // under manifestets max så URL-zoomen aldrig överstiger z19 (som finns) → annars
+  // 404 på z20 vid djup inzoomning. På icke-retina (detectRetina av) full max.
+  const deepMax = t => t.max_zoom - (L.Browser.retina ? 1 : 0);
   // Esri läggs INTE på som baslager. Lantmäteriets ortofoto täcker alla 27 hål
   // (330 m+ marginal) på de zoomnivåer kartan används, så Esri syntes bara som en
   // snabb "blink" innan de lokala rutorna hann fram. Nu är #map:s mörkgröna
@@ -473,7 +481,7 @@ async function init() {
       CourseMap.applyImageFilter();
       L.tileLayer("tiles/{z}/{x}/{y}.webp", {
         bounds: t.bounds, zIndex: 10,
-        minNativeZoom: t.min_zoom, maxNativeZoom: t.max_zoom,
+        minNativeZoom: t.min_zoom, maxNativeZoom: deepMax(t),
         minZoom: t.min_zoom, maxZoom: 21,
         attribution: t.attribution,
         ...TILE_OPTS,

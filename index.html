@@ -350,12 +350,14 @@ function esc(s) { return String(s).replace(/[&<>"']/g,
    annat: bara same-origin GET av samma tile-URL:er som kartan ändå begär.
    Tile-matematiken är verifierad att ge exakt samma {z,x,y} som Leaflet. */
 const TilePreload = (() => {
-  // Kartans initiala hålvy landar på z17 (par 4/5, även 500 m ger fit ~16,7→17)
-  // eller z18 (par 3, kortare → högre zoom) — aldrig z16. Värm därför bara den
-  // nivå hålet faktiskt öppnar i: par 3 → z17+z18 (z18 = initial, z17 = ett steg
-  // ut), övriga → bara z17. z18 på par 4/5 behövs först vid aktiv inzoomning och
-  // hämtas då live → utanför preloaden, sparar mobildata.
-  const zoomsFor = h => (h.par && h.par <= 3) ? [17, 18] : [17];
+  // Värm bara den zoomnivå hålets INITIALA kartvy öppnar i (det som ska kännas
+  // direkt); zoom in/ut därifrån laddas live. Par 4/5 öppnar en nivå grundare än
+  // par 3 (längre hål → mer utzoomat). Kartan kör detectRetina → på retina-skärmar
+  // (telefoner) begär den en nivå DJUPARE, därav baseZ = 18 (retina) / 17 annars;
+  // par 3 = baseZ+1.
+  const RETINA = (self.devicePixelRatio || 1) > 1;
+  const baseZ = RETINA ? 18 : 17;
+  const zoomsFor = h => [(h.par && h.par <= 3) ? baseZ + 1 : baseZ];
   const seen = new Set();            // avdubbling över alla anrop
   let holesP = null, lastRel = null, cfg = { min: 13, max: 19 };
   function loadHoles() {
@@ -374,6 +376,13 @@ const TilePreload = (() => {
   const xtile = (lon, z) => Math.floor((lon + 180) / 360 * (1 << z));
   const ytile = (lat, z) => { const r = lat * Math.PI / 180;
     return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z)); };
+  // Marginal runt hålet så preloaden täcker kartans ROTERADE vy (som sträcker sig
+  // utanför hål-linjen). En rutantals-marginal duger ej (krymper i meter vid djupare
+  // zoom). Marginalen skalas efter hålets storlek: kartan zoomas för att rymma hålet,
+  // så lateral overshoot ∝ hållängd. ~0,32×span + 40 m rotationskudde, klampat
+  // [80,200] → full täckning för både korta par 3 och långa par 5, minimal data
+  // (verifierat mot kartans faktiska rutor).
+  const R = 6371000, rad = x => x * Math.PI / 180;
   function bbox(h) {
     let s = 90, n = -90, w = 180, e = -180;
     const eat = (la, lo) => { if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo; };
@@ -381,7 +390,12 @@ const TilePreload = (() => {
     (h.line || []).forEach(p => eat(p[0], p[1]));
     (h.tees || []).forEach(t => eat(t.lat, t.lon));
     if (h.pin) eat(h.pin[0], h.pin[1]);
-    return (e >= w && n >= s) ? { s, n, w, e } : null;
+    if (!(e >= w && n >= s)) return null;
+    const span = 2 * R * Math.asin(Math.sqrt(
+      Math.sin(rad(n - s) / 2) ** 2 + Math.cos(rad(s)) * Math.cos(rad(n)) * Math.sin(rad(e - w) / 2) ** 2));
+    const padM = Math.max(80, Math.min(200, 0.32 * span + 40));
+    const dLat = padM / 111320, dLon = padM / (111320 * Math.cos(rad((s + n) / 2)));
+    return { s: s - dLat, n: n + dLat, w: w - dLon, e: e + dLon };
   }
   function warm(url) {
     if (seen.has(url)) return;
@@ -392,10 +406,10 @@ const TilePreload = (() => {
     const b = bbox(h); if (!b) return;
     for (const z of zoomsFor(h)) {
       if (z < cfg.min || z > cfg.max) continue;
-      // +1 rutas marginal åt varje håll → täcker roterade hörn (som keepBuffer)
-      const x0 = xtile(b.w, z) - 1, x1 = xtile(b.e, z) + 1;
-      const y0 = ytile(b.n, z) - 1, y1 = ytile(b.s, z) + 1;   // n = mindre y
-      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 80) continue;        // säkerhetsspärr
+      // exakt tile-intervall för den padded bboxen (marginalen sitter i PAD_M)
+      const x0 = xtile(b.w, z), x1 = xtile(b.e, z);
+      const y0 = ytile(b.n, z), y1 = ytile(b.s, z);           // n = mindre y
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 160) continue;       // säkerhetsspärr
       for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
         warm(`tiles/${z}/${x}/${y}.webp`);
     }
