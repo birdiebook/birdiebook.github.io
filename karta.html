@@ -431,15 +431,17 @@ async function init() {
   CourseMap.esriLayer().addTo(map);
   // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
   // skarpare än Esri och funkar offline när webbläsaren cachat rutorna.
-  // Egen pane strax ovanför Esri; banritning/markörer ligger kvar ovanpå.
+  // Läggs i standard-tilePane ovanpå Esri via zIndex. En egen pane funkar INTE
+  // med leaflet-rotate: pluginet flyttar bara standardpanerna in i sin roterade
+  // rotatePane, medan en createPane("imagery") hamnar i den oroterade mapPane
+  // och blir felplacerad/osynlig. Banritning/markörer ligger i overlay-/
+  // markerPane och hamnar ändå ovanpå tiles.
   fetch("tiles/manifest.json", { cache: "no-cache" })
     .then(r => r.ok ? r.json() : null)
     .then(t => {
       if (!t) return;
-      const pane = map.getPane("imagery") || map.createPane("imagery");
-      pane.style.zIndex = 250;
       L.tileLayer("tiles/{z}/{x}/{y}.webp", {
-        pane: "imagery", bounds: t.bounds,
+        bounds: t.bounds, zIndex: 10,
         minNativeZoom: t.min_zoom, maxNativeZoom: t.max_zoom,
         minZoom: t.min_zoom, maxZoom: 21,
         attribution: t.attribution,
