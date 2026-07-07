@@ -449,13 +449,19 @@ async function init() {
   // lämnar hörnen tomma tills en gest tvingar omritning ("laddar först vid zoom").
   // detectRetina: på högupplösta skärmar (alla moderna telefoner) hämtar Leaflet
   // en zoomnivå DJUPARE och ritar den i samma yta → dubbel bildupplösning, utnyttjar
-  // att ortofotot är 0,16 m/px (äkta detalj ner till ~z19). Gör kartan skarp även
-  // utzoomad över ett helt par 5. Kostar ~4× fler rutor per vy (mobildata).
-  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6, detectRetina: true };
-  // detectRetina begär URL-zoom = native-zoom + 1. Cappa därför native en nivå
-  // under manifestets max så URL-zoomen aldrig överstiger z19 (som finns) → annars
-  // 404 på z20 vid djup inzoomning. På icke-retina (detectRetina av) full max.
-  const deepMax = t => t.max_zoom - (L.Browser.retina ? 1 : 0);
+  // att ortofotot är 0,16 m/px (äkta detalj ner till ~z19). tileSize:128+zoomOffset:1
+  // slår in EN nivå djupare redan som baslinje (samma knep som detectRetina gör
+  // internt — tileSize måste halveras i takt med zoomOffset annars pekar {x}/{y}
+  // fel och rutorna 404:ar). detectRetina lägger på ytterligare en nivå på
+  // retina-skärmar (halverar tileSize + zoomOffset igen). Gör kartan skarpare
+  // även utzoomad (t.ex. hela par 5-hål), på bekostnad av fler rutor/mer
+  // mobildata per vy.
+  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6, detectRetina: true,
+    tileSize: 128, zoomOffset: 1 };
+  // URL-zoom = native-zoom + zoomOffset(1 bas + 1 på retina-skärmar). Cappa
+  // native så URL-zoomen aldrig överstiger z19 (som finns) → annars 404 på
+  // djup inzoomning.
+  const deepMax = t => t.max_zoom - 1 - (L.Browser.retina ? 1 : 0);
   // Esri läggs INTE på som baslager. Lantmäteriets ortofoto täcker alla 27 hål
   // (330 m+ marginal) på de zoomnivåer kartan används, så Esri syntes bara som en
   // snabb "blink" innan de lokala rutorna hann fram. Nu är #map:s mörkgröna
