@@ -80,8 +80,6 @@
           background: #1a4c38; color: var(--ink); flex: none; }
   .step .val { font-size: 26px; font-weight: 800; min-width: 40px; text-align: center; }
   .step .lbl { color: var(--dim); font-size: 14px; }
-  .step button.holedbtn { width: auto; height: auto; flex: 1;
-          padding: 12px; font-size: 15px; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; font-size: 15px; }
   th, td { text-align: right; padding: 7px 6px; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
@@ -119,7 +117,7 @@
   .logwrap.compact .loghint { display: none; }
   /* avstånds-slinga (horisontell, aldrig vertikal tillväxt) */
   .trail { display: flex; align-items: center; gap: 8px; overflow-x: auto;
-          padding: 4px 10px 12px; scrollbar-width: none; }
+          padding: 10px 10px 12px; scrollbar-width: none; }
   .trail::-webkit-scrollbar { display: none; }
   .trail .node { flex: none; display: inline-flex; align-items: center; justify-content: center;
           width: 30px; height: 30px; border-radius: 50%; background: #1a4c38;
@@ -198,7 +196,7 @@ function save() {
 function hole(n) {
   const k = String(n);
   if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
-                                  putts: 0, pen: 0, holedOut: false, adj: 0 };
+                                  putts: 0, pen: 0, adj: 0 };
   return S.holes[k];
 }
 
@@ -270,7 +268,8 @@ function exportData() {
     // banans globala hålnummer, så översätt via vald runda vid export
     .map(x => ({ hole: SGRound.relToGlobal(x.n) || x.n, shots: x.h.shots,
                  green: x.h.green, pin: x.h.pin,
-                 putts: x.h.putts, penalties: x.h.pen, holed_out: x.h.holedOut,
+                 putts: x.h.putts, penalties: x.h.pen,
+                 holed_out: x.h.putts === 0 && x.h.shots.length > 0,
                  score_adjust: x.h.adj || 0 }));
   return { format: "golf-sg-mobil", version: 1, player: S.player.trim(),
            course: S.course.trim(), round: SGRound.roundName(),
@@ -558,9 +557,6 @@ function renderHole() {
         <span class="knob"></span><span>MARKERA PINN</span></button>
     </div>
     <div class="tstatus">${tstatus}</div>
-    ${h.putts === 0 && pts.length ? `
-      <button class="ghost holedbtn ${h.holedOut ? "on" : ""}" id="holed" style="width:100%">
-        ${h.holedOut ? "✓ I hål utan putt (chip-in)" : "I hål utan putt (chip-in)?"}</button>` : ""}
 
     <button class="big" id="next">Nästa hål ›</button>
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
@@ -586,7 +582,7 @@ function renderHole() {
     if (confirm("Ta bort senaste slaget?")) { pts.splice(+b.dataset.del, 1); save(); render(); }
   });
   document.getElementById("pm").onclick = () => { h.putts = Math.max(0, h.putts - 1); save(); render(); };
-  document.getElementById("pp").onclick = () => { h.putts++; h.holedOut = false; save(); render(); };
+  document.getElementById("pp").onclick = () => { h.putts++; save(); render(); };
   document.getElementById("fm").onclick = () => { h.pen = Math.max(0, h.pen - 1); save(); render(); };
   document.getElementById("fp").onclick = () => { h.pen++; save(); render(); };
   // score +/−: justerar antalet slag vid bollen via adj (utan GPS-position), så
@@ -596,8 +592,6 @@ function renderHole() {
     if (pts.length + (h.adj || 0) <= 0) return;
     h.adj = (h.adj || 0) - 1; save(); render();
   };
-  const ho = document.getElementById("holed");
-  if (ho) ho.onclick = () => { h.holedOut = !h.holedOut; save(); render(); };
   document.getElementById("prev").onclick = () => { S.current--; save(); render(); };
   document.getElementById("next2").onclick = () => nextHole();
   document.getElementById("next").onclick = () => nextHole();
@@ -608,8 +602,6 @@ function renderHole() {
 
 function nextHole() {
   const h = hole(S.current);
-  if (h.shots.length && !h.green && !h.holedOut && h.putts === 0 &&
-      !confirm("Varken green-position, puttar eller chip-in registrerat på hålet — gå vidare ändå?")) return;
   if (h.shots.length && h.putts > 0 && !h.green &&
       !confirm("Ingen boll-på-green-position — första puttens längd får uppskattas vid import. Gå vidare?")) return;
   if (S.current < MAX_HOLE) { S.current++; save(); render(); }
