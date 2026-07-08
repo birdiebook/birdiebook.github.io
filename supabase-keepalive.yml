@@ -1,0 +1,57 @@
+# Supabase keep-alive — motverkar 7-dagars-auto-pausen på gratisprojektet.
+# Bakgrund: LIVE_SCORING_SPEC.md §10 + MOLN_PLAN.md §7. Gratisprojekt pausas
+# efter ~7 idle-dagar och måste väckas manuellt i dashboarden → första matchen
+# på länge känns då trög/död. Denna cron gör en billig läsning mot `games`
+# en gång/dygn så projektet aldrig hinner bli inaktivt.
+#
+# Läsningen använder PUBLISHABLE-nyckeln (anon), precis som klienten. Fas 1-RLS
+# (spec §5) släpper bara in rollen `authenticated`, så anon får 0 rader tillbaka
+# — det gör inget: poängen är att TRÄFFA API:t/databasen, inte att få data.
+# Ett 2xx-svar räcker som livstecken; jobbet failar annars så en pausad databas
+# eller död nyckel syns direkt.
+#
+# Engångsuppsättning: lägg publishable-nyckeln som repo-secret
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Namn: SUPABASE_PUBLISHABLE_KEY   Värde: sb_publishable_...  (samma som i klienten)
+# (Nyckeln är publik av design och syns ändå i klientkoden — secret hålls den
+#  ändå borta från loggarna. URL:en är härledd ur det publika projekt-ref:et.)
+
+name: supabase-keepalive
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # 06:17 UTC dagligen (≈ 1/dygn, långt under paus-gränsen)
+  workflow_dispatch: {}     # manuell knapp i Actions-fliken
+
+# Bara ett keep-alive-jobb behöver köra åt gången.
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: "https://pcwzxjbuydyuxufpzaxl.supabase.co"
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - name: Billig läsning mot games (väcker/håller projektet vaket)
+        run: |
+          if [ -z "$SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "::error::Secret SUPABASE_PUBLISHABLE_KEY saknas — se kommentaren överst i filen."
+            exit 1
+          fi
+
+          # select=id&limit=1 = minsta möjliga fråga; kastar bort svarskroppen.
+          code=$(curl -sS -m 30 -o /dev/null -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/games?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_PUBLISHABLE_KEY}")
+
+          echo "HTTP ${code}"
+          case "$code" in
+            2*) echo "Keep-alive OK — Supabase svarar, pausklockan nollställd." ;;
+            *)  echo "::error::Oväntad status ${code} — projektet kan vara pausat eller nyckeln fel."
+                exit 1 ;;
+          esac
