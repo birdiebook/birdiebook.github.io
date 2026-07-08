@@ -29,8 +29,7 @@
   @media (orientation:landscape) {
     #app { max-width:none; }
     .card-tbl th, .card-tbl td { padding:6px 3px; font-size:14px; }
-    .card-tbl .name { min-width:80px; max-width:none; }
-    .card-tbl .pn { max-width:none; }
+    .card-tbl .name { min-width:80px; }
     .hcol { min-width:0; }
   }
   h1 { font-size:22px; margin:10px 0 2px; }
@@ -58,19 +57,20 @@
   .card-tbl thead th { color:var(--dim); font-weight:600; font-size:13px; }
   /* sticky namn-kolumn */
   .card-tbl .name { position:sticky; left:0; z-index:2; text-align:left;
-    background:var(--card); padding-left:2px; padding-right:8px;
-    min-width:76px; max-width:96px; }
-  /* kapa långa namn så 9 hål + Ut ryms på skärmen i stående */
-  .card-tbl .pn { display:inline-block; max-width:64px; overflow:hidden;
-    text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
-  .blockgap { height:14px; }
+    background:var(--card); padding-left:2px; padding-right:10px; min-width:96px; }
+  /* stående mobil: visa bara förnamnet så scorekortet får mer plats */
+  .pn-first { display:none; }
+  @media (orientation:portrait) {
+    .pn-full { display:none; }
+    .pn-first { display:inline; }
+  }
   .card-tbl thead .name, .card-tbl .parrow .name { background:var(--card); }
   .card-tbl tbody tr.me .name { background:#1a4c38; }
   .card-tbl tbody tr.me td { background:#153f2f; }
   .me-tag { color:var(--dim); font-size:11px; font-weight:600; }
   .parrow td, .parrow th { color:var(--dim); font-size:13px; font-weight:600;
     border-bottom:2px solid var(--line); }
-  .hcol { min-width:28px; }
+  .hcol { min-width:30px; }
   /* delsummor (Ut/In/Tot) — svag avgränsning så ögat hittar dem */
   .card-tbl .sumcol { min-width:34px; font-weight:800;
     border-left:1px solid var(--line); background:#0e3326; }
@@ -205,61 +205,61 @@ function sumPar(from, to) {
 }
 const sumCell = v => `<td class="sumcol">${v || "–"}</td>`;
 
-// ett scorekorts-block: rels = spelarhål (1-baserat) i blocket, sums = trailing
-// summeringskolumner. Spelarna är rader → jämförelse rakt över inom blocket.
-function renderBlock(rels, sums) {
-  const holeHdr = rels.map(r => `<th class="hcol">${r}</th>`).join("");
-  const sumHdr = sums.map(s => `<th class="${s.cls || "sumcol"}">${s.label}</th>`).join("");
-  const parCells = rels.map(r => {
-    const p = parByRel[r]; return `<td class="hcol">${p != null ? p : "–"}</td>`;
-  }).join("");
-  const parSums = sums.map(s =>
-    `<td class="${s.cls || "sumcol"}">${s.par != null ? s.par : "–"}</td>`).join("");
-  const body = LB.map(p => {
-    const mine = myUid && p.uid === myUid;
-    const cells = rels.map(r => scoreCell(p.holes ? p.holes[r] : null, parByRel[r])).join("");
-    const sumCells = sums.map(s => s.cell(p)).join("");
-    return `<tr class="${mine ? "me" : ""}">
-      <td class="name"><span class="pn">${esc(p.name || "—")}</span>${mine ? ' <span class="me-tag">(du)</span>' : ""}</td>
-      ${cells}${sumCells}</tr>`;
-  }).join("");
-  return `<div class="scroll"><table class="card-tbl">
-    <thead>
-      <tr><th class="name">Hål</th>${holeHdr}${sumHdr}</tr>
-      <tr class="parrow"><td class="name">Par</td>${parCells}${parSums}</tr>
-    </thead>
-    <tbody>${body}</tbody>
-  </table></div>`;
-}
-
 function scorecardHtml() {
   const head = `<div class="card"><h2>🏆 Live-scorekort <span class="note">kod ${esc(LIVE.code || "")}</span></h2>`;
   if (!LB) return head + `<div class="hint left">Ansluter …</div></div>`;
   if (!LB.length) return head + `<div class="hint left">Ingen har fört score än.</div></div>`;
 
   const N = seq.length;
-  const front = [], back = [];
-  seq.forEach((g, i) => (i < 9 ? front : back).push(i + 1));   // hål 1–9 / resten
+  const split = N > 9;                 // dela i Ut/In när rundan är längre än 9 hål
+  const outTo = split ? 9 : N;         // sista hålet i "Ut"
+
+  // header: hålnummer, "Ut" efter hål 9, resten, "In", "Tot" (slag), "+/−" (mot par)
+  let holeHdr = "";
+  seq.forEach((g, i) => {
+    holeHdr += `<th class="hcol">${i + 1}</th>`;
+    if (split && i + 1 === outTo) holeHdr += `<th class="sumcol">Ut</th>`;
+  });
+  if (split) holeHdr += `<th class="sumcol">In</th>`;
+
+  // par-rad med samma summeringar
+  let parCells = "";
+  seq.forEach((g, i) => {
+    const p = parByRel[i + 1];
+    parCells += `<td class="hcol">${p != null ? p : "–"}</td>`;
+    if (split && i + 1 === outTo) parCells += sumCell(sumPar(1, outTo));
+  });
+  if (split) parCells += sumCell(sumPar(outTo + 1, N));
   const totPar = sumPar(1, N);
 
-  // summerings-kolumner
-  const utSum = { label: "Ut", par: sumPar(front[0], front[front.length - 1]),
-                  cell: p => sumCell(sumHoles(p, front[0], front[front.length - 1])) };
-  const totSum = { label: "Tot", par: totPar, cell: p => sumCell(p.total) };
-  const tpSum = { label: "+/−", cls: "totcol", par: null, cell: p => {
-    const c = p.thru && p.toPar < 0 ? "under" : p.thru && p.toPar > 0 ? "over" : "";
-    return `<td class="tot totcol ${c}">${p.thru ? fmtDiff(p.toPar) : "–"}</td>`;
-  } };
+  const body = LB.map(p => {
+    const mine = myUid && p.uid === myUid;
+    let cells = "";
+    seq.forEach((g, i) => {
+      const rel = i + 1;
+      cells += scoreCell(p.holes ? p.holes[rel] : null, parByRel[rel]);
+      if (split && rel === outTo) cells += sumCell(sumHoles(p, 1, outTo));
+    });
+    if (split) cells += sumCell(sumHoles(p, outTo + 1, N));
+    const tpCls = p.thru && p.toPar < 0 ? "under" : p.thru && p.toPar > 0 ? "over" : "";
+    const tp = p.thru ? fmtDiff(p.toPar) : "–";
+    const full = esc(p.name || "—");
+    const first = esc((p.name || "—").trim().split(/\s+/)[0] || "—");
+    return `<tr class="${mine ? "me" : ""}">
+      <td class="name"><span class="pn-full">${full}</span><span class="pn-first">${first}</span>${mine ? ' <span class="me-tag">(du)</span>' : ""}</td>
+      ${cells}
+      <td class="sumcol">${p.total || "–"}</td>
+      <td class="tot totcol ${tpCls}">${tp}</td>
+    </tr>`;
+  }).join("");
 
-  // ≤9 hål: ett block med Tot+mot par. Annars två staplade nio-block (front/back).
-  if (!back.length) return head + renderBlock(front, [totSum, tpSum]) + `</div>`;
-  const inSum = { label: "In", par: sumPar(back[0], back[back.length - 1]),
-                  cell: p => sumCell(sumHoles(p, back[0], back[back.length - 1])) };
-  return head
-    + renderBlock(front, [utSum])
-    + `<div class="blockgap"></div>`
-    + renderBlock(back, [inSum, totSum, tpSum])
-    + `</div>`;
+  return head + `<div class="scroll"><table class="card-tbl">
+    <thead>
+      <tr><th class="name">Hål</th>${holeHdr}<th class="sumcol">Tot</th><th class="totcol">+/−</th></tr>
+      <tr class="parrow"><td class="name">Par</td>${parCells}<td class="sumcol">${totPar || "–"}</td><td class="totcol">–</td></tr>
+    </thead>
+    <tbody>${body}</tbody>
+  </table></div></div>`;
 }
 
 async function render() {
