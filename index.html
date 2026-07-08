@@ -167,6 +167,12 @@
   <a href="./oversikt.html"><span class="ico">📋</span>Översikt</a>
 </nav>
 <script src="./round.js"></script>
+<!-- Live-scoring (additivt): supabase-js + delad score-härledning + klient.
+     Laddas före huvudskriptet så SGScore/SGLive finns när vyerna ritas.
+     Faller tyst tillbaka till "ingen live" om CDN inte nås (t.ex. offline). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./score.js"></script>
+<script src="./live.js"></script>
 <script>
 "use strict";
 const KEY = "sg-rundlogg-v1";
@@ -436,6 +442,65 @@ function render() {
   if (S.view === "hole") TilePreload.forHole(S.current);
 }
 
+/* Live-kort på setup-vyn: skapa match / gå med (spelkod + namn) eller visa
+   aktuell match. Rör inget i rundflödet. */
+function liveCardHtml() {
+  const L = Live.state();
+  if (Live.inGame()) {
+    return `
+    <div class="card">
+      <label style="margin-top:0">Live-scoring</label>
+      <p class="hint">Du är med i matchen <b style="color:var(--ink);font-size:18px;letter-spacing:2px">${esc(L.code)}</b> som ${esc(L.displayName)}.
+        Din score skickas automatiskt medan du loggar. Dela koden med bollen.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="liveLeave">Lämna live</button>
+        <button class="ghost" id="liveFinish">Avsluta live-match</button>
+      </div>
+      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <label style="margin-top:0">Live-scoring <span style="color:var(--dim)">(valfritt)</span></label>
+      <p class="hint">För score tillsammans med bollen i realtid. Skapa en match och dela koden, eller gå med i en befintlig. Kräver ditt namn ovan.</p>
+      <label>Gå med i match (spelkod)</label>
+      <div class="row">
+        <input type="text" id="liveCode" placeholder="T.ex. K4RT" autocomplete="off"
+          autocapitalize="characters" style="text-transform:uppercase">
+        <button class="ghost" id="liveJoin" style="flex:none;padding:12px 18px">Gå med</button>
+      </div>
+      <button class="big" id="liveCreate" style="background:#1a4c38;color:var(--ink)">Skapa ny match</button>
+      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
+    </div>`;
+}
+function wireLiveCard() {
+  const msg = document.getElementById("liveMsg");
+  const say = (t, ok) => { if (msg) msg.innerHTML = ok ? `<span class="ok">${esc(t)}</span>` : esc(t); };
+  const run = async (btn, fn, working) => {
+    const old = btn.textContent; btn.disabled = true; btn.textContent = working;
+    try { await fn(); renderSetup(); }
+    catch (e) { say(e.message || "Något gick fel."); btn.disabled = false; btn.textContent = old; }
+  };
+  const create = document.getElementById("liveCreate");
+  if (create) create.onclick = e => run(e.currentTarget, () => Live.create(), "Skapar …");
+  const join = document.getElementById("liveJoin");
+  if (join) join.onclick = e => {
+    const code = (document.getElementById("liveCode").value || "").trim();
+    if (!code) { say("Ange en spelkod."); return; }
+    run(e.currentTarget, () => Live.join(code), "Går med …");
+  };
+  const leave = document.getElementById("liveLeave");
+  if (leave) leave.onclick = () => {
+    if (!confirm("Lämna live-matchen? Din runda och score påverkas inte.")) return;
+    Live.leave(); renderSetup();
+  };
+  const finish = document.getElementById("liveFinish");
+  if (finish) finish.onclick = e => {
+    if (!confirm("Avsluta matchen för alla? Ingen mer live-score tas emot.")) return;
+    run(e.currentTarget, () => Live.finish(), "Avslutar …");
+  };
+}
+
 function renderSetup() {
   const insecure = !window.isSecureContext;
   const last = localStorage.getItem(KEY_LAST);
@@ -464,7 +529,9 @@ function renderSetup() {
       4. Plikt? Öka <b>Plikt</b>-räknaren. Chip-in? Bocka i <b>I hål utan putt</b>.<br>
       5. Efter rundan: <b>Avsluta</b> → dela filen till den som har appen.
     </div>
+    ${liveCardHtml()}
     ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
+  wireLiveCard();
   // rundval (1–18/10–27/19–9) delas via localStorage ('sg_round'): kartan och
   // översikten visar rätt hål, och exporten översätter spelarens hål 1–18 till
   // banans globala hålnummer.
@@ -519,6 +586,7 @@ function renderHole() {
       <div class="htitle">
         <div class="nr">Hål ${S.current}</div>
         <span id="gpschip">${gpsChipHtml()}</span>
+        ${Live.inGame() ? `<div class="gpsprec good" style="margin-top:2px">📡 Live: ${esc(Live.state().code)}</div>` : ""}
       </div>
       <button id="next2">›</button>
     </div>
@@ -563,7 +631,7 @@ function renderHole() {
 
   document.getElementById("shot").onclick = async () => {
     const p = await capture("slaget");
-    if (p) { hole(S.current).shots.push(p); save(); }
+    if (p) { hole(S.current).shots.push(p); save(); livePush(); }
     render();
   };
   document.getElementById("green").onclick = async () => {
@@ -579,23 +647,25 @@ function renderHole() {
     render();
   };
   app.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
-    if (confirm("Ta bort senaste slaget?")) { pts.splice(+b.dataset.del, 1); save(); render(); }
+    if (confirm("Ta bort senaste slaget?")) { pts.splice(+b.dataset.del, 1); save(); livePush(); render(); }
   });
-  document.getElementById("pm").onclick = () => { h.putts = Math.max(0, h.putts - 1); save(); render(); };
-  document.getElementById("pp").onclick = () => { h.putts++; save(); render(); };
-  document.getElementById("fm").onclick = () => { h.pen = Math.max(0, h.pen - 1); save(); render(); };
-  document.getElementById("fp").onclick = () => { h.pen++; save(); render(); };
+  document.getElementById("pm").onclick = () => { h.putts = Math.max(0, h.putts - 1); save(); livePush(); render(); };
+  document.getElementById("pp").onclick = () => { h.putts++; save(); livePush(); render(); };
+  document.getElementById("fm").onclick = () => { h.pen = Math.max(0, h.pen - 1); save(); livePush(); render(); };
+  document.getElementById("fp").onclick = () => { h.pen++; save(); livePush(); render(); };
   // score +/−: justerar antalet slag vid bollen via adj (utan GPS-position), så
   // score kan sättas rätt även när alla slag inte loggats. − stoppar vid 0 slag.
-  document.getElementById("sp").onclick = () => { h.adj = (h.adj || 0) + 1; save(); render(); };
+  document.getElementById("sp").onclick = () => { h.adj = (h.adj || 0) + 1; save(); livePush(); render(); };
   document.getElementById("sm").onclick = () => {
     if (pts.length + (h.adj || 0) <= 0) return;
-    h.adj = (h.adj || 0) - 1; save(); render();
+    h.adj = (h.adj || 0) - 1; save(); livePush(); render();
   };
-  document.getElementById("prev").onclick = () => { S.current--; save(); render(); };
+  // vid byte av hål: pusha hålet man LÄMNAR (fångar "hål lämnas" i spec §7)
+  document.getElementById("prev").onclick = () => { livePush(); S.current--; save(); render(); };
   document.getElementById("next2").onclick = () => nextHole();
   document.getElementById("next").onclick = () => nextHole();
   document.getElementById("finish").onclick = () => {
+    livePush();   // pusha sista hålets score innan sammanfattningen
     S.endedAt = new Date().toISOString(); S.view = "summary"; save(); render();
   };
 }
@@ -604,6 +674,7 @@ function nextHole() {
   const h = hole(S.current);
   if (h.shots.length && h.putts > 0 && !h.green &&
       !confirm("Ingen boll-på-green-position — första puttens längd får uppskattas vid import. Gå vidare?")) return;
+  livePush();   // pusha hålet man lämnar innan vi byter
   if (S.current < MAX_HOLE) { S.current++; save(); render(); }
 }
 
@@ -680,6 +751,57 @@ function renderSummary() {
 function stashLast() {
   try { localStorage.setItem(KEY_LAST, JSON.stringify(exportData())); } catch (e) {}
 }
+
+/* ---------- live-scoring (additivt, LIVE_SCORING_SPEC.md §6–7) ----------
+   Egen state-nyckel, helt skild från rundan. Rör aldrig S/save() eller
+   GPS-/slag-loggningen — läser bara S.holes för att härleda score via den
+   delade SGScore.components och skickar komponenterna till molnet.
+   Allt är fire-and-forget: fel/offline sväljs, score finns kvar lokalt. */
+const Live = (() => {
+  const LKEY = "sg-live-v1";
+  let L = null;
+  try { L = JSON.parse(localStorage.getItem(LKEY)); } catch (e) {}
+  const has = () => typeof SGLive !== "undefined";           // CDN kan saknas offline
+  const state = () => L;
+  const inGame = () => !!(L && L.gameId);
+  function persist() {
+    try { L ? localStorage.setItem(LKEY, JSON.stringify(L))
+            : localStorage.removeItem(LKEY); } catch (e) {}
+  }
+  async function create() {
+    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
+    const name = (S.player || "").trim();
+    if (!name) throw new Error("Fyll i ditt namn först.");
+    const { gameId, code } = await SGLive.createGame({
+      course: S.course, roundSeq: SGRound.roundName(), displayName: name });
+    L = { gameId, code, displayName: name }; persist();
+    return L;
+  }
+  async function join(code) {
+    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
+    const name = (S.player || "").trim();
+    if (!name) throw new Error("Fyll i ditt namn först.");
+    const { gameId } = await SGLive.joinGame(code, name);
+    L = { gameId, code: String(code).toUpperCase().trim(), displayName: name };
+    persist();
+    return L;
+  }
+  function leave() { L = null; persist(); }        // rör bara live-state, ej rundan
+  async function finish() {
+    if (has() && inGame()) { try { await SGLive.finishGame(L.gameId); } catch (e) {} }
+    leave();
+  }
+  // Skicka ett håls score till molnet. Tyst no-op om man inte är med i match.
+  function push(n) {
+    if (!has() || !inGame()) return;
+    const c = SGScore.components(hole(n));
+    SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
+      .catch(() => {});   // offline/fel: score ligger kvar lokalt, molnet hinner ikapp senare
+  }
+  return { state, inGame, create, join, leave, finish, push };
+})();
+// bekvämt anrop från befintliga handlare: pusha aktuellt hål efter en ändring
+function livePush(n) { Live.push(n == null ? S.current : n); }
 
 /* ---------- synk med hålkartan ---------- */
 // Kartans ◀/▶ skriver sg_hole; plocka upp det när man kommer tillbaka hit
