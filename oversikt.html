@@ -24,6 +24,14 @@
     padding:env(safe-area-inset-top) env(safe-area-inset-right)
             env(safe-area-inset-bottom) env(safe-area-inset-left); }
   #app { max-width:480px; margin:0 auto; padding:12px 14px 96px; }
+  /* liggande mobil: låt kortet bli så brett som skärmen så hela scorekortet
+     ryms utan horisontell scroll */
+  @media (orientation:landscape) {
+    #app { max-width:none; }
+    .card-tbl th, .card-tbl td { padding:6px 3px; font-size:14px; }
+    .card-tbl .name { min-width:80px; }
+    .hcol { min-width:0; }
+  }
   h1 { font-size:22px; margin:10px 0 2px; }
   h2 { font-size:15px; margin:8px 0 10px; }
   h2 .note { color:var(--dim); font-weight:400; font-size:12px; }
@@ -57,6 +65,10 @@
   .parrow td, .parrow th { color:var(--dim); font-size:13px; font-weight:600;
     border-bottom:2px solid var(--line); }
   .hcol { min-width:30px; }
+  /* delsummor (Ut/In/Tot) — svag avgränsning så ögat hittar dem */
+  .card-tbl .sumcol { min-width:34px; font-weight:800;
+    border-left:1px solid var(--line); background:#0e3326; }
+  .card-tbl tbody tr.me td.sumcol { background:#173d2d; }
   .totcol { min-width:40px; font-weight:800; }
   td.tot { font-weight:800; }
   td.tot.under { color:var(--good); }
@@ -174,44 +186,72 @@ function emptyView() {
   </div>`;
 }
 
+// summering av spelade hål i ett spann (spelarhål from..to, 1-baserat inkl.)
+function sumHoles(p, from, to) {
+  let s = 0;
+  for (let r = from; r <= to; r++) if (p.holes && p.holes[r]) s += p.holes[r];
+  return s;
+}
+function sumPar(from, to) {
+  let s = 0, any = false;
+  for (let r = from; r <= to; r++) if (parByRel[r] != null) { s += parByRel[r]; any = true; }
+  return any ? s : null;
+}
+const sumCell = v => `<td class="sumcol">${v || "–"}</td>`;
+
 function scorecardHtml() {
   const head = `<div class="card"><h2>🏆 Live-scorekort <span class="note">kod ${esc(LIVE.code || "")}</span></h2>`;
   if (!LB) return head + `<div class="hint left">Ansluter …</div></div>`;
   if (!LB.length) return head + `<div class="hint left">Ingen har fört score än.</div></div>`;
 
-  // kolumner = spelarhål 1..N; visa bara hål som ingår i rundan
-  const holeHdr = seq.map((g, i) => `<th class="hcol">${i + 1}</th>`).join("");
-  let totPar = 0;
-  const parCells = seq.map((g, i) => {
+  const N = seq.length;
+  const split = N > 9;                 // dela i Ut/In när rundan är längre än 9 hål
+  const outTo = split ? 9 : N;         // sista hålet i "Ut"
+
+  // header: hålnummer, "Ut" efter hål 9, resten, "In", "Tot" (slag), "+/−" (mot par)
+  let holeHdr = "";
+  seq.forEach((g, i) => {
+    holeHdr += `<th class="hcol">${i + 1}</th>`;
+    if (split && i + 1 === outTo) holeHdr += `<th class="sumcol">Ut</th>`;
+  });
+  if (split) holeHdr += `<th class="sumcol">In</th>`;
+
+  // par-rad med samma summeringar
+  let parCells = "";
+  seq.forEach((g, i) => {
     const p = parByRel[i + 1];
-    if (p != null) totPar += p;
-    return `<td class="hcol">${p != null ? p : "–"}</td>`;
-  }).join("");
+    parCells += `<td class="hcol">${p != null ? p : "–"}</td>`;
+    if (split && i + 1 === outTo) parCells += sumCell(sumPar(1, outTo));
+  });
+  if (split) parCells += sumCell(sumPar(outTo + 1, N));
+  const totPar = sumPar(1, N);
 
   const body = LB.map(p => {
     const mine = myUid && p.uid === myUid;
-    const cells = seq.map((g, i) => {
+    let cells = "";
+    seq.forEach((g, i) => {
       const rel = i + 1;
-      return scoreCell(p.holes ? p.holes[rel] : null, parByRel[rel]);
-    }).join("");
+      cells += scoreCell(p.holes ? p.holes[rel] : null, parByRel[rel]);
+      if (split && rel === outTo) cells += sumCell(sumHoles(p, 1, outTo));
+    });
+    if (split) cells += sumCell(sumHoles(p, outTo + 1, N));
     const tpCls = p.thru && p.toPar < 0 ? "under" : p.thru && p.toPar > 0 ? "over" : "";
     const tp = p.thru ? fmtDiff(p.toPar) : "–";
     return `<tr class="${mine ? "me" : ""}">
       <td class="name">${esc(p.name || "—")}${mine ? ' <span class="me-tag">(du)</span>' : ""}</td>
       ${cells}
+      <td class="sumcol">${p.total || "–"}</td>
       <td class="tot totcol ${tpCls}">${tp}</td>
     </tr>`;
   }).join("");
 
   return head + `<div class="scroll"><table class="card-tbl">
     <thead>
-      <tr><th class="name">Hål</th>${holeHdr}<th class="totcol">Tot</th></tr>
-      <tr class="parrow"><td class="name">Par</td>${parCells}<td class="totcol">${totPar || "–"}</td></tr>
+      <tr><th class="name">Hål</th>${holeHdr}<th class="sumcol">Tot</th><th class="totcol">+/−</th></tr>
+      <tr class="parrow"><td class="name">Par</td>${parCells}<td class="sumcol">${totPar || "–"}</td><td class="totcol">–</td></tr>
     </thead>
     <tbody>${body}</tbody>
-  </table></div>
-  <div class="hint left">Total = mot par. Cirkel = birdie · dubbelcirkel = eagle+ · kvadrat = bogey · dubbelkvadrat = dubbel+.</div>
-  </div>`;
+  </table></div></div>`;
 }
 
 async function render() {
