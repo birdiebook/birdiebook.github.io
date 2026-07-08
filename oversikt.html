@@ -104,6 +104,10 @@
   <a href="./oversikt.html" class="active"><span class="ico">📋</span>Översikt</a>
 </nav>
 <script src="./round.js"></script>
+<!-- Live-scoring (additivt): samma tre script som Logga slag. Ger leaderboarden. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./score.js"></script>
+<script src="./live.js"></script>
 <script>
 "use strict";
 // Numrering/rundsekvenser delas via round.js (SGRound). Tabellen och all
@@ -112,6 +116,55 @@
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
 const KEY = "sg-rundlogg-v1";
 const SG_LABEL = { off_the_tee: "Utslag", approach: "Inspel", around_green: "Närspel" };
+
+/* ---------- live-leaderboard (LIVE_SCORING_SPEC.md §7, steg 4) ----------
+   Läser samma live-state som Logga slag skriver (sg-live-v1). Är man med i en
+   match prenumererar vi på molnets score och visar allas löpande resultat i
+   realtid. Rör inget i den lokala rundvyn — additivt kort överst. */
+let LIVE = null;
+try { LIVE = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+const liveOn = () => !!(LIVE && LIVE.gameId && typeof SGLive !== "undefined");
+let LB = null;          // senaste leaderboard-modellen från subscriben
+let myUid = null;       // egen uid → markera egen rad
+let lbSubscribed = false, lbUnsub = null;
+
+function lbHtml() {
+  if (!liveOn()) return "";
+  const head = `<div class="card"><h2>🏆 Live-leaderboard <span class="note">kod ${esc(LIVE.code || "")}</span></h2>`;
+  if (!LB) return head + `<div class="hint" style="text-align:left;margin:4px 0">Ansluter …</div></div>`;
+  if (!LB.length) return head + `<div class="hint" style="text-align:left;margin:4px 0">Ingen har fört score än.</div></div>`;
+  const rows = LB.map((p, i) => {
+    const mine = myUid && p.uid === myUid;
+    const tp = p.thru ? (p.toPar === 0 ? "E" : fmtDiff(p.toPar)) : "–";
+    const tpCls = p.thru && p.toPar < 0 ? "under" : p.thru && p.toPar > 0 ? "over" : "";
+    return `<tr${mine ? ' class="now"' : ""}>
+      <td>${i + 1}. ${esc(p.name || "—")}${mine ? " <span style=\"color:var(--dim);font-size:12px\">(du)</span>" : ""}</td>
+      <td>${p.thru || 0}</td>
+      <td>${p.total || "–"}</td>
+      <td class="${tpCls}">${tp}</td>
+    </tr>`;
+  }).join("");
+  return head + `<table style="margin:4px 0">
+    <tr><th>Spelare</th><th>Hål</th><th>Slag</th><th>Mot par</th></tr>
+    ${rows}
+  </table></div>`;
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+// Startas en gång när par-listan är känd (par per spelarhål 1–18 → mot par).
+function startLeaderboard(parByRel) {
+  if (lbSubscribed || !liveOn()) return;
+  lbSubscribed = true;
+  SGLive.initLive().then(r => { myUid = r.uid; }).catch(() => {});
+  try {
+    lbUnsub = SGLive.subscribeLeaderboard(LIVE.gameId, rows => {
+      LB = rows; render();
+    }, { par: parByRel });
+  } catch (e) { lbSubscribed = false; }
+}
+window.addEventListener("pagehide", () => { if (lbUnsub) lbUnsub(); });
 
 function loadState() {
   try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; }
@@ -276,25 +329,38 @@ function parHtml(t) {
     ? `<div class="card"><h2>Snitt per parvärde</h2><div class="pargrid">${boxes.join("")}</div></div>` : "";
 }
 
+let coursePromise = null;
+function loadCourse() {
+  if (coursePromise) return coursePromise;
+  coursePromise = fetch("./data/burlov.json", { cache: "no-cache" })
+    .then(r => r.json())
+    .then(data => {
+      const by = {};
+      for (const h of data.holes) by[GLOBAL_BASE[h.loop] + h.hole] = h;
+      return by;
+    })
+    .catch(() => ({}));   // par visas som – om bandata saknas
+  return coursePromise;
+}
+
 async function render() {
   const S = loadState();
   const roundName = SGRound.roundName();
   const seq = SGRound.seq();
-  let byGlobal = {};
-  try {
-    const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
-    for (const h of data.holes) byGlobal[GLOBAL_BASE[h.loop] + h.hole] = h;
-  } catch (e) { /* par visas som – om bandata saknas */ }
+  // bandata cachas (realtids-leaderboarden triggar render vid varje score → hämta bara en gång)
+  const byGlobal = await loadCourse();
 
   const current = S && S.view === "hole" ? S.current : null;
   const t = { totScore: 0, totPar: 0, totPutts: 0, played: 0, nHoles: seq.length,
               dist: { birdie: 0, par: 0, bogey: 0, dbl: 0 },
               byPar: {}, worstHole: null };
   // rel = spelarens hål (1–18); bandata slås upp via det globala numret
+  const parByRel = {};   // { spelarhål 1–18: par } → mot par i leaderboarden
   const rows = seq.map((g, i) => {
     const rel = i + 1;
     const h = byGlobal[g];
     const par = h && h.par != null ? h.par : null;
+    if (par != null) parByRel[rel] = par;
     const sc = holeScore(S, rel);
     let diffCell = `<td class="empty">–</td>`;
     if (sc && par != null) {
@@ -325,6 +391,7 @@ async function render() {
   document.getElementById("app").innerHTML = `
     <h1>Översikt</h1>
     <p class="sub">${sub}${t.played ? ` · ${t.played} hål spelade` : ""}</p>
+    ${lbHtml()}
     ${heroHtml(t)}
     ${sgHtml(A, t.played)}
     ${insightsHtml(A, t)}
@@ -351,6 +418,8 @@ async function render() {
     b.onclick = e => { e.stopPropagation(); bump(editing, b.dataset.bump, +b.dataset.d); });
   document.querySelectorAll("[data-open]").forEach(el =>
     el.onclick = e => { e.stopPropagation(); goToHole(+el.dataset.open); });
+  // starta live-prenumerationen när par-listan finns (en gång)
+  startLeaderboard(parByRel);
 }
 render();
 // uppdatera om man kommer tillbaka hit med ny data
