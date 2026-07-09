@@ -601,11 +601,11 @@ const TAP_ICON = L.divIcon({ className: "tappin", iconSize: [34, 34], iconAnchor
     + '<g fill="none" stroke-linecap="round">'
     + '<g stroke="#fff" stroke-width="4">'
     +   '<circle cx="17" cy="17" r="9"/>'
-    +   '<path d="M17 1V9 M17 25V33 M1 17H9 M25 17H33"/></g>'
-    + '<g stroke="#3b82f6" stroke-width="2">'
+    +   '<path d="M17 4.5V8 M17 26V29.5 M4.5 17H8 M26 17H29.5"/></g>'
+    + '<g stroke="#37b06b" stroke-width="2">'
     +   '<circle cx="17" cy="17" r="9"/>'
-    +   '<path d="M17 1V9 M17 25V33 M1 17H9 M25 17H33"/></g>'
-    + '</g><circle cx="17" cy="17" r="1.8" fill="#3b82f6"/></svg>' });
+    +   '<path d="M17 4.5V8 M17 26V29.5 M4.5 17H8 M26 17H29.5"/></g>'
+    + '</g><circle cx="17" cy="17" r="1.8" fill="#37b06b"/></svg>' });
 function onTap(e) {
   if (tapMarker) tapMarker.setLatLng(e.latlng);
   else tapMarker = L.marker(e.latlng, { icon: TAP_ICON }).addTo(map);
