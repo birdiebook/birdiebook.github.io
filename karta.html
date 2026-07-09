@@ -67,7 +67,7 @@
   /* mått till vald position: förankrad uppe till höger, precis under kompassen */
   #measure { position:fixed; z-index:1000;
     right:calc(env(safe-area-inset-right) + 10px);
-    top:calc(env(safe-area-inset-top) + 104px);
+    top:calc(env(safe-area-inset-top) + 86px);
     background:var(--framebg); border:1px solid var(--line); border-radius:12px;
     padding:8px 20px; min-height:44px; text-align:right; width:max-content; max-width:62vw; }
   #measure .play { font-size:18px; }
@@ -100,7 +100,7 @@
      samma gröna som GPS-prickens ok-läge). */
   #logfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
-    left:calc(env(safe-area-inset-left) + 14px);
+    right:calc(env(safe-area-inset-right) + 14px);
     bottom:calc(env(safe-area-inset-bottom) + 107px);
     width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -116,7 +116,7 @@
      dessa: bredd 54 → left 20 ger samma centrum). */
   #greenfab, #pinfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
-    left:calc(env(safe-area-inset-left) + 20px);
+    right:calc(env(safe-area-inset-right) + 20px);
     width:54px; height:54px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     font-weight:800; font-size:10px; line-height:1.1; text-align:center;
@@ -133,7 +133,7 @@
      (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
      ovanför och − under för att justera scoren. */
   #scorefab { position:fixed; z-index:1300;
-    right:calc(env(safe-area-inset-right) + 14px);
+    left:calc(env(safe-area-inset-left) + 14px);
     bottom:calc(env(safe-area-inset-bottom) + 107px);
     display:flex; flex-direction:column; align-items:center; gap:8px; }
   #scorefab .sc-btn { -webkit-appearance:none; appearance:none; cursor:pointer;
@@ -199,7 +199,7 @@
   <button type="button" class="sc-btn" id="puttUp" aria-label="Öka puttar">+</button>
   <div class="sc-count"><span class="val" id="puttVal">0</span><span class="lbl">putt</span></div>
   <button type="button" class="sc-btn" id="puttDn" aria-label="Minska puttar">−</button>
-  <div class="sc-count"><span class="val" id="scoreVal">0</span><span class="lbl">slag</span></div>
+  <div class="sc-count"><span class="val" id="scoreVal">0</span><span class="lbl">score</span></div>
 </div>
 
 <nav class="tabs">
@@ -628,12 +628,16 @@ function refreshFabs() {
   if (pf) pf.classList.toggle("on", !!(rec && rec.pin && rec.pin.lat != null));
 }
 
-// Score-räknare: total slag vid bollen för aktuellt hål = GPS-loggade slag
-// (rundloggens shots) + manuell justering (adj). Samma valuta/fält som Logga
-// slag-sidans score-siffra, så det stämmer överens mellan vyerna.
+// Slag vid bollen för aktuellt hål = GPS-loggade slag (rundloggens shots) +
+// manuell justering (adj). Används både för adjust-stoppet och som del av scoren.
 function scoreTotal(rec) {
   const shots = (rec && rec.shots) ? rec.shots.length : 0;
   return shots + (rec && rec.adj ? rec.adj : 0);
+}
+// Hela hålscoren, exakt som Logga slag-sidan: slag (shots+adj) + puttar + plikt.
+function fullScore(rec) {
+  return scoreTotal(rec) + (rec && rec.putts ? rec.putts : 0)
+                         + (rec && rec.pen ? rec.pen : 0);
 }
 function currentHoleRec() {
   let l = null;
@@ -642,9 +646,8 @@ function currentHoleRec() {
 }
 function renderScore() {
   const rec = currentHoleRec();
-  const tot = scoreTotal(rec);
   const v = document.getElementById("scoreVal");
-  if (v) v.textContent = String(tot);
+  if (v) v.textContent = String(fullScore(rec));
   const putts = rec && rec.putts ? rec.putts : 0;
   const pv = document.getElementById("puttVal");
   if (pv) pv.textContent = String(putts);
@@ -813,7 +816,8 @@ function updateTap(latlng) {
   const pa = playAsRange(o.pt, target, 0);   // vind (medel + by); slope okänd för fri punkt
   if (mode === "play" && pa) {
     let s = `<b>${pa.mean} m</b>`;
-    if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
+    // "i by"-spannet dolt i UX (testar utan) — beräkningen finns kvar ovan:
+    // if (Math.abs(pa.gust - pa.mean) >= GUST_SPAN_MIN_M) s += ` <span class="by">· i by ${pa.gust}</span>`;
     document.getElementById("mPlay").innerHTML = s;
     document.getElementById("mSub").textContent = sub;
   } else {
