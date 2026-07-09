@@ -17,6 +17,7 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
+          --danger:#e23b3b;
           /* halvgenomskinlig svart bakom text i inramningarna (hål, avstånd, mät) —
              syns tydligare mot kartan än den gröna varianten */
           --framebg: rgba(0,0,0,.55); }
@@ -64,7 +65,7 @@
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
-    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 129px 0; }
+    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 250px 0; }
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .sub { display:block; color:var(--ink); font-size:15px; margin-top:2px; }
@@ -104,6 +105,44 @@
     background:var(--framebg); }
   #logfab:active { transform:scale(.94); }
   #logfab.busy { opacity:.5; pointer-events:none; }
+  /* runda "Boll på green"- och "Pin"-knappar, staplade ovanför Logga slag.
+     Samma inramning/halvgenomskinliga stil som logfab men mindre diameter och
+     färgsatta som respektive toggle på Logga slag-sidan (green=accent, pin=danger).
+     Centrerade i samma kolumn som logfab (logfab: left 14 + bredd 66 → centrum 47;
+     dessa: bredd 54 → left 20 ger samma centrum). */
+  #greenfab, #pinfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+    cursor:pointer; font-family:inherit;
+    left:calc(env(safe-area-inset-left) + 20px);
+    width:54px; height:54px; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-weight:800; font-size:10px; line-height:1.1; text-align:center;
+    border:1px solid var(--line); box-shadow:0 2px 8px #0007; background:var(--framebg); }
+  #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 185px); color:var(--danger); border-color:var(--danger); }
+  #greenfab { bottom:calc(env(safe-area-inset-bottom) + 251px); color:var(--accent); border-color:var(--accent); }
+  #greenfab:active, #pinfab:active { transform:scale(.94); }
+  #greenfab.busy, #pinfab.busy { opacity:.5; pointer-events:none; }
+  #greenfab.on { background:rgba(55,176,107,.30); }   /* reggad boll-på-green */
+  #pinfab.on   { background:rgba(226,59,59,.30); }     /* reggad pin */
+  /* score-räknare nere till höger: total slag för aktuellt hål i en rund ruta
+     (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
+     ovanför och − under för att justera scoren. */
+  #scorefab { position:fixed; z-index:1300;
+    right:calc(env(safe-area-inset-right) + 14px);
+    bottom:calc(env(safe-area-inset-bottom) + 107px);
+    display:flex; flex-direction:column; align-items:center; gap:8px; }
+  #scorefab .sc-btn { -webkit-appearance:none; appearance:none; cursor:pointer;
+    font-family:inherit; width:44px; height:44px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:24px; font-weight:800; line-height:1; color:var(--accent);
+    border:1px solid var(--accent); box-shadow:0 2px 8px #0007; background:var(--framebg); }
+  #scorefab .sc-btn:active { transform:scale(.94); }
+  #scorefab .sc-btn:disabled { opacity:.4; }
+  #scorefab .sc-count { width:66px; height:66px; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:var(--ink); border:1px solid var(--accent); box-shadow:0 2px 8px #0007;
+    background:var(--framebg); }
+  #scorefab .sc-count .val { font-size:26px; font-weight:800; line-height:1; }
+  #scorefab .sc-count .lbl { font-size:10px; font-weight:700; color:var(--dim); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -146,7 +185,15 @@
     · tryck på kartan för att mäta</div>
 </div>
 
+<button type="button" id="greenfab">Boll på<br>green</button>
+<button type="button" id="pinfab">Markera<br>pin</button>
 <button type="button" id="logfab">Logga<br>slag</button>
+
+<div id="scorefab">
+  <button type="button" class="sc-btn" id="scoreUp" aria-label="Öka score">+</button>
+  <div class="sc-count"><span class="val" id="scoreVal">0</span><span class="lbl">slag</span></div>
+  <button type="button" class="sc-btn" id="scoreDn" aria-label="Minska score">−</button>
+</div>
 
 <nav class="tabs">
   <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
@@ -464,6 +511,10 @@ function drawShots() {
   if (rec.green && rec.green.lat != null)
     L.circleMarker([rec.green.lat, rec.green.lon], { radius: 5, color: "#fff",
       weight: 2, fillColor: "#7ee2a8", fillOpacity: 1 }).addTo(shotLayer);
+  // reggad pin (om satt): röd punkt, skild från greenens ljusa ring
+  if (rec.pin && rec.pin.lat != null)
+    L.circleMarker([rec.pin.lat, rec.pin.lon], { radius: 5, color: "#fff",
+      weight: 2, fillColor: "#e23b3b", fillOpacity: 1 }).addTo(shotLayer);
 }
 
 // Logga ett slag direkt från kartvyn: färsk GPS-fix → pusha till rundloggen
@@ -496,12 +547,129 @@ function logShot() {
     try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
     if (navigator.vibrate) navigator.vibrate(30);
     drawShots();
+    renderScore();   // ett loggat slag höjer total-räknaren
     done();
   }, e => {
     alert(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
                        : "Fick ingen GPS-position, försök igen.");
     done();
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
+}
+
+// Markera boll-på-green ("green") eller pin ("pin") direkt från kartvyn: färsk
+// GPS-fix → skriv positionen i rundloggen (sg-rundlogg-v1) för aktuellt hål,
+// samma format/struktur som Logga slag-sidans capture() ({lat,lon,acc,ts}).
+// Bekräftar innan en redan reggad position ersätts. Delad pin pushas dessutom
+// till ev. live-match (samma som index.html:s livePushPin).
+function markPoint(kind) {
+  if (markBusy) return;
+  if (!("geolocation" in navigator)) { alert("Ingen GPS i webbläsaren."); return; }
+  const fab = document.getElementById(kind === "green" ? "greenfab" : "pinfab");
+  // finns redan? bekräfta ersättning (läs aktuell rundlogg)
+  let existing = null;
+  try {
+    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
+    existing = l && l.holes && l.holes[String(hi + 1)] && l.holes[String(hi + 1)][kind];
+  } catch (e) {}
+  const label = kind === "green" ? "Green-position" : "Pin-position";
+  if (existing && existing.lat != null &&
+      !confirm(`${label} finns redan — ersätta?`)) return;
+
+  markBusy = true; if (fab) fab.classList.add("busy");
+  const done = () => { markBusy = false; if (fab) fab.classList.remove("busy"); };
+  navigator.geolocation.getCurrentPosition(p => {
+    const acc = p.coords.accuracy;
+    if (acc > 25 && !confirm(`Svag GPS just nu (±${Math.round(acc)} m). Spara ${label.toLowerCase()} ändå?`)) {
+      done(); return;
+    }
+    const pt = { lat: p.coords.latitude, lon: p.coords.longitude,
+      acc: Math.round(acc * 10) / 10, ts: new Date().toISOString() };
+    let log = null;
+    try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+    if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
+                      current: hi + 1, holes: {} };
+    if (!log.holes) log.holes = {};
+    const k = String(hi + 1);
+    if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
+                                        putts: 0, pen: 0, adj: 0 };
+    log.holes[k][kind] = pt;
+    try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(30);
+    // pin delas till matchen (om man är med i ett live-game), som på Logga slag-sidan
+    if (kind === "pin") livePushPinFromMap(pt);
+    drawShots();
+    refreshFabs();
+    done();
+  }, e => {
+    alert(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
+                       : "Fick ingen GPS-position, försök igen.");
+    done();
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
+}
+let markBusy = false;
+
+// Sätt/rensa "on"-läget på green-/pin-knapparna efter vad som är reggat för
+// aktuellt hål i rundloggen (grön/röd tint = position finns).
+function refreshFabs() {
+  let rec = null;
+  try {
+    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
+    rec = l && l.holes && l.holes[String(hi + 1)];
+  } catch (e) {}
+  const gf = document.getElementById("greenfab"), pf = document.getElementById("pinfab");
+  if (gf) gf.classList.toggle("on", !!(rec && rec.green && rec.green.lat != null));
+  if (pf) pf.classList.toggle("on", !!(rec && rec.pin && rec.pin.lat != null));
+}
+
+// Score-räknare: total slag vid bollen för aktuellt hål = GPS-loggade slag
+// (rundloggens shots) + manuell justering (adj). Samma valuta/fält som Logga
+// slag-sidans score-siffra, så det stämmer överens mellan vyerna.
+function scoreTotal(rec) {
+  const shots = (rec && rec.shots) ? rec.shots.length : 0;
+  return shots + (rec && rec.adj ? rec.adj : 0);
+}
+function currentHoleRec() {
+  let l = null;
+  try { l = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+  return l && l.holes ? l.holes[String(hi + 1)] : null;
+}
+function renderScore() {
+  const rec = currentHoleRec();
+  const tot = scoreTotal(rec);
+  const v = document.getElementById("scoreVal");
+  if (v) v.textContent = String(tot);
+  const dn = document.getElementById("scoreDn");
+  if (dn) dn.disabled = tot <= 0;   // stoppa vid 0, som index.html
+}
+// Justera scoren via adj (utan GPS-position), så antalet kan sättas rätt även
+// när inte varje slag GPS-taggats. steg = +1 / −1. − stoppar vid 0 slag.
+function adjustScore(step) {
+  let log = null;
+  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
+                    current: hi + 1, holes: {} };
+  if (!log.holes) log.holes = {};
+  const k = String(hi + 1);
+  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
+                                      putts: 0, pen: 0, adj: 0 };
+  const rec = log.holes[k];
+  if (step < 0 && scoreTotal(rec) <= 0) return;   // inte under 0
+  rec.adj = (rec.adj || 0) + step;
+  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(15);
+  renderScore();
+}
+
+// Pusha reggad pin till ev. live-match. Kartan har ingen Live-modul → läser
+// gameId ur localStorage (sg-live-v1) och anropar SGLive direkt. Fire-and-forget.
+function livePushPinFromMap(pt) {
+  let live = null;
+  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  if (!live || !live.gameId || typeof SGLive === "undefined") return;
+  const g = SGRound.relToGlobal(hi + 1);
+  if (g == null) return;
+  try { SGLive.pushPin(live.gameId, g, { lat: pt.lat, lon: pt.lon, acc: pt.acc }).catch(() => {}); }
+  catch (e) {}
 }
 
 // Delad pin för aktuellt hål (om satt i matchen) — egen flagg-markör i pinLayer,
@@ -560,6 +728,8 @@ function drawHole() {
 
   // reggade slag ur rundloggen (om några loggats för hålet)
   drawShots();
+  refreshFabs();   // grön/röd tint på green-/pin-knapparna efter vad som är reggat
+  renderScore();   // total slag för hålet i score-räknaren
   // delad pin från matchen (om satt för hålet)
   drawPin();
 
@@ -710,6 +880,14 @@ async function init() {
   pinLayer.addTo(map);
   const lf = document.getElementById("logfab");
   if (lf) lf.onclick = logShot;
+  const gf = document.getElementById("greenfab");
+  if (gf) gf.onclick = () => markPoint("green");
+  const pf = document.getElementById("pinfab");
+  if (pf) pf.onclick = () => markPoint("pin");
+  const su = document.getElementById("scoreUp");
+  if (su) su.onclick = () => adjustScore(1);
+  const sd = document.getElementById("scoreDn");
+  if (sd) sd.onclick = () => adjustScore(-1);
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
   map.on("rotate", updateRose);   // rosen följer kartans rotation
