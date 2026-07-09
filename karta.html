@@ -60,7 +60,7 @@
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
-    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 96px 0; }
+    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 129px 0; }
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .sub { display:block; color:var(--ink); font-size:15px; margin-top:2px; }
@@ -84,18 +84,20 @@
   .gpsdot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e26a5a; }
   .gpsdot.ok { background:var(--accent); }
   .hint { color:var(--dim); font-size:12px; text-align:center; margin-top:6px; }
-  /* rund "Logga slag"-knapp nere till vänster. Färgen speglar GPS-precisionen
-     (samma trösklar/färger som +-avståndet på Logga slag-sidan): grön ±≤8 m,
-     gul ±≤15 m, röd däröver. Röd som utgångsläge tills första fix. */
-  #logfab { position:fixed; z-index:1300; text-decoration:none;
+  /* rund "Logga slag"-knapp nere till vänster — samma inramning som mått-rutorna:
+     tunn mörkgrön ring, halvgenomskinlig svart bakgrund, grön text (--accent,
+     samma gröna som GPS-prickens ok-läge). */
+  #logfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+    cursor:pointer; font-family:inherit;
     left:calc(env(safe-area-inset-left) + 14px);
-    bottom:calc(env(safe-area-inset-bottom) + 74px);
+    bottom:calc(env(safe-area-inset-bottom) + 107px);
     width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
-    color:#06180f; font-weight:800; font-size:10px; line-height:1.15; text-align:center;
-    border:3px solid #fff; box-shadow:0 3px 12px #0009;
-    background:#e26a5a; transition:background .3s; }
-  #logfab .ico { font-size:24px; line-height:1; }
+    color:var(--accent); font-weight:800; font-size:13px; line-height:1.15; text-align:center;
+    border:1px solid var(--line); box-shadow:0 2px 8px #0007;
+    background:var(--framebg); }
+  #logfab:active { transform:scale(.94); }
+  #logfab.busy { opacity:.5; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -138,7 +140,7 @@
     · tryck på kartan för att mäta</div>
 </div>
 
-<a href="./index.html" id="logfab"><span class="ico">⛳</span>Logga<br>slag</a>
+<button type="button" id="logfab">Logga<br>slag</button>
 
 <nav class="tabs">
   <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
@@ -188,7 +190,8 @@ function setRound(name) {
   hi = 0;
   syncHole();
 }
-let map, layers = L.layerGroup(), meMarker = null, tapMarker = null, tapLine = null;
+let map, layers = L.layerGroup(), shotLayer = L.layerGroup(),
+    meMarker = null, tapMarker = null, tapLine = null;
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
 
@@ -391,6 +394,7 @@ function fitHoleView(h) {
 // [lat,lon]. Ritas in i samma layers-grupp som rensas vid varje hålbyte, så
 // plotten uppdateras när man kommer tillbaka från loggen (pageshow → syncHole).
 function drawShots() {
+  shotLayer.clearLayers();   // eget lager → kan ritas om utan att röra hålvyn
   let log = null;
   try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
   const rec = log && log.holes && log.holes[String(hi + 1)];
@@ -403,18 +407,56 @@ function drawShots() {
   const path = [...pts];
   if (rec.green && rec.green.lat != null) path.push([rec.green.lat, rec.green.lon]);
   if (path.length > 1)
-    L.polyline(path, { color: "#ffb703", weight: 3, opacity: .9 }).addTo(layers);
+    L.polyline(path, { color: "#ffb703", weight: 3, opacity: .9 }).addTo(shotLayer);
   // punkter, numrerade, färgade efter GPS-precisionen vid loggning (accColor)
   shots.forEach((s, i) => {
     L.circleMarker([s.lat, s.lon], { radius: 8, color: "#fff", weight: 2,
         fillColor: accColor(s.acc), fillOpacity: 1 })
-      .addTo(layers)
+      .addTo(shotLayer)
       .bindTooltip(String(i + 1), { permanent: true, direction: "center", className: "shotlbl" });
   });
   // reggad boll-på-green (om satt): liten ljus ring, skild från pinnen
   if (rec.green && rec.green.lat != null)
     L.circleMarker([rec.green.lat, rec.green.lon], { radius: 5, color: "#fff",
-      weight: 2, fillColor: "#7ee2a8", fillOpacity: 1 }).addTo(layers);
+      weight: 2, fillColor: "#7ee2a8", fillOpacity: 1 }).addTo(shotLayer);
+}
+
+// Logga ett slag direkt från kartvyn: färsk GPS-fix → pusha till rundloggen
+// (sg-rundlogg-v1) för aktuellt hål (hi+1), samma format/struktur som Logga
+// slag-sidan skriver ({lat,lon,acc,ts}). Ritar om slag-lagret på plats utan att
+// röra hålvyn. Varnar vid svag GPS precis som index.html:s capture().
+let logBusy = false;
+function logShot() {
+  if (logBusy) return;
+  if (!("geolocation" in navigator)) { alert("Ingen GPS i webbläsaren."); return; }
+  const fab = document.getElementById("logfab");
+  logBusy = true; if (fab) fab.classList.add("busy");
+  const done = () => { logBusy = false; if (fab) fab.classList.remove("busy"); };
+  navigator.geolocation.getCurrentPosition(p => {
+    const acc = p.coords.accuracy;
+    if (acc > 25 && !confirm(`Svag GPS just nu (±${Math.round(acc)} m). Logga slag ändå?`)) {
+      done(); return;
+    }
+    const shot = { lat: p.coords.latitude, lon: p.coords.longitude,
+      acc: Math.round(acc * 10) / 10, ts: new Date().toISOString() };
+    let log = null;
+    try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+    if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
+                      current: hi + 1, holes: {} };
+    if (!log.holes) log.holes = {};
+    const k = String(hi + 1);
+    if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
+                                        putts: 0, pen: 0, adj: 0 };
+    log.holes[k].shots.push(shot);
+    try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(30);
+    drawShots();
+    done();
+  }, e => {
+    alert(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
+                       : "Fick ingen GPS-position, försök igen.");
+    done();
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
 }
 
 function drawHole() {
@@ -452,10 +494,6 @@ function setPos(lat, lon, acc) {
   const g = document.getElementById("gdot"), t = document.getElementById("gtxt");
   g.className = "gpsdot" + (acc <= 15 ? " ok" : "");
   t.textContent = `GPS ±${Math.round(acc)} m`;
-  // Logga slag-knappens färg = GPS-precision (samma trösklar/färger som
-  // +-avståndet på Logga slag-sidan): grön ±≤8, gul ±≤15, röd däröver.
-  const fab = document.getElementById("logfab");
-  if (fab) fab.style.background = accColor(acc);
   if (!meMarker) meMarker = L.circleMarker(pos, { radius: 7, color: "#fff", weight: 2, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(map);
   else meMarker.setLatLng(pos);
   updateWind();
@@ -568,6 +606,9 @@ async function init() {
     })
     .catch(esriFallback);   // lokala tiles otillgängliga → Esri räddar vyn
   layers.addTo(map);
+  shotLayer.addTo(map);
+  const lf = document.getElementById("logfab");
+  if (lf) lf.onclick = logShot;
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
   map.on("rotate", updateRose);   // rosen följer kartans rotation
