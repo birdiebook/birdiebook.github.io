@@ -116,13 +116,15 @@
     width:54px; height:54px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     font-weight:800; font-size:10px; line-height:1.1; text-align:center;
-    border:1px solid var(--line); box-shadow:0 2px 8px #0007; background:var(--framebg); }
+    border:1px solid; box-shadow:0 2px 8px #0007;
+    background:rgba(0,0,0,.72); }   /* oreggad: svart botten, färgad text/ring */
   #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 185px); color:var(--danger); border-color:var(--danger); }
   #greenfab { bottom:calc(env(safe-area-inset-bottom) + 251px); color:var(--accent); border-color:var(--accent); }
   #greenfab:active, #pinfab:active { transform:scale(.94); }
   #greenfab.busy, #pinfab.busy { opacity:.5; pointer-events:none; }
-  #greenfab.on { background:rgba(55,176,107,.30); }   /* reggad boll-på-green */
-  #pinfab.on   { background:rgba(226,59,59,.30); }     /* reggad pin */
+  /* reggad: fylld färg (lätt genomskinlig) med svart text */
+  #greenfab.on { background:rgba(55,176,107,.85); color:var(--accent-ink); border-color:var(--accent); }
+  #pinfab.on   { background:rgba(226,59,59,.85); color:#1a0606; border-color:var(--danger); }
   /* score-räknare nere till höger: total slag för aktuellt hål i en rund ruta
      (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
      ovanför och − under för att justera scoren. */
@@ -190,9 +192,10 @@
 <button type="button" id="logfab">Logga<br>slag</button>
 
 <div id="scorefab">
-  <button type="button" class="sc-btn" id="scoreUp" aria-label="Öka score">+</button>
+  <button type="button" class="sc-btn" id="puttUp" aria-label="Öka puttar">+</button>
+  <div class="sc-count"><span class="val" id="puttVal">0</span><span class="lbl">putt</span></div>
+  <button type="button" class="sc-btn" id="puttDn" aria-label="Minska puttar">−</button>
   <div class="sc-count"><span class="val" id="scoreVal">0</span><span class="lbl">slag</span></div>
-  <button type="button" class="sc-btn" id="scoreDn" aria-label="Minska score">−</button>
 </div>
 
 <nav class="tabs">
@@ -638,8 +641,31 @@ function renderScore() {
   const tot = scoreTotal(rec);
   const v = document.getElementById("scoreVal");
   if (v) v.textContent = String(tot);
-  const dn = document.getElementById("scoreDn");
-  if (dn) dn.disabled = tot <= 0;   // stoppa vid 0, som index.html
+  const putts = rec && rec.putts ? rec.putts : 0;
+  const pv = document.getElementById("puttVal");
+  if (pv) pv.textContent = String(putts);
+  const pd = document.getElementById("puttDn");
+  if (pd) pd.disabled = putts <= 0;   // stoppa vid 0
+}
+
+// Justera antal puttar för aktuellt hål (samma fält som Logga slag-sidan).
+// steg = +1 / −1. − stoppar vid 0.
+function adjustPutts(step) {
+  let log = null;
+  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
+                    current: hi + 1, holes: {} };
+  if (!log.holes) log.holes = {};
+  const k = String(hi + 1);
+  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
+                                      putts: 0, pen: 0, adj: 0 };
+  const rec = log.holes[k];
+  const next = (rec.putts || 0) + step;
+  if (next < 0) return;   // inte under 0
+  rec.putts = next;
+  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(15);
+  renderScore();
 }
 // Justera scoren via adj (utan GPS-position), så antalet kan sättas rätt även
 // när inte varje slag GPS-taggats. steg = +1 / −1. − stoppar vid 0 slag.
@@ -884,10 +910,10 @@ async function init() {
   if (gf) gf.onclick = () => markPoint("green");
   const pf = document.getElementById("pinfab");
   if (pf) pf.onclick = () => markPoint("pin");
-  const su = document.getElementById("scoreUp");
-  if (su) su.onclick = () => adjustScore(1);
-  const sd = document.getElementById("scoreDn");
-  if (sd) sd.onclick = () => adjustScore(-1);
+  const pu = document.getElementById("puttUp");
+  if (pu) pu.onclick = () => adjustPutts(1);
+  const pdn = document.getElementById("puttDn");
+  if (pdn) pdn.onclick = () => adjustPutts(-1);
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
   map.on("rotate", updateRose);   // rosen följer kartans rotation
