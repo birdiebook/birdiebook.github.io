@@ -263,15 +263,23 @@ async function fetchPlayerElev() {
   updateWind();
 }
 
-// tee-punkt för ett hål: i första hand teen märkt MY_TEE (etikett från
-// tee_overrides.json via export_rangefinder.py), annars linjens start /
-// bakersta teen. "Näst längst bak" duger inte — 61 och 57 kan ligga jämsides.
-const MY_TEE = "57";
+// tee-punkt för ett hål = den tee spelaren valde när rundan startades (sg_tee).
+// Tee-numren är rang-mappade (längst→kortast = 61,57,53,48) och h.tees ligger i
+// samma ordning (index 0 = backersta), så vi matchar på position, inte label —
+// labels är tomma i bandatan. Hål med färre tees antas ha de LÄNGSTA numren
+// (samma antagande som tee_overrides.json), så vald tee som saknas klampas till
+// den främsta tillgängliga. Fallback: linjens start / backersta teen.
+const TEE_RANK = ["61", "57", "53", "48"];
 function teePoint(h) {
-  const mine = (h.tees || []).find(t => t.label === MY_TEE);
-  if (mine) return [mine.lat, mine.lon];
-  return (h.line && h.line.length) ? h.line[0]
-    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+  const tees = h.tees || [];
+  if (tees.length) {
+    const sel = localStorage.getItem("sg_tee") || "";
+    let idx = TEE_RANK.indexOf(sel);
+    if (idx < 0) idx = 0;                        // inget/okänt val → backersta
+    if (idx > tees.length - 1) idx = tees.length - 1;  // saknas → främsta tillgängliga
+    return [tees[idx].lat, tees[idx].lon];
+  }
+  return (h.line && h.line.length) ? h.line[0] : null;
 }
 // utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
 // från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
@@ -520,11 +528,21 @@ function drawHole() {
     `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
   // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green).
-  // linjens sista digitaliserade punkt ligger ~0,3 m från pin (olika fält i bandatan) →
-  // lägg pin som sista punkt så linjen alltid möter den gula pricken exakt.
-  if (h.line && h.line.length > 1)
-    L.polyline(h.pin ? [...h.line, h.pin] : h.line,
-      { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
+  // linjens sista digitaliserade punkt ligger ~0,3 m från pin (olika fält i bandatan). Att
+  // LÄGGA TILL pinnen efter den punkten gav en synlig liten krok/dogleg vid pricken när man
+  // zoomar in på greenen. Byt istället UT slutpunkter som ligger nära pinnen mot pinnen själv
+  // → sista segmentet går rakt in i pricken, direkt till punkten utan extra stubb.
+  if (h.line && h.line.length > 1) {
+    // starta på spelarens valda tee (sg_tee) istället för linjens backersta punkt —
+    // line[0] ≈ backersta teen, byt ut den mot vald tee så sträcket börjar rätt.
+    const tee = teePoint(h);
+    let path = tee ? [tee, ...h.line.slice(1)] : h.line.slice();
+    if (h.pin) {
+      while (path.length > 1 && hav(path[path.length - 1], h.pin) < 8) path.pop();
+      path = [...path, h.pin];
+    }
+    L.polyline(path, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
+  }
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#fff", fillOpacity: 1, weight: 1 }).addTo(layers);
 
