@@ -11,6 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
 <title>SG Rundlogg</title>
 <style>
   :root {
@@ -188,6 +189,7 @@ if (S.current > MAX_HOLE) { S.current = SGRound.globalToRel(S.current) || 1; sav
 
 function freshState(player, course) {
   return { view: "setup", player: player || "", course: course || DEFAULT_COURSE,
+           tee: localStorage.getItem("sg_tee") || "",
            startedAt: null, endedAt: null, current: 1, holes: {} };
 }
 function load() {
@@ -279,6 +281,7 @@ function exportData() {
                  score_adjust: x.h.adj || 0 }));
   return { format: "golf-sg-mobil", version: 1, player: S.player.trim(),
            course: S.course.trim(), round: SGRound.roundName(),
+           tee: S.tee || null,
            started_at: S.startedAt,
            ended_at: S.endedAt || new Date().toISOString(), holes };
 }
@@ -519,6 +522,14 @@ function renderSetup() {
         <option value="10-27">10–27</option>
         <option value="19-9">19–9</option>
       </select>
+      <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
+      <select class="field" id="tee">
+        <option value="">– välj tee –</option>
+        <option value="61">61</option>
+        <option value="57">57</option>
+        <option value="53">53</option>
+        <option value="48">48</option>
+      </select>
       <button class="big" id="start">Starta runda</button>
     </div>
     <div class="card hint">
@@ -538,11 +549,18 @@ function renderSetup() {
   const roundSel = document.getElementById("round");
   roundSel.value = localStorage.getItem("sg_round") || "1-18";
   roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
+  // tee-val (rundnivå): förvälj senast använda; sparas vid start och delas via
+  // 'sg_tee' så det ligger kvar mellan rundor. Färgen exporteras i fältet `tee`.
+  const teeSel = document.getElementById("tee");
+  teeSel.value = S.tee || localStorage.getItem("sg_tee") || "";
+  teeSel.onchange = () => localStorage.setItem("sg_tee", teeSel.value);
   document.getElementById("start").onclick = () => {
     const p = document.getElementById("player").value.trim();
     if (!p) { alert("Fyll i ditt namn."); return; }
     S.player = p;
     S.course = document.getElementById("course").value.trim() || DEFAULT_COURSE;
+    S.tee = teeSel.value;
+    localStorage.setItem("sg_tee", teeSel.value);
     localStorage.setItem("sg_round", roundSel.value);
     if (!S.startedAt) S.startedAt = new Date().toISOString();
     S.view = "hole";
