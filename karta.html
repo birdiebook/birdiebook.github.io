@@ -85,6 +85,8 @@
   .shotlbl { background:transparent; border:0; box-shadow:none; padding:0;
     color:#06180f; font-weight:800; font-size:11px; }
   .shotlbl::before { display:none; }
+  /* mät-pin: strippa Leaflets vita divIcon-ruta, bara SVG:n syns */
+  .tappin { background:transparent; border:0; filter:drop-shadow(0 1px 2px #0009); }
   .gpsdot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e26a5a; }
   .gpsdot.ok { background:var(--accent); }
   .hint { color:var(--dim); font-size:12px; text-align:center; margin-top:6px; }
@@ -156,6 +158,8 @@
 <script src="./vendor/leaflet-rotate.js"></script>
 <script src="./coursemap.js"></script>
 <script src="./round.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./live.js"></script>
 <script>
 "use strict";
 const R = 6371000;
@@ -194,8 +198,10 @@ function setRound(name) {
   hi = 0;
   syncHole();
 }
-let map, layers = L.layerGroup(), shotLayer = L.layerGroup(),
+let map, layers = L.layerGroup(), shotLayer = L.layerGroup(), pinLayer = L.layerGroup(),
     meMarker = null, tapMarker = null, tapLine = null;
+// delad pin per matchhål (globalt hålnr → {lat,lon,acc}), fylls av live-prenumeration
+let SHARED_PINS = {}, pinUnsub = null;
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
 
@@ -481,6 +487,31 @@ function logShot() {
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
 }
 
+// Delad pin för aktuellt hål (om satt i matchen) — egen flagg-markör i pinLayer,
+// ovanpå den statiska vita centrum-pricken. Eget lager → kan ritas om vid realtids-
+// uppdatering utan att drawHole:s vy-inpassning (zoom/rotation) triggas om.
+function drawPin() {
+  pinLayer.clearLayers();
+  const g = SGRound.relToGlobal(hi + 1);
+  const sp = g != null ? SHARED_PINS[g] : null;
+  if (!sp || sp.lat == null) return;
+  L.circleMarker([sp.lat, sp.lon], { radius: 5, color: "#fff", weight: 2,
+    fillColor: "#e23b3b", fillOpacity: 1, interactive: false }).addTo(pinLayer);
+}
+
+// Prenumerera på matchens delade pins (om man är med i ett live-game). Kartan har
+// ingen egen Live-modul → läser live-state direkt ur localStorage (sg-live-v1).
+// Realtids-cb ritar bara om pin-lagret (drawPin), inte hela hålvyn. Fire-and-forget.
+async function initSharedPins() {
+  let live = null;
+  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  if (!live || !live.gameId || typeof SGLive === "undefined") return;
+  try {
+    await SGLive.initLive();
+    pinUnsub = SGLive.subscribePins(live.gameId, m => { SHARED_PINS = m || {}; drawPin(); });
+  } catch (e) {}
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -488,14 +519,19 @@ function drawHole() {
   document.getElementById("holeName").innerHTML =
     `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
-  // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green)
+  // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green).
+  // linjens sista digitaliserade punkt ligger ~0,3 m från pin (olika fält i bandatan) →
+  // lägg pin som sista punkt så linjen alltid möter den gula pricken exakt.
   if (h.line && h.line.length > 1)
-    L.polyline(h.line, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
+    L.polyline(h.pin ? [...h.line, h.pin] : h.line,
+      { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
   // pin
-  L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
+  L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#fff", fillOpacity: 1, weight: 1 }).addTo(layers);
 
   // reggade slag ur rundloggen (om några loggats för hålet)
   drawShots();
+  // delad pin från matchen (om satt för hålet)
+  drawPin();
 
   // rotera så hålet pekar uppåt, passa sedan vyn tee→green mellan UI-panelerna
   orientToHole();
@@ -558,9 +594,21 @@ function updateTap(latlng) {
   if (tapLine) map.removeLayer(tapLine);
   if (o.pt) tapLine = L.polyline([o.pt, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
 }
+// Egen mät-pin: vendor-mappen saknar Leaflets marker-PNG:er, så standard-L.marker
+// blir osynlig. Inbyggd SVG-pin (ingen extern fil, funkar offline).
+const TAP_ICON = L.divIcon({ className: "tappin", iconSize: [34, 34], iconAnchor: [17, 17],
+  html: '<svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">'
+    + '<g fill="none" stroke-linecap="round">'
+    + '<g stroke="#fff" stroke-width="4">'
+    +   '<circle cx="17" cy="17" r="9"/>'
+    +   '<path d="M17 1V9 M17 25V33 M1 17H9 M25 17H33"/></g>'
+    + '<g stroke="#3b82f6" stroke-width="2">'
+    +   '<circle cx="17" cy="17" r="9"/>'
+    +   '<path d="M17 1V9 M17 25V33 M1 17H9 M25 17H33"/></g>'
+    + '</g><circle cx="17" cy="17" r="1.8" fill="#3b82f6"/></svg>' });
 function onTap(e) {
   if (tapMarker) tapMarker.setLatLng(e.latlng);
-  else tapMarker = L.marker(e.latlng).addTo(map);
+  else tapMarker = L.marker(e.latlng, { icon: TAP_ICON }).addTo(map);
   updateTap(e.latlng);
 }
 
@@ -629,6 +677,7 @@ async function init() {
     .catch(esriFallback);   // lokala tiles otillgängliga → Esri räddar vyn
   layers.addTo(map);
   shotLayer.addTo(map);
+  pinLayer.addTo(map);
   const lf = document.getElementById("logfab");
   if (lf) lf.onclick = logShot;
   map.setView([55.618, 13.07], 15);
@@ -659,7 +708,9 @@ async function init() {
     navigator.geolocation.watchPosition(
       p => setPos(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
       () => {}, { enableHighAccuracy: true, maximumAge: 0 });
+  initSharedPins();   // delade pins från ev. live-match (realtid)
 }
+window.addEventListener("pagehide", () => { if (pinUnsub) { pinUnsub(); pinUnsub = null; } });
 init();
 </script>
 <script>
