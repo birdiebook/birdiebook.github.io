@@ -264,22 +264,31 @@ async function fetchPlayerElev() {
 }
 
 // tee-punkt för ett hål = den tee spelaren valde när rundan startades (sg_tee).
-// Tee-numren är rang-mappade (längst→kortast = 61,57,53,48) och h.tees ligger i
-// samma ordning (index 0 = backersta), så vi matchar på position, inte label —
-// labels är tomma i bandatan. Hål med färre tees antas ha de LÄNGSTA numren
-// (samma antagande som tee_overrides.json), så vald tee som saknas klampas till
-// den främsta tillgängliga. Fallback: linjens start / backersta teen.
+// RIGID mappning: förberäknad punkttabell tee_points.json (tools/build_tee_box.ps1),
+// loop→"hål"→{ teeNr: [lat,lon], _approx:[...] }. Offline projiceras varje OSM-box på
+// hålets fairway-linje och binds box↔tee rang-bevarande mot scorekortslängderna.
+// Tees som OSM saknar box för SYNTETISERAS längs linjen på sin scorekortslängd (så en
+// bakre tee startar på rätt avstånd även utan digitaliserad box) — listas i _approx.
+// Appen gör bara en O(1)-uppslagning. Fallback när tabellen saknas: fördela numren
+// jämnt bakifrån (floor(rang·boxar/4)).
 const TEE_RANK = ["61", "57", "53", "48"];
+let TEE_POINTS = {};   // loop -> "hål" -> { teeNr: [lat,lon], _approx:[...] }, laddas i init
 function teePoint(h) {
   const tees = h.tees || [];
-  if (tees.length) {
-    const sel = localStorage.getItem("sg_tee") || "";
-    let idx = TEE_RANK.indexOf(sel);
-    if (idx < 0) idx = 0;                        // inget/okänt val → backersta
-    if (idx > tees.length - 1) idx = tees.length - 1;  // saknas → främsta tillgängliga
-    return [tees[idx].lat, tees[idx].lon];
-  }
-  return (h.line && h.line.length) ? h.line[0] : null;
+  if (!tees.length) return (h.line && h.line.length) ? h.line[0] : null;
+  const sel = localStorage.getItem("sg_tee") || "";
+  const pt = TEE_POINTS[h.loop] && TEE_POINTS[h.loop][h.hole] && TEE_POINTS[h.loop][h.hole][sel];
+  if (pt && pt.length === 2) return [pt[0], pt[1]];
+  const r = TEE_RANK.indexOf(sel);                     // fallback: rang·boxar/4
+  let idx = r < 0 ? 0 : Math.floor(r * tees.length / TEE_RANK.length);
+  if (idx > tees.length - 1) idx = tees.length - 1;
+  return [tees[idx].lat, tees[idx].lon];
+}
+// true om spelarens valda tee är en syntetisk punkt (OSM saknar boxen) — approx
+function teeIsApprox(h) {
+  const sel = localStorage.getItem("sg_tee") || "";
+  const m = TEE_POINTS[h.loop] && TEE_POINTS[h.loop][h.hole];
+  return !!(m && m._approx && m._approx.indexOf(sel) >= 0);
 }
 // utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
 // från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
@@ -524,8 +533,11 @@ function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
   if (!h) return;
+  const teeSel = localStorage.getItem("sg_tee") || "";
+  const approx = teeIsApprox(h)
+    ? ` <small style="color:#e2a45a">tee ${teeSel} ~approx</small>` : "";
   document.getElementById("holeName").innerHTML =
-    `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
+    `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>${approx}`;
 
   // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green).
   // linjens sista digitaliserade punkt ligger ~0,3 m från pin (olika fält i bandatan). Att
@@ -711,6 +723,9 @@ async function init() {
     const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
     HOLES = data.holes;
     for (const h of HOLES) { h.global = GLOBAL_BASE[h.loop] + h.hole; byGlobal[h.global] = h; }
+    // förberäknad tee→punkt-tabell → rigid tee-mappning i teePoint (valfri fil)
+    try { TEE_POINTS = await (await fetch("./data/tee_points.json", { cache: "no-cache" })).json(); }
+    catch (e) { TEE_POINTS = {}; }
     setRound(SGRound.roundName());   // val från startsidan
     // om man byter hål i rundloggen och kommer tillbaka hit: synka igen
     window.addEventListener("pageshow", syncHole);
