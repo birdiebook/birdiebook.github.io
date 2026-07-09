@@ -60,7 +60,7 @@
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
-    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 34px 0; }
+    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 96px 0; }
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .sub { display:block; color:var(--ink); font-size:15px; margin-top:2px; }
@@ -76,9 +76,26 @@
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
     color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:8px 4px;
     font-size:13px; font-weight:600; white-space:nowrap; }
+  /* siffra centrerad i slag-punkten (reggade slag ur rundloggen) — genomskinlig
+     etikett utan Leaflets vita ruta */
+  .shotlbl { background:transparent; border:0; box-shadow:none; padding:0;
+    color:#06180f; font-weight:800; font-size:11px; }
+  .shotlbl::before { display:none; }
   .gpsdot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e26a5a; }
   .gpsdot.ok { background:var(--accent); }
   .hint { color:var(--dim); font-size:12px; text-align:center; margin-top:6px; }
+  /* rund "Logga slag"-knapp nere till vänster. Färgen speglar GPS-precisionen
+     (samma trösklar/färger som +-avståndet på Logga slag-sidan): grön ±≤8 m,
+     gul ±≤15 m, röd däröver. Röd som utgångsläge tills första fix. */
+  #logfab { position:fixed; z-index:1300; text-decoration:none;
+    left:calc(env(safe-area-inset-left) + 14px);
+    bottom:calc(env(safe-area-inset-bottom) + 74px);
+    width:66px; height:66px; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:#06180f; font-weight:800; font-size:10px; line-height:1.15; text-align:center;
+    border:3px solid #fff; box-shadow:0 3px 12px #0009;
+    background:#e26a5a; transition:background .3s; }
+  #logfab .ico { font-size:24px; line-height:1; }
 </style>
 </head>
 <body>
@@ -120,6 +137,8 @@
   <div class="hint"><span class="gpsdot" id="gdot"></span> <span id="gtxt">GPS söker …</span>
     · tryck på kartan för att mäta</div>
 </div>
+
+<a href="./index.html" id="logfab"><span class="ico">⛳</span>Logga<br>slag</a>
 
 <nav class="tabs">
   <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
@@ -172,6 +191,12 @@ function setRound(name) {
 let map, layers = L.layerGroup(), meMarker = null, tapMarker = null, tapLine = null;
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
+
+// GPS-precisionsfärg — samma trösklar/färger som +-avståndet på Logga slag-sidan
+// (index.html gpsChipHtml): grön ±≤8, gul ±≤15, röd däröver. null = neutral.
+function accColor(acc) {
+  return acc == null ? "#9fc4ae" : acc <= 8 ? "#7ee2a8" : acc <= 15 ? "#e8c34a" : "#e26a5a";
+}
 
 // ---- vind (Open-Meteo, gratis; samma konvention som src/api/wind.py) ----
 const COMPASS = ["N", "NO", "O", "SO", "S", "SV", "V", "NV"];
@@ -360,6 +385,38 @@ function fitHoleView(h) {
   return true;
 }
 
+// Reggade slag för aktuellt hål ur rundloggen (sg-rundlogg-v1, skrivs av Logga
+// slag-sidan). S.holes nycklas på spelarens hål 1–18 = hi+1, samma valuta som
+// kartan → ingen översättning. Slagen lagras {lat,lon,acc,ts}; kartan räknar på
+// [lat,lon]. Ritas in i samma layers-grupp som rensas vid varje hålbyte, så
+// plotten uppdateras när man kommer tillbaka från loggen (pageshow → syncHole).
+function drawShots() {
+  let log = null;
+  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+  const rec = log && log.holes && log.holes[String(hi + 1)];
+  if (!rec) return;
+  const shots = (rec.shots || []).filter(s => s && s.lat != null && s.lon != null);
+  if (!shots.length) return;
+  const pts = shots.map(s => [s.lat, s.lon]);
+  // slagbanan: bärnstensfärgad linje mellan slagen (skild från hålets vita linje
+  // och tap-linjen). Fortsätter till reggad green-position om den finns.
+  const path = [...pts];
+  if (rec.green && rec.green.lat != null) path.push([rec.green.lat, rec.green.lon]);
+  if (path.length > 1)
+    L.polyline(path, { color: "#ffb703", weight: 3, opacity: .9 }).addTo(layers);
+  // punkter, numrerade, färgade efter GPS-precisionen vid loggning (accColor)
+  shots.forEach((s, i) => {
+    L.circleMarker([s.lat, s.lon], { radius: 8, color: "#fff", weight: 2,
+        fillColor: accColor(s.acc), fillOpacity: 1 })
+      .addTo(layers)
+      .bindTooltip(String(i + 1), { permanent: true, direction: "center", className: "shotlbl" });
+  });
+  // reggad boll-på-green (om satt): liten ljus ring, skild från pinnen
+  if (rec.green && rec.green.lat != null)
+    L.circleMarker([rec.green.lat, rec.green.lon], { radius: 5, color: "#fff",
+      weight: 2, fillColor: "#7ee2a8", fillOpacity: 1 }).addTo(layers);
+}
+
 function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
@@ -372,6 +429,9 @@ function drawHole() {
     L.polyline(h.line, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
   // pin
   L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#e8c34a", fillOpacity: 1, weight: 1 }).addTo(layers);
+
+  // reggade slag ur rundloggen (om några loggats för hålet)
+  drawShots();
 
   // rotera så hålet pekar uppåt, passa sedan vyn tee→green mellan UI-panelerna
   orientToHole();
@@ -392,6 +452,10 @@ function setPos(lat, lon, acc) {
   const g = document.getElementById("gdot"), t = document.getElementById("gtxt");
   g.className = "gpsdot" + (acc <= 15 ? " ok" : "");
   t.textContent = `GPS ±${Math.round(acc)} m`;
+  // Logga slag-knappens färg = GPS-precision (samma trösklar/färger som
+  // +-avståndet på Logga slag-sidan): grön ±≤8, gul ±≤15, röd däröver.
+  const fab = document.getElementById("logfab");
+  if (fab) fab.style.background = accColor(acc);
   if (!meMarker) meMarker = L.circleMarker(pos, { radius: 7, color: "#fff", weight: 2, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(map);
   else meMarker.setLatLng(pos);
   updateWind();
