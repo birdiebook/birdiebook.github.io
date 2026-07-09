@@ -64,8 +64,12 @@
     font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
-  #measure { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
-    padding:8px 20px; min-height:44px; text-align:left; width:max-content; margin:0 auto 250px 0; }
+  /* mått till vald position: förankrad uppe till höger, precis under kompassen */
+  #measure { position:fixed; z-index:1000;
+    right:calc(env(safe-area-inset-right) + 10px);
+    top:calc(env(safe-area-inset-top) + 104px);
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:8px 20px; min-height:44px; text-align:right; width:max-content; max-width:62vw; }
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .sub { display:block; color:var(--ink); font-size:15px; margin-top:2px; }
@@ -101,8 +105,8 @@
     width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     color:var(--accent); font-weight:800; font-size:13px; line-height:1.15; text-align:center;
-    border:1px solid var(--line); box-shadow:0 2px 8px #0007;
-    background:var(--framebg); }
+    border:1px solid var(--accent); box-shadow:0 2px 8px #0007;
+    background:rgba(0,0,0,.72); }   /* samma svart/grön-stil som "Boll på green" oreggad */
   #logfab:active { transform:scale(.94); }
   #logfab.busy { opacity:.5; pointer-events:none; }
   /* runda "Boll på green"- och "Pin"-knappar, staplade ovanför Logga slag.
@@ -157,7 +161,7 @@
       <button data-mode="gps">GPS</button>
     </div>
     <div class="name" id="holeName">Söker hål …</div>
-    <svg id="rose" viewBox="0 0 64 64" width="74" height="74">
+    <svg id="rose" viewBox="0 0 64 64" width="82" height="82">
       <g id="roseRing">
         <circle cx="32" cy="32" r="29" fill="rgba(0,0,0,.55)" stroke="#1f5540" stroke-width="2"/>
         <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" fill="#e8f5ec">N</text>
