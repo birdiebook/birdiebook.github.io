@@ -166,6 +166,17 @@
 <body>
 <div id="map"></div>
 
+<!-- TILLFÄLLIG DEBUG: mäter vad iOS faktiskt rapporterar. Ta en skärmdump i
+     hemskärmsläget och skicka. Tas bort när green-bar-buggen är löst. -->
+<div id="dbg" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  z-index:99999;background:rgba(0,0,0,.9);color:#0f0;font:11px/1.45 monospace;
+  padding:10px 12px;border:1px solid #0f0;border-radius:8px;max-width:92vw;
+  white-space:pre;pointer-events:auto;" onclick="this.style.display='none'"></div>
+<div id="safeprobe" style="position:fixed;top:0;left:0;
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
+  visibility:hidden;pointer-events:none;"></div>
+
 <div id="top">
   <div class="holebar">
     <div id="modeToggle">
@@ -194,11 +205,14 @@
   </div>
 </div>
 
+<!-- mått till vald punkt: direkt barn till body så position:absolute ankrar mot
+     helskärms-scenen (uppe till höger under kompassen), inte mot #bottom -->
+<div id="measure" class="hidden">
+  <div class="play" id="mPlay">–</div>
+  <div class="sub" id="mSub">–</div>
+</div>
+
 <div id="bottom">
-  <div id="measure" class="hidden">
-    <div class="play" id="mPlay">–</div>
-    <div class="sub" id="mSub">–</div>
-  </div>
   <div class="hint"><span class="gpsdot" id="gdot"></span> <span id="gtxt">GPS söker …</span>
     · tryck på kartan för att mäta</div>
 </div>
@@ -862,6 +876,7 @@ async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
     zoomSnap: 0,   // bråkdels-zoom — krävs för att fitHoleView ska bli exakt
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
+  window._sgmap = map;   // TILLFÄLLIG: exponera för debug-mätaren
   // updateWhenIdle:false = ladda tiles direkt (inte först när kartan blir idle);
   // keepBuffer:6 = håll extra rutor runt viewporten. Roterad karta täcker en
   // STÖRRE yta diagonalt än den oroterade viewporten → default keepBuffer 2
@@ -1008,6 +1023,59 @@ setTimeout(setAppHeight, 300);   // fånga iOS-höjdkorrigering efter första m�
     e.preventDefault();
     location.href = url.href;
   });
+})();
+</script>
+<script>
+/* TILLFÄLLIG DEBUG-mätare — läser vad iOS faktiskt rapporterar och var kartan/
+   flikraden hamnar. Tryck på rutan för att dölja den. Tas bort efter felsökning. */
+(function () {
+  function rect(sel) {
+    var el = document.querySelector(sel);
+    if (!el) return sel + ": (saknas)";
+    var r = el.getBoundingClientRect();
+    return sel + ": top=" + Math.round(r.top) + " bot=" + Math.round(r.bottom)
+      + " h=" + Math.round(r.height);
+  }
+  function insets() {
+    var p = getComputedStyle(document.getElementById("safeprobe"));
+    return "safe-inset T/R/B/L: " + p.paddingTop + " / " + p.paddingRight
+      + " / " + p.paddingBottom + " / " + p.paddingLeft;
+  }
+  function show() {
+    var vv = window.visualViewport;
+    var standalone = (("standalone" in navigator && navigator.standalone)
+      || matchMedia("(display-mode: standalone)").matches);
+    var lines = [
+      "standalone: " + standalone + "  dpr: " + (window.devicePixelRatio || "?"),
+      "screen:  " + screen.width + " x " + screen.height,
+      "avail:   " + screen.availWidth + " x " + screen.availHeight,
+      "inner:   " + window.innerWidth + " x " + window.innerHeight,
+      "vv:      " + (vv ? Math.round(vv.width) + " x " + Math.round(vv.height)
+        + "  offTop=" + Math.round(vv.offsetTop) + " scale=" + vv.scale : "—"),
+      "docEl:   " + document.documentElement.clientWidth + " x "
+        + document.documentElement.clientHeight,
+      "--app-h: " + (document.documentElement.style.getPropertyValue("--app-height") || "(ej satt)"),
+      insets(),
+      rect("body"),
+      rect("#map"),
+      rect(".tabs"),
+      rect("#top"),
+      (window._sgmap ? "leaflet getSize: "
+        + Math.round(window._sgmap.getSize().x) + " x "
+        + Math.round(window._sgmap.getSize().y) : "leaflet: (ej redo)"),
+    ];
+    var box = document.getElementById("dbg");
+    if (box) box.textContent = lines.join("\n");
+  }
+  show();
+  window.addEventListener("resize", show);
+  window.addEventListener("orientationchange", function () { setTimeout(show, 350); });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", show);
+    window.visualViewport.addEventListener("scroll", show);
+  }
+  setTimeout(show, 500);
+  setTimeout(show, 1500);
 })();
 </script>
 </body>
