@@ -159,6 +159,17 @@
     background:var(--framebg); }
   #scorefab .sc-count .val { font-size:26px; font-weight:800; line-height:1; }
   #scorefab .sc-count .lbl { font-size:10px; font-weight:700; color:var(--dim); margin-top:2px; }
+
+  /* SISTA TESTET (bara hemskärm): försök återta iOS-zonen under app-viewporten
+     (~47 px). 100lvh = stora viewporten (ev. hela fysiska skärmen) medan 100%
+     för fixed/absolut = layout-viewporten (797). Den negativa skillnaden skjuter
+     kartans nederkant OCH flikraden ner till fysiska kanten — OM iOS låter ytan
+     målas. Görs den inte det göms flikraden (då backar vi). Safari (ej standalone)
+     påverkas inte. */
+  @media (display-mode: standalone) {
+    #map  { bottom: calc(100% - 100lvh); }
+    .tabs { bottom: calc(100% - 100lvh); }
+  }
 </style>
 </head>
 <body>
@@ -174,6 +185,9 @@
   padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
   padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
   visibility:hidden;pointer-events:none;"></div>
+<div id="lvhprobe" style="position:fixed;top:0;left:0;width:1px;height:100lvh;visibility:hidden;pointer-events:none;"></div>
+<div id="dvhprobe" style="position:fixed;top:0;left:0;width:1px;height:100dvh;visibility:hidden;pointer-events:none;"></div>
+<div id="svhprobe" style="position:fixed;top:0;left:0;width:1px;height:100svh;visibility:hidden;pointer-events:none;"></div>
 
 <div id="top">
   <div class="holebar">
@@ -1036,6 +1050,10 @@ init();
     return "safe-inset T/R/B/L: " + p.paddingTop + " / " + p.paddingRight
       + " / " + p.paddingBottom + " / " + p.paddingLeft;
   }
+  function probeH(id) {
+    var el = document.getElementById(id);
+    return el ? Math.round(el.getBoundingClientRect().height) : "?";
+  }
   function show() {
     var vv = window.visualViewport;
     var standalone = (("standalone" in navigator && navigator.standalone)
@@ -1051,6 +1069,8 @@ init();
         + document.documentElement.clientHeight,
       "--app-h: " + (document.documentElement.style.getPropertyValue("--app-height") || "(ej satt)"),
       insets(),
+      "lvh/dvh/svh: " + probeH("lvhprobe") + " / " + probeH("dvhprobe")
+        + " / " + probeH("svhprobe"),
       rect("body"),
       rect("#map"),
       rect(".tabs"),
