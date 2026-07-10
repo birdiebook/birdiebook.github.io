@@ -23,19 +23,20 @@
           --framebg: rgba(0,0,0,.55); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html { height:100%; }
-  /* Body = fixed helskärms-scen, höjd låst till faktisk synlig höjd. På iOS i
-     hemskärmsläge (standalone, black-translucent + viewport-fit=cover) rapporterar
-     layout-viewporten ibland en för LÅG höjd → allt som ankras mot viewporten
-     (fixed bottom:0, inset:0) hamnar ovanför fysiska nederkanten och den gröna
-     sid-bakgrunden (--bg) lyser igenom i gapet under. Vi låser i stället body:s
-     höjd i px (--app-height = window.innerHeight, satt i JS; 100dvh som fallback)
-     och ankrar ALL UI absolut MOT body. Då fyller kartan hela skärmen och
-     flik-raden sitter dikt mot nederkanten, oavsett iOS-nyck. */
+  /* Body = fixed helskärms-scen. På iOS i hemskärmsläge med genomskinlig
+     statusrad (black-translucent + viewport-fit=cover) UNDERrapporterar
+     window.innerHeight/clientHeight den synliga höjden med statusradens ~47 px —
+     men den ytan MÅLAS ändå (kartan syns under statusraden), så låser vi body
+     till innerHeight blir det ett grönt gap i nederkanten. Vi tar därför MAX av
+     innerHeight/clientHeight/screen.height (appen är portrait-låst → screen.height
+     = hela fysiska skärmen) och sätter det som --app-height i JS; 100vh som
+     fallback. All UI ankras absolut MOT body → kartan fyller hela skärmen och
+     flik-raden sitter dikt mot fysiska nederkanten. */
   html, body { margin:0; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
     overscroll-behavior:none; }
   body { position:fixed; top:0; left:0; right:0;
-    height:100vh; height:var(--app-height,100dvh); }
+    height:100vh; height:var(--app-height,100vh); }
   #map { position:absolute; inset:0; background:var(--bg); }
   .leaflet-container { background:var(--bg); }
 
@@ -989,12 +990,21 @@ async function init() {
 // första målning och korrigerar strax efter → resize-lyssnaren fångar det, och
 // en fördröjd extra sättning gör starten robust. Rita om kartvyn så inramningen
 // (tee→green mellan panelerna) följer med den nya höjden.
+let _lastAppH = null;   // senast satta höjd → rita bara om vid FAKTISK ändring
 function setAppHeight() {
-  document.documentElement.style.setProperty("--app-height", window.innerHeight + "px");
+  // innerHeight underrapporterar med statusradens höjd i black-translucent →
+  // ta MAX mot clientHeight/screen.height (portrait-låst) så body fyller hela
+  // fysiska skärmen och inget grönt gap uppstår i nederkanten.
+  const h = Math.max(window.innerHeight || 0,
+                     document.documentElement.clientHeight || 0,
+                     (window.screen && window.screen.height) || 0);
+  document.documentElement.style.setProperty("--app-height", h + "px");
+  if (h === _lastAppH) return;   // oförändrad höjd → ingen om-inpassning (annars syns ett zoom-hopp)
+  _lastAppH = h;
   if (map) {
     map.invalidateSize({ pan: false });
-    const h = ROUND[hi];
-    if (h) fitHoleView(h);
+    const hole = ROUND[hi];
+    if (hole) fitHoleView(hole);
   }
 }
 setAppHeight();
