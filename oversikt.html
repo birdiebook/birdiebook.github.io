@@ -16,9 +16,7 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
-          --warn:#e8c34a; --danger:#e26a5a; --good:#7ee2a8;
-          /* hemskärm: skjut flikraden ner i den återtagna iOS-zonen; 0 i webbläsare */
-          --reclaim:0px; }
+          --warn:#e8c34a; --danger:#e26a5a; --good:#7ee2a8; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; }
   body { background:var(--bg); color:var(--ink);
@@ -96,15 +94,9 @@
   .card-tbl tbody td.sc { padding:9px 6px; }
 
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:var(--reclaim); z-index:1200; display:flex; gap:6px;
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
-    padding:6px 10px 8px; }
-  /* Hemskärm: återta iOS-zonen under app-viewporten så flikraden når fysiska
-     nederkanten (ingen grön remsa under). 100lvh=hela skärmen, 100%=layout-
-     viewporten; skillnaden skalar per enhet. Safari → --reclaim:0px, oförändrat. */
-  @supports (height: 100lvh) {
-    @media (display-mode: standalone) { :root { --reclaim: calc(100% - 100lvh); } }
-  }
+    padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
     font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
   .tabs a .ico { display:block; font-size:20px; }
