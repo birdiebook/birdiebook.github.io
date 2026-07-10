@@ -20,7 +20,10 @@
           --danger:#e23b3b;
           /* halvgenomskinlig svart bakom text i inramningarna (hål, avstånd, mät) —
              syns tydligare mot kartan än den gröna varianten */
-          --framebg: rgba(0,0,0,.55); }
+          --framebg: rgba(0,0,0,.55);
+          /* hemskärm: skjut nedre overlays ner i den återtagna iOS-zonen under
+             app-viewporten. 0 i webbläsare; sätts negativt i @media standalone. */
+          --reclaim: 0px; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   /* Helskärmskarta: body fyller layout-viewporten (i hemskärmsläge mappas den till
      hela fysiska skärmen; i webbläsaren till ytan mellan verktygsfälten). ALLA
@@ -30,7 +33,8 @@
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
     overscroll-behavior:none; }
-  #map { position:absolute; inset:0; background:var(--bg); }
+  #map { position:absolute; top:0; left:0; right:0; bottom:var(--reclaim);
+    background:var(--bg); }
   .leaflet-container { background:var(--bg); }
 
   /* topp: hål-väljare + green-avstånd */
@@ -60,14 +64,14 @@
 
   /* botten: tap-mät + status */
   #bottom { position:absolute; left:0; right:0; z-index:1000;
-    bottom:calc(env(safe-area-inset-bottom) + 62px);
+    bottom:calc(env(safe-area-inset-bottom) + 62px + var(--reclaim));
     padding:8px 10px; }
   /* gemensam flik-rad (samma på alla sidor) */
   /* Flikraden fixed mot viewportens nederkant (= fysiska nederkanten i standalone,
      ovanför webbläsarens verktygsfält i vanlig browser). Minimal bottenpadding →
      minimal grön remsa. OBS: utan safe-area-marginal hamnar etiketterna nära
      home-indikatorn i hemskärmsläget (avsiktligt val — minimal grön yta). */
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
+  .tabs { position:fixed; left:0; right:0; bottom:var(--reclaim); z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px 8px; }
   .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
@@ -111,7 +115,7 @@
   #logfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
     right:calc(env(safe-area-inset-right) + 14px);
-    bottom:calc(env(safe-area-inset-bottom) + 285px);   /* överst; ovankant i höjd med putt-plusset */
+    bottom:calc(env(safe-area-inset-bottom) + 285px + var(--reclaim));   /* överst; ovankant i höjd med putt-plusset */
     width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     color:var(--accent); font-weight:800; font-size:13px; line-height:1.15; text-align:center;
@@ -132,8 +136,8 @@
     font-weight:800; font-size:10px; line-height:1.1; text-align:center;
     border:1px solid; box-shadow:0 2px 8px #0007;
     background:rgba(0,0,0,.72); }   /* oreggad: svart botten, färgad text/ring */
-  #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 157px); color:var(--danger); border-color:var(--danger); }
-  #greenfab { bottom:calc(env(safe-area-inset-bottom) + 221px); color:var(--accent); border-color:var(--accent); }
+  #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 157px + var(--reclaim)); color:var(--danger); border-color:var(--danger); }
+  #greenfab { bottom:calc(env(safe-area-inset-bottom) + 221px + var(--reclaim)); color:var(--accent); border-color:var(--accent); }
   #greenfab:active, #pinfab:active { transform:scale(.94); }
   #greenfab.busy, #pinfab.busy { opacity:.5; pointer-events:none; }
   /* reggad: fylld färg (lätt genomskinlig) med svart text */
@@ -144,7 +148,7 @@
      ovanför och − under för att justera scoren. */
   #scorefab { position:fixed; z-index:1300;
     left:calc(env(safe-area-inset-left) + 14px);
-    bottom:calc(env(safe-area-inset-bottom) + 107px);
+    bottom:calc(env(safe-area-inset-bottom) + 107px + var(--reclaim));
     display:flex; flex-direction:column; align-items:center; gap:8px; }
   #scorefab .sc-btn { -webkit-appearance:none; appearance:none; cursor:pointer;
     font-family:inherit; width:44px; height:44px; border-radius:50%;
@@ -160,34 +164,24 @@
   #scorefab .sc-count .val { font-size:26px; font-weight:800; line-height:1; }
   #scorefab .sc-count .lbl { font-size:10px; font-weight:700; color:var(--dim); margin-top:2px; }
 
-  /* SISTA TESTET (bara hemskärm): försök återta iOS-zonen under app-viewporten
-     (~47 px). 100lvh = stora viewporten (ev. hela fysiska skärmen) medan 100%
-     för fixed/absolut = layout-viewporten (797). Den negativa skillnaden skjuter
-     kartans nederkant OCH flikraden ner till fysiska kanten — OM iOS låter ytan
-     målas. Görs den inte det göms flikraden (då backar vi). Safari (ej standalone)
-     påverkas inte. */
-  @media (display-mode: standalone) {
-    #map  { bottom: calc(100% - 100lvh); }
-    .tabs { bottom: calc(100% - 100lvh); }
+  /* Hemskärm: återta iOS-zonen under app-viewporten (~47 px). 100lvh = stora
+     viewporten (hela fysiska skärmen); 100% för fixed/absolut = layout-viewporten.
+     Den negativa skillnaden (--reclaim) skjuter kartans nederkant, flikraden och
+     alla nedre overlays ner till fysiska kanten, och fitHoleView får automatiskt
+     mer höjd (den mäter #bottom:s faktiska läge). Skalar per enhet. Safari (ej
+     standalone) → --reclaim:0px, helt oförändrat. */
+  /* @supports-grind: applicera bara om 100lvh stöds (iOS 16.4+). Saknas stödet
+     lämnas --reclaim på 0px (fail-safe) — annars skulle ett ogiltigt calc göra
+     bottom-värdet ogiltigt och overlays tappa sin förankring. */
+  @supports (height: 100lvh) {
+    @media (display-mode: standalone) {
+      :root { --reclaim: calc(100% - 100lvh); }
+    }
   }
 </style>
 </head>
 <body>
 <div id="map"></div>
-
-<!-- TILLFÄLLIG DEBUG: mäter vad iOS faktiskt rapporterar. Ta en skärmdump i
-     hemskärmsläget och skicka. Tas bort när green-bar-buggen är löst. -->
-<div id="dbg" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-  z-index:99999;background:rgba(0,0,0,.9);color:#0f0;font:11px/1.45 monospace;
-  padding:10px 12px;border:1px solid #0f0;border-radius:8px;max-width:92vw;
-  white-space:pre;pointer-events:auto;" onclick="this.style.display='none'"></div>
-<div id="safeprobe" style="position:fixed;top:0;left:0;
-  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);
-  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);
-  visibility:hidden;pointer-events:none;"></div>
-<div id="lvhprobe" style="position:fixed;top:0;left:0;width:1px;height:100lvh;visibility:hidden;pointer-events:none;"></div>
-<div id="dvhprobe" style="position:fixed;top:0;left:0;width:1px;height:100dvh;visibility:hidden;pointer-events:none;"></div>
-<div id="svhprobe" style="position:fixed;top:0;left:0;width:1px;height:100svh;visibility:hidden;pointer-events:none;"></div>
 
 <div id="top">
   <div class="holebar">
@@ -888,7 +882,6 @@ async function init() {
   map = L.map("map", { zoomControl: false, attributionControl: false,
     zoomSnap: 0,   // bråkdels-zoom — krävs för att fitHoleView ska bli exakt
     rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
-  window._sgmap = map;   // TILLFÄLLIG: exponera för debug-mätaren
   // updateWhenIdle:false = ladda tiles direkt (inte först när kartan blir idle);
   // keepBuffer:6 = håll extra rutor runt viewporten. Roterad karta täcker en
   // STÖRRE yta diagonalt än den oroterade viewporten → default keepBuffer 2
@@ -1032,65 +1025,6 @@ init();
     e.preventDefault();
     location.href = url.href;
   });
-})();
-</script>
-<script>
-/* TILLFÄLLIG DEBUG-mätare — läser vad iOS faktiskt rapporterar och var kartan/
-   flikraden hamnar. Tryck på rutan för att dölja den. Tas bort efter felsökning. */
-(function () {
-  function rect(sel) {
-    var el = document.querySelector(sel);
-    if (!el) return sel + ": (saknas)";
-    var r = el.getBoundingClientRect();
-    return sel + ": top=" + Math.round(r.top) + " bot=" + Math.round(r.bottom)
-      + " h=" + Math.round(r.height);
-  }
-  function insets() {
-    var p = getComputedStyle(document.getElementById("safeprobe"));
-    return "safe-inset T/R/B/L: " + p.paddingTop + " / " + p.paddingRight
-      + " / " + p.paddingBottom + " / " + p.paddingLeft;
-  }
-  function probeH(id) {
-    var el = document.getElementById(id);
-    return el ? Math.round(el.getBoundingClientRect().height) : "?";
-  }
-  function show() {
-    var vv = window.visualViewport;
-    var standalone = (("standalone" in navigator && navigator.standalone)
-      || matchMedia("(display-mode: standalone)").matches);
-    var lines = [
-      "standalone: " + standalone + "  dpr: " + (window.devicePixelRatio || "?"),
-      "screen:  " + screen.width + " x " + screen.height,
-      "avail:   " + screen.availWidth + " x " + screen.availHeight,
-      "inner:   " + window.innerWidth + " x " + window.innerHeight,
-      "vv:      " + (vv ? Math.round(vv.width) + " x " + Math.round(vv.height)
-        + "  offTop=" + Math.round(vv.offsetTop) + " scale=" + vv.scale : "—"),
-      "docEl:   " + document.documentElement.clientWidth + " x "
-        + document.documentElement.clientHeight,
-      "--app-h: " + (document.documentElement.style.getPropertyValue("--app-height") || "(ej satt)"),
-      insets(),
-      "lvh/dvh/svh: " + probeH("lvhprobe") + " / " + probeH("dvhprobe")
-        + " / " + probeH("svhprobe"),
-      rect("body"),
-      rect("#map"),
-      rect(".tabs"),
-      rect("#top"),
-      (window._sgmap ? "leaflet getSize: "
-        + Math.round(window._sgmap.getSize().x) + " x "
-        + Math.round(window._sgmap.getSize().y) : "leaflet: (ej redo)"),
-    ];
-    var box = document.getElementById("dbg");
-    if (box) box.textContent = lines.join("\n");
-  }
-  show();
-  window.addEventListener("resize", show);
-  window.addEventListener("orientationchange", function () { setTimeout(show, 350); });
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", show);
-    window.visualViewport.addEventListener("scroll", show);
-  }
-  setTimeout(show, 500);
-  setTimeout(show, 1500);
 })();
 </script>
 </body>
