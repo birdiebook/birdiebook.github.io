@@ -23,20 +23,20 @@
           --framebg: rgba(0,0,0,.55); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html { height:100%; }
-  /* Body = fixed helskärms-scen. På iOS i hemskärmsläge med genomskinlig
-     statusrad (black-translucent + viewport-fit=cover) UNDERrapporterar
-     window.innerHeight/clientHeight den synliga höjden med statusradens ~47 px —
-     men den ytan MÅLAS ändå (kartan syns under statusraden), så låser vi body
-     till innerHeight blir det ett grönt gap i nederkanten. Vi tar därför MAX av
-     innerHeight/clientHeight/screen.height (appen är portrait-låst → screen.height
-     = hela fysiska skärmen) och sätter det som --app-height i JS; 100vh som
-     fallback. All UI ankras absolut MOT body → kartan fyller hela skärmen och
-     flik-raden sitter dikt mot fysiska nederkanten. */
+  /* Body = fixed helskärms-scen; --app-height sätts i JS (setAppHeight) och
+     skalar per enhet (ingen hårdkodning):
+       • HEMSKÄRM (standalone, black-translucent): innerHeight underrapporterar
+         med statusradens ~47 px men hela skärmen målas → använd fysiska
+         skärmhöjden (max mot screen.height, portrait-låst) → inget grönt gap
+         nedtill och kartan fyller under statusraden.
+       • VANLIG WEBBLÄSARE: använd synliga viewporten (innerHeight) → flikraden
+         hålls ovanför webbläsarens verktygsfält, inte utanför skärmen.
+     100dvh som fallback innan JS hunnit köra. All UI ankras absolut MOT body. */
   html, body { margin:0; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
     overscroll-behavior:none; }
   body { position:fixed; top:0; left:0; right:0;
-    height:100vh; height:var(--app-height,100vh); }
+    height:100vh; height:var(--app-height,100dvh); }
   #map { position:absolute; inset:0; background:var(--bg); }
   .leaflet-container { background:var(--bg); }
 
@@ -992,12 +992,16 @@ async function init() {
 // (tee→green mellan panelerna) följer med den nya höjden.
 let _lastAppH = null;   // senast satta höjd → rita bara om vid FAKTISK ändring
 function setAppHeight() {
-  // innerHeight underrapporterar med statusradens höjd i black-translucent →
-  // ta MAX mot clientHeight/screen.height (portrait-låst) så body fyller hela
-  // fysiska skärmen och inget grönt gap uppstår i nederkanten.
-  const h = Math.max(window.innerHeight || 0,
-                     document.documentElement.clientHeight || 0,
-                     (window.screen && window.screen.height) || 0);
+  const standalone = (("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches);
+  // Hemskärm: innerHeight underrapporterar med statusradens höjd men hela skärmen
+  // målas → använd fysiska skärmhöjden (portrait-låst) så inget grönt gap nedtill.
+  // Vanlig webbläsare: använd synliga viewporten så flikraden hamnar ovanför
+  // verktygsfältet (screen.height skulle här skjuta ut den utanför skärmen).
+  // Båda skalar per enhet — ingen hårdkodning.
+  const h = standalone
+    ? Math.max(window.innerHeight || 0, (window.screen && window.screen.height) || 0)
+    : (window.innerHeight || document.documentElement.clientHeight || 0);
   document.documentElement.style.setProperty("--app-height", h + "px");
   if (h === _lastAppH) return;   // oförändrad höjd → ingen om-inpassning (annars syns ett zoom-hopp)
   _lastAppH = h;
