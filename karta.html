@@ -22,8 +22,20 @@
              syns tydligare mot kartan än den gröna varianten */
           --framebg: rgba(0,0,0,.55); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
-    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  html { height:100%; }
+  /* Body = fixed helskärms-scen, höjd låst till faktisk synlig höjd. På iOS i
+     hemskärmsläge (standalone, black-translucent + viewport-fit=cover) rapporterar
+     layout-viewporten ibland en för LÅG höjd → allt som ankras mot viewporten
+     (fixed bottom:0, inset:0) hamnar ovanför fysiska nederkanten och den gröna
+     sid-bakgrunden (--bg) lyser igenom i gapet under. Vi låser i stället body:s
+     höjd i px (--app-height = window.innerHeight, satt i JS; 100dvh som fallback)
+     och ankrar ALL UI absolut MOT body. Då fyller kartan hela skärmen och
+     flik-raden sitter dikt mot nederkanten, oavsett iOS-nyck. */
+  html, body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
+    overscroll-behavior:none; }
+  body { position:fixed; top:0; left:0; right:0;
+    height:100vh; height:var(--app-height,100dvh); }
   #map { position:absolute; inset:0; background:var(--bg); }
   .leaflet-container { background:var(--bg); }
 
@@ -57,7 +69,7 @@
     bottom:calc(env(safe-area-inset-bottom) + 62px);
     padding:8px 10px; }
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
+  .tabs { position:absolute; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
@@ -65,7 +77,7 @@
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   /* mått till vald position: förankrad uppe till höger, precis under kompassen */
-  #measure { position:fixed; z-index:1000;
+  #measure { position:absolute; z-index:1000;
     right:calc(env(safe-area-inset-right) + 10px);
     top:calc(env(safe-area-inset-top) + 86px);
     background:var(--framebg); border:1px solid var(--line); border-radius:12px;
@@ -98,7 +110,7 @@
   /* rund "Logga slag"-knapp nere till vänster — samma inramning som mått-rutorna:
      tunn mörkgrön ring, halvgenomskinlig svart bakgrund, grön text (--accent,
      samma gröna som GPS-prickens ok-läge). */
-  #logfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+  #logfab { position:absolute; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
     right:calc(env(safe-area-inset-right) + 14px);
     bottom:calc(env(safe-area-inset-bottom) + 285px);   /* överst; ovankant i höjd med putt-plusset */
@@ -114,7 +126,7 @@
      färgsatta som respektive toggle på Logga slag-sidan (green=accent, pin=danger).
      Centrerade i samma kolumn som logfab (logfab: left 14 + bredd 66 → centrum 47;
      dessa: bredd 54 → left 20 ger samma centrum). */
-  #greenfab, #pinfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+  #greenfab, #pinfab { position:absolute; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
     right:calc(env(safe-area-inset-right) + 20px);
     width:54px; height:54px; border-radius:50%;
@@ -132,7 +144,7 @@
   /* score-räknare nere till höger: total slag för aktuellt hål i en rund ruta
      (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
      ovanför och − under för att justera scoren. */
-  #scorefab { position:fixed; z-index:1300;
+  #scorefab { position:absolute; z-index:1300;
     left:calc(env(safe-area-inset-left) + 14px);
     bottom:calc(env(safe-area-inset-bottom) + 107px);
     display:flex; flex-direction:column; align-items:center; gap:8px; }
@@ -955,8 +967,29 @@ async function init() {
       () => {}, { enableHighAccuracy: true, maximumAge: 0 });
   initSharedPins();   // delade pins från ev. live-match (realtid)
 }
+// iOS-standalone helskärmshöjd: lås body:s höjd till faktisk innerHeight (se
+// CSS-kommentaren vid body). window.innerHeight ger fysiska skärmhöjden inkl.
+// safe-areas i black-translucent-läge → kartan fyller hela vägen upp och
+// flik-raden sitter dikt mot nederkanten. iOS rapporterar ibland fel höjd vid
+// första målning och korrigerar strax efter → resize-lyssnaren fångar det, och
+// en fördröjd extra sättning gör starten robust. Rita om kartvyn så inramningen
+// (tee→green mellan panelerna) följer med den nya höjden.
+function setAppHeight() {
+  document.documentElement.style.setProperty("--app-height", window.innerHeight + "px");
+  if (map) {
+    map.invalidateSize({ pan: false });
+    const h = ROUND[hi];
+    if (h) fitHoleView(h);
+  }
+}
+setAppHeight();
+window.addEventListener("resize", setAppHeight);
+window.addEventListener("orientationchange", setAppHeight);
+window.addEventListener("pageshow", setAppHeight);
+
 window.addEventListener("pagehide", () => { if (pinUnsub) { pinUnsub(); pinUnsub = null; } });
 init();
+setTimeout(setAppHeight, 300);   // fånga iOS-höjdkorrigering efter första målning
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
