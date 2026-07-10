@@ -99,12 +99,11 @@
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   /* Hemskärm: gör sidan till app-shell (icke-scrollande topp + innehåll scrollar
-     i body) så FIXED-element inte klipps vid layout-viewportens nederkant (797)
-     utan når fysiska kanten (844) — samma mekanism som karta. --reclaim skjuter
-     flikraden dit; padding krymps till minimal grön remsa. Safari är helt orört. */
+     i body). Då når FIXED-flikraden vid bottom:0 den fysiska kanten (844) utan att
+     klippas — INGEN --reclaim behövs här (den skulle dubbelskifta och trycka nedre
+     halvan av knapparna utanför). Minimal grön remsa via liten padding. Safari orört. */
   @supports (height: 100lvh) {
     @media (display-mode: standalone) {
-      :root { --reclaim: calc(100% - 100lvh); }
       html { overflow: hidden; }
       body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
       .tabs { padding: 6px 10px 8px; }
