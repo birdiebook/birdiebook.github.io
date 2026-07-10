@@ -17,7 +17,7 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
-          --danger:#e23b3b;
+          --danger:#e23b3b; --holeout:#d99a2b;
           /* halvgenomskinlig svart bakom text i inramningarna (hål, avstånd, mät) —
              syns tydligare mot kartan än den gröna varianten */
           --framebg: rgba(0,0,0,.55);
@@ -128,7 +128,7 @@
      färgsatta som respektive toggle på Logga slag-sidan (green=accent, pin=danger).
      Centrerade i samma kolumn som logfab (logfab: left 14 + bredd 66 → centrum 47;
      dessa: bredd 54 → left 20 ger samma centrum). */
-  #greenfab, #pinfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+  #greenfab, #pinfab, #holeoutfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
     right:calc(env(safe-area-inset-right) + 20px);
     width:54px; height:54px; border-radius:50%;
@@ -136,13 +136,17 @@
     font-weight:800; font-size:10px; line-height:1.1; text-align:center;
     border:1px solid; box-shadow:0 2px 8px #0007;
     background:rgba(0,0,0,.72); }   /* oreggad: svart botten, färgad text/ring */
+  /* "Hål ut" nederst i högerkolumnen (under pin), samma 64px-steg som green→pin.
+     Dov orange/gul (--holeout). Ren klar-flagga — påverkar inte scoren. */
+  #holeoutfab { bottom:calc(env(safe-area-inset-bottom) + 93px + var(--reclaim)); color:var(--holeout); border-color:var(--holeout); }
   #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 157px + var(--reclaim)); color:var(--danger); border-color:var(--danger); }
   #greenfab { bottom:calc(env(safe-area-inset-bottom) + 221px + var(--reclaim)); color:var(--accent); border-color:var(--accent); }
-  #greenfab:active, #pinfab:active { transform:scale(.94); }
+  #greenfab:active, #pinfab:active, #holeoutfab:active { transform:scale(.94); }
   #greenfab.busy, #pinfab.busy { opacity:.5; pointer-events:none; }
   /* reggad: fylld färg (lätt genomskinlig) med svart text */
   #greenfab.on { background:rgba(55,176,107,.85); color:var(--accent-ink); border-color:var(--accent); }
   #pinfab.on   { background:rgba(226,59,59,.85); color:#1a0606; border-color:var(--danger); }
+  #holeoutfab.on { background:rgba(217,154,43,.85); color:#1a1204; border-color:var(--holeout); }
   /* score-räknare nere till höger: total slag för aktuellt hål i en rund ruta
      (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
      ovanför och − under för att justera scoren. */
@@ -225,6 +229,7 @@
 
 <button type="button" id="greenfab">Boll på<br>green</button>
 <button type="button" id="pinfab">Markera<br>pin</button>
+<button type="button" id="holeoutfab">Hål<br>ut</button>
 <button type="button" id="logfab">Logga<br>slag</button>
 
 <div id="scorefab">
@@ -263,7 +268,7 @@ const SS = CourseMap.SURFACE_STYLE;
 const { GLOBAL_BASE } = SGRound;
 
 let HOLES = [], byGlobal = {}, ROUND = [], roundName = "1-18";
-let hi = 0, pos = null;
+let hi = 0, pos = null, lastAcc = null;
 // "play" = Spelar som (vind + slope), "gps" = råa GPS-mått. Alltid synlig toggle.
 let mode = "play";
 try { mode = localStorage.getItem("sg_map_mode") || "play"; } catch (e) {}
@@ -656,8 +661,62 @@ function refreshFabs() {
     rec = l && l.holes && l.holes[String(hi + 1)];
   } catch (e) {}
   const gf = document.getElementById("greenfab"), pf = document.getElementById("pinfab");
+  const hf = document.getElementById("holeoutfab");
   if (gf) gf.classList.toggle("on", !!(rec && rec.green && rec.green.lat != null));
   if (pf) pf.classList.toggle("on", !!(rec && rec.pin && rec.pin.lat != null));
+  if (hf) hf.classList.toggle("on", !!(rec && rec.holedOut));
+}
+
+// Toggla "hål ut" (klar-flagga) för aktuellt hål i rundloggen. REN flagga —
+// påverkar inte scoren (chip-in = hål ut med 0 putts). Kan reggas/avreggas.
+// Ett hål-ut kan uppfylla krav 2 för auto-hålbytet → kolla direkt efteråt.
+function toggleHoleOut() {
+  let log = null;
+  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
+  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
+                    current: hi + 1, holes: {} };
+  if (!log.holes) log.holes = {};
+  const k = String(hi + 1);
+  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
+                                      putts: 0, pen: 0, adj: 0 };
+  log.holes[k].holedOut = !log.holes[k].holedOut;
+  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(15);   // knapptryck (ej auto-bytet)
+  refreshFabs();
+  maybeAutoAdvance();
+}
+
+// Sömlöst auto-hålbyte (medan man är på kartan): byt till nästa hål när BÅDA
+// kraven är uppfyllda — (1) ≤10 m från nästa håls valda tee, och (2) putt reggad
+// ELLER hål ut reggat på nuvarande hål. Bara vid hyfsad GPS (acc ≤15 m) så
+// skräpfixar inte byter för tidigt. Körs vid varje GPS-fix OCH direkt när man
+// reggar putt/hål-ut (fångar båda ordningarna: gå-sen-avsluta / avsluta-sen-gå).
+// Tyst — ingen avisering. Inget kedjebyte: nya hålet uppfyller inte krav 2.
+const AUTO_TEE_M = 10, AUTO_ACC_M = 15;
+function maybeAutoAdvance(acc) {
+  if (acc == null) acc = lastAcc;
+  if (!pos || acc == null || acc > AUTO_ACC_M) return;
+  if (hi >= ROUND.length - 1) return;            // sista hålet → inget nästa tee
+  const rec = currentHoleRec();
+  const finished = !!(rec && ((rec.putts > 0) || rec.holedOut));
+  if (!finished) return;
+  const nextTee = teePoint(ROUND[hi + 1]);
+  if (!nextTee) return;
+  if (hav(pos, nextTee) <= AUTO_TEE_M) goToHole(hi + 2);   // hi 0-baserat → nästa rel = hi+2
+}
+
+// Byt hål från kartan och håll index synkat: skriv sg_hole (index:s syncFromMap
+// plockar upp det) + rundloggens current (så index visar samma hål vid retur —
+// index och karta ska alltid vara synkade). Tyst byte, ingen avisering.
+function goToHole(rel) {
+  if (rel < 1 || rel > ROUND.length) return;
+  hi = rel - 1;
+  try { localStorage.setItem("sg_hole", String(rel)); } catch (e) {}
+  try {
+    const log = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
+    if (log) { log.current = rel; localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); }
+  } catch (e) {}
+  drawHole();
 }
 
 // Slag vid bollen för aktuellt hål = GPS-loggade slag (rundloggens shots) +
@@ -705,6 +764,7 @@ function adjustPutts(step) {
   try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
   if (navigator.vibrate) navigator.vibrate(15);
   renderScore();
+  maybeAutoAdvance();   // putt kan uppfylla krav 2 om man redan står vid nästa tee
 }
 // Justera scoren via adj (utan GPS-position), så antalet kan sättas rätt även
 // när inte varje slag GPS-taggats. steg = +1 / −1. − stoppar vid 0 slag.
@@ -814,6 +874,7 @@ function drawHole() {
 
 function setPos(lat, lon, acc) {
   pos = [lat, lon];
+  lastAcc = acc;
   const g = document.getElementById("gdot"), t = document.getElementById("gtxt");
   g.className = "gpsdot" + (acc <= 15 ? " ok" : "");
   t.textContent = `GPS ±${Math.round(acc)} m`;
@@ -822,6 +883,7 @@ function setPos(lat, lon, acc) {
   updateWind();
   fetchPlayerElev();
   if (tapMarker) updateTap(tapMarker.getLatLng());
+  maybeAutoAdvance(acc);   // sömlöst hålbyte om kraven slår in
 }
 
 // Hålet styrs helt av rundloggen via localStorage-nyckeln sg_hole (spelarens
@@ -950,6 +1012,8 @@ async function init() {
   if (gf) gf.onclick = () => markPoint("green");
   const pf = document.getElementById("pinfab");
   if (pf) pf.onclick = () => markPoint("pin");
+  const hf = document.getElementById("holeoutfab");
+  if (hf) hf.onclick = toggleHoleOut;
   const pu = document.getElementById("puttUp");
   if (pu) pu.onclick = () => adjustPutts(1);
   const pdn = document.getElementById("puttDn");
