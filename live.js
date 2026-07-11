@@ -22,6 +22,32 @@ const SGLive = (() => {
   // spelkod: versaler+siffror utan lättförväxlade tecken (O/0, I/1, L)
   const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
+  // Diskret engångs-varning när molnet NEKAR en push (servern svarade fel — t.ex.
+  // saknad tabell/policy, som gjorde att delad pin var helt tyst innan game_pins
+  // fanns). Offline/nätverksfel förblir tysta (by design: score/pin finns kvar
+  // lokalt och molnet hinner ikapp). Visas en gång per sidladdning som en liten
+  // banner längst ner; console.warn alltid. Kallas från pusharnas .catch.
+  let _warned = false;
+  function liveWarn(where, e) {
+    if (!e) return;
+    const code = e.code || e.status || "";
+    try { console.warn("[SGLive] " + where + " nekades:", code, e.message || e); } catch (_) {}
+    // bara serversvar (kod/status) surfar; offline/nätverk = tyst
+    const online = typeof navigator === "undefined" || navigator.onLine !== false;
+    if (!code || !online || _warned || typeof document === "undefined") return;
+    _warned = true;
+    try {
+      const d = document.createElement("div");
+      d.textContent = "Live-synk fel (" + code + ") — sparas lokalt. Tryck för att stänga.";
+      d.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:99999;"
+        + "background:#b23b3b;color:#fff;font:13px/1.4 system-ui,sans-serif;"
+        + "padding:8px 10px;border-radius:8px;box-shadow:0 2px 8px #0007;text-align:center";
+      d.onclick = () => d.remove();
+      document.body.appendChild(d);
+      setTimeout(() => { if (d.parentNode) d.remove(); }, 8000);
+    } catch (_) {}
+  }
+
   let client = null;
   function db() {
     if (!client) {
@@ -181,6 +207,6 @@ const SGLive = (() => {
   }
 
   return { initLive, createGame, joinGame, pushHoleScore, finishGame,
-           subscribeLeaderboard, pushPin, subscribePins };
+           subscribeLeaderboard, pushPin, subscribePins, liveWarn };
 })();
 if (typeof window !== "undefined") window.SGLive = SGLive;

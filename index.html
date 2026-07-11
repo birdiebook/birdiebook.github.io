@@ -231,6 +231,7 @@ let lastFix = null, watching = false, busy = false, wakeLock = null;
 const fixBuf = [];              // ringbuffer av watch-fixar (senaste ~6 s)
 const FIX_WINDOW = 6000;        // hur långt bakåt bufferten sträcker sig (ms)
 const CAPTURE_COLLECT_MS = 5000; // samla fixar så här länge EFTER tryck (konvergens)
+const CAPTURE_HARD_CAP_MS = 15000; // ge upp först här om INGEN fix alls kommit (kall mottagare/behörighet)
 
 function pruneBuf(now) {
   while (fixBuf.length && now - fixBuf[0].ts > FIX_WINDOW) fixBuf.shift();
@@ -308,27 +309,43 @@ function quickFix() {
 // fickan hinner konvergera) och returnerar bästa/median-positionen ur fönstret.
 // Egen watch garanterar färska fixar även om huvud-watchen strypts i bakgrunden.
 // Sömlöst — ingen nedräkning; vibrationen vid retur är kvittot på att slaget loggats.
+//
+// Viktigt: en riktigt kall mottagare (ur fickan) eller behörighetsdialogen på
+// första trycket kan äta upp hela 5 s-fönstret INNAN första fixen kommer. Då får
+// vi inte bara ge upp — kartans logShot (getCurrentPosition, timeout 15 s) klarar
+// det, så här väntar vi vidare upp till en hård gräns tills första fixen dyker upp.
 function collectFix() {
   return new Promise((resolve, reject) => {
     if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
     const collected = [];
-    let wid = null, done = false;
+    let wid = null, done = false, windowElapsed = false;
     const finish = (fn, arg) => {
       if (done) return; done = true;
       if (wid !== null) navigator.geolocation.clearWatch(wid);
+      clearTimeout(capTimer); clearTimeout(hardTimer);
       fn(arg);
+    };
+    const settle = () => {
+      const best = pickBest(collected);
+      finish(best ? resolve : reject, best || new Error("Fick ingen GPS-position, försök igen."));
     };
     wid = navigator.geolocation.watchPosition(
       p => { const f = { lat: p.coords.latitude, lon: p.coords.longitude,
                          acc: p.coords.accuracy, ts: Date.now() };
              collected.push(f);
-             lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip(); },
+             lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip();
+             // Fönstret redan passerat och vi väntade på första fixen? Klart nu.
+             if (windowElapsed) settle(); },
       e => { if (e.code === 1) finish(reject, new Error("GPS nekad — tillåt platsåtkomst i webbläsaren.")); },
       { enableHighAccuracy: true, maximumAge: 0 });
-    setTimeout(() => {
-      const best = pickBest(collected);
-      finish(best ? resolve : reject, best || new Error("Fick ingen GPS-position, försök igen."));
+    // Efter 5 s: har vi fixar väljer vi bästa. Har vi INGA (kall mottagare/
+    // behörighetsdialog) låter vi watchen leva vidare tills första fixen kommer.
+    const capTimer = setTimeout(() => {
+      windowElapsed = true;
+      if (collected.length) settle();
     }, CAPTURE_COLLECT_MS);
+    // Hård gräns: ge upp om inte ens en enda fix kommit (som kartans 15 s-timeout).
+    const hardTimer = setTimeout(settle, CAPTURE_HARD_CAP_MS);
   });
 }
 async function capture(label, collect) {
@@ -916,7 +933,7 @@ const Live = (() => {
     if (!has() || !inGame()) return;
     const c = SGScore.components(hole(n));
     SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
-      .catch(() => {});   // offline/fel: score ligger kvar lokalt, molnet hinner ikapp senare
+      .catch(e => SGLive.liveWarn("score", e));   // offline tyst (score kvar lokalt); serverfel → engångsvarning
   }
   // Dela markerad pin till matchen (globalt hålnr). Tyst no-op om ej i match.
   function pushPin(rel, p) {
@@ -924,7 +941,7 @@ const Live = (() => {
     const g = SGRound.relToGlobal(rel);
     if (g == null) return;
     SGLive.pushPin(L.gameId, g, { lat: p.lat, lon: p.lon, acc: p.acc })
-      .catch(() => {});   // offline/fel sväljs, pin ligger kvar lokalt
+      .catch(e => SGLive.liveWarn("pin", e));   // offline tyst (pin kvar lokalt); serverfel → engångsvarning
   }
   return { state, inGame, create, join, leave, finish, push, pushPin };
 })();

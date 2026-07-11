@@ -797,7 +797,7 @@ function livePushPinFromMap(pt) {
   if (!live || !live.gameId || typeof SGLive === "undefined") return;
   const g = SGRound.relToGlobal(hi + 1);
   if (g == null) return;
-  try { SGLive.pushPin(live.gameId, g, { lat: pt.lat, lon: pt.lon, acc: pt.acc }).catch(() => {}); }
+  try { SGLive.pushPin(live.gameId, g, { lat: pt.lat, lon: pt.lon, acc: pt.acc }).catch(e => SGLive.liveWarn("pin", e)); }
   catch (e) {}
 }
 
@@ -819,7 +819,7 @@ function livePushScoreFromMap(rel) {
   const strokes = (rec && rec.shots ? rec.shots.length : 0) + (rec && rec.adj ? rec.adj : 0);
   const putts = rec && rec.putts ? rec.putts : 0;
   const pen = rec && rec.pen ? rec.pen : 0;
-  try { SGLive.pushHoleScore(live.gameId, rel, { strokes, putts, pen }).catch(() => {}); }
+  try { SGLive.pushHoleScore(live.gameId, rel, { strokes, putts, pen }).catch(e => SGLive.liveWarn("score", e)); }
   catch (e) {}
 }
 
