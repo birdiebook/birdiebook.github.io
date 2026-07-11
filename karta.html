@@ -592,6 +592,7 @@ function logShot() {
     if (navigator.vibrate) navigator.vibrate(30);
     drawShots();
     renderScore();   // ett loggat slag höjer total-räknaren
+    livePushScoreFromMap(hi + 1);   // håll live-leaderboarden i synk
     done();
   }, e => {
     alert(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
@@ -710,6 +711,7 @@ function maybeAutoAdvance(acc) {
 // index och karta ska alltid vara synkade). Tyst byte, ingen avisering.
 function goToHole(rel) {
   if (rel < 1 || rel > ROUND.length) return;
+  livePushScoreFromMap(hi + 1);   // pusha hålet man LÄMNAR (som index.html vid hålbyte)
   hi = rel - 1;
   try { localStorage.setItem("sg_hole", String(rel)); } catch (e) {}
   try {
@@ -764,6 +766,7 @@ function adjustPutts(step) {
   try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
   if (navigator.vibrate) navigator.vibrate(15);
   renderScore();
+  livePushScoreFromMap(hi + 1);   // håll live-leaderboarden i synk
   maybeAutoAdvance();   // putt kan uppfylla krav 2 om man redan står vid nästa tee
 }
 // Justera scoren via adj (utan GPS-position), så antalet kan sättas rätt även
@@ -783,6 +786,7 @@ function adjustScore(step) {
   try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
   if (navigator.vibrate) navigator.vibrate(15);
   renderScore();
+  livePushScoreFromMap(hi + 1);   // håll live-leaderboarden i synk
 }
 
 // Pusha reggad pin till ev. live-match. Kartan har ingen Live-modul → läser
@@ -794,6 +798,28 @@ function livePushPinFromMap(pt) {
   const g = SGRound.relToGlobal(hi + 1);
   if (g == null) return;
   try { SGLive.pushPin(live.gameId, g, { lat: pt.lat, lon: pt.lon, acc: pt.acc }).catch(() => {}); }
+  catch (e) {}
+}
+
+// Pusha ett håls score till ev. live-match — motsvarigheten till index.html:s
+// Live.push, men kartan har ingen Live-modul: läs gameId ur sg-live-v1 och anropa
+// SGLive direkt. Hålnr = spelarens hål (rel 1–18), SAMMA nyckel som index.html
+// (score keyas RELATIVT, till skillnad från pins som är globala). Komponenterna
+// härleds precis som SGScore.components: strokes = shots + adj. Fire-and-forget:
+// fel/offline sväljs, scoren finns kvar lokalt och molnet hinner ikapp senare.
+function livePushScoreFromMap(rel) {
+  let live = null;
+  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  if (!live || !live.gameId || typeof SGLive === "undefined") return;
+  let rec = null;
+  try {
+    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
+    rec = l && l.holes && l.holes[String(rel)];
+  } catch (e) {}
+  const strokes = (rec && rec.shots ? rec.shots.length : 0) + (rec && rec.adj ? rec.adj : 0);
+  const putts = rec && rec.putts ? rec.putts : 0;
+  const pen = rec && rec.pen ? rec.pen : 0;
+  try { SGLive.pushHoleScore(live.gameId, rel, { strokes, putts, pen }).catch(() => {}); }
   catch (e) {}
 }
 

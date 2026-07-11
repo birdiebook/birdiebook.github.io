@@ -230,7 +230,7 @@ function hole(n) {
 let lastFix = null, watching = false, busy = false, wakeLock = null;
 const fixBuf = [];              // ringbuffer av watch-fixar (senaste ~6 s)
 const FIX_WINDOW = 6000;        // hur långt bakåt bufferten sträcker sig (ms)
-const CAPTURE_WINDOW = 4000;    // fixar inom detta fönster används vid tryck (ms)
+const CAPTURE_COLLECT_MS = 5000; // samla fixar så här länge EFTER tryck (konvergens)
 
 function pruneBuf(now) {
   while (fixBuf.length && now - fixBuf[0].ts > FIX_WINDOW) fixBuf.shift();
@@ -267,49 +267,76 @@ const median = arr => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-// #2 Bästa fixen, inte senaste + #3 median när man står stilla. Väljer ur
-// ringbufferten den bästa positionen: median av de stillastående fixarna (kastar
-// outliers), annars den med lägst accuracy. Faller tillbaka på lastFix om tomt.
-function bestFix() {
-  const now = Date.now();
-  pruneBuf(now);
-  const recent = fixBuf.filter(f => now - f.ts <= CAPTURE_WINDOW);
-  if (!recent.length) return lastFix;
-
-  const best = recent.reduce((a, b) => (b.acc < a.acc ? b : a));  // #2 lägst acc
-  if (recent.length < 3) return best;
+// #2 Bästa fixen, inte senaste + #3 median när man står stilla. Väljer ur en
+// uppsättning fixar den bästa positionen: median av de stillastående (kastar
+// outliers) om >=3, annars den med lägst accuracy. null om tomt.
+function pickBest(fixes) {
+  if (!fixes.length) return null;
+  const best = fixes.reduce((a, b) => (b.acc < a.acc ? b : a));  // #2 lägst acc
+  if (fixes.length < 3) return best;
 
   // #3 median: släng fixar som ligger långt från medianpunkten (brus/rörelse)
-  const centre = { lat: median(recent.map(f => f.lat)),
-                   lon: median(recent.map(f => f.lon)) };
-  const inliers = recent.filter(f => hav(f, centre) <= Math.max(f.acc, 10));
+  const centre = { lat: median(fixes.map(f => f.lat)),
+                   lon: median(fixes.map(f => f.lon)) };
+  const inliers = fixes.filter(f => hav(f, centre) <= Math.max(f.acc, 10));
   if (inliers.length < 3) return best;
 
   return { lat: median(inliers.map(f => f.lat)),
            lon: median(inliers.map(f => f.lon)),
            acc: best.acc,   // ärligt: inte lägre än bästa bidragande fixen
-           ts: now };
+           ts: Date.now() };
 }
 
-function getFix() {  // bästa fixen ur bufferten om färsk (<8 s), annars ny förfrågan
-  return new Promise((res, rej) => {
-    const b = bestFix();
-    if (b && Date.now() - b.ts < 8000) return res(b);
-    if (!("geolocation" in navigator)) return rej(new Error("Ingen GPS i webbläsaren."));
+// Snabb fix för green/pin: där lämnar man platsen direkt, så ingen 5 s-väntan.
+// Tar bästa ur senaste bufferten (~6 s) om något finns, annars en enskild fix.
+function quickFix() {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    pruneBuf(Date.now());
+    const b = pickBest(fixBuf);
+    if (b) return resolve(b);
     navigator.geolocation.getCurrentPosition(
-      p => res({ lat: p.coords.latitude, lon: p.coords.longitude,
-                 acc: p.coords.accuracy, ts: Date.now() }),
-      e => rej(new Error(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
-                                      : "Fick ingen GPS-position, försök igen.")),
+      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude,
+                     acc: p.coords.accuracy, ts: Date.now() }),
+      e => reject(new Error(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
+                                         : "Fick ingen GPS-position, försök igen.")),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
   });
 }
-async function capture(label) {
+
+// LOGGA SLAG: samlar GPS-fixar i ~5 s EFTER trycket (så en kall mottagare ur
+// fickan hinner konvergera) och returnerar bästa/median-positionen ur fönstret.
+// Egen watch garanterar färska fixar även om huvud-watchen strypts i bakgrunden.
+// Sömlöst — ingen nedräkning; vibrationen vid retur är kvittot på att slaget loggats.
+function collectFix() {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    const collected = [];
+    let wid = null, done = false;
+    const finish = (fn, arg) => {
+      if (done) return; done = true;
+      if (wid !== null) navigator.geolocation.clearWatch(wid);
+      fn(arg);
+    };
+    wid = navigator.geolocation.watchPosition(
+      p => { const f = { lat: p.coords.latitude, lon: p.coords.longitude,
+                         acc: p.coords.accuracy, ts: Date.now() };
+             collected.push(f);
+             lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip(); },
+      e => { if (e.code === 1) finish(reject, new Error("GPS nekad — tillåt platsåtkomst i webbläsaren.")); },
+      { enableHighAccuracy: true, maximumAge: 0 });
+    setTimeout(() => {
+      const best = pickBest(collected);
+      finish(best ? resolve : reject, best || new Error("Fick ingen GPS-position, försök igen."));
+    }, CAPTURE_COLLECT_MS);
+  });
+}
+async function capture(label, collect) {
   if (busy) return null;
   busy = true; render();
   try {
-    const f = await getFix();
-    if (f.acc > 25 && !confirm(`Svag GPS just nu (±${Math.round(f.acc)} m). Spara ${label} ändå?`)) {
+    const f = await (collect ? collectFix() : quickFix());
+    if (f.acc > 25 && !confirm(`Svag GPS (±${Math.round(f.acc)} m). Spara ${label} ändå?`)) {
       return null;
     }
     if (navigator.vibrate) navigator.vibrate(30);
@@ -723,7 +750,7 @@ function renderHole() {
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
 
   document.getElementById("shot").onclick = async () => {
-    const p = await capture("slaget");
+    const p = await capture("slaget", true);   // samla 5 s (kall mottagare ur fickan)
     if (p) { hole(S.current).shots.push(p); save(); livePush(); }
     render();
   };

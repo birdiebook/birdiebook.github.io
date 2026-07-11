@@ -1,10 +1,23 @@
 # GPS-exakthet i rundlogg.html — implementationsplan
 
-> **STATUS 2026-07-11: implementerat i `mobile/index.html`** (GPS-blocket ~rad 229–305).
-> Alla tre åtgärderna klara: Wake Lock, bästa-fix-ur-ringbuffer, median-med-outlierfilter.
-> OBS: `rundlogg.html` är arkiverad (`mobile/_arkiv/`); den aktiva källan är `index.html`,
-> som speglas live via `tools/publish.ps1` (ingen `deploy/`-mapp längre). Kvar: skarpt
-> test på banan att acc håller sig låg mellan hål utan ny uppvärmning.
+> **STATUS 2026-07-11: implementerat i `mobile/index.html`** (GPS-blocket).
+> Åtgärd #1–#3 (Wake Lock, bästa-fix, median) infört. OBS: `rundlogg.html` är arkiverad
+> (`mobile/_arkiv/`); aktiv källa = `index.html`, speglas live via `tools/publish.ps1`.
+>
+> **OMVÄRDERING (2026-07-11, efter användarfeedback):** Faktiskt arbetssätt = skärmen
+> SLÄCKS och mobilen ligger i fickan mellan slag. Då släpps Wake Lock och sidan fryser →
+> GPS somnar → kall fix vid VARJE slag. Det slår ut premissen för #1 OCH tömmer bufferten
+> som #2/#3 läser ur. Wake Lock är därför i praktiken moot (harmlös no-op; hjälper bara om
+> mobilen sitter i vagnhållare med skärmen på).
+>
+> **Den fix som matchar fick-arbetssättet (infört):** endast **LOGGA SLAG** samlar GPS-
+> fixar i ~5 s EFTER trycket (`collectFix`, egen watch + `CAPTURE_COLLECT_MS`) och väljer
+> bästa/median-positionen ur fönstret via `pickBest` — så en kall mottagare ur fickan
+> hinner konvergera. **Sömlöst: ingen synlig nedräkning** (vibrationen vid retur = kvittot).
+> **Green/pin använder `quickFix`** (bästa ur bufferten direkt, ingen 5 s-väntan) — där
+> lämnar man platsen snabbt. `capture(label, collect)`: `true` = slag, utelämnat = quick.
+> Acc-vakt (>25 m → bekräfta) kvar. Fysisk gräns: kall TTFF ~5–20 s fångas bara delvis.
+> Kvar: skarpt test på banan.
 
 **Mål:** maxa GPS-exaktheten i det ögonblick man trycker SLAG (stående över bollen),
 utan att lämna webbläsaren / bli en native-app. Loggmodellen är tryck-per-slag =
