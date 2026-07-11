@@ -103,6 +103,39 @@ const SGLive = (() => {
     if (error) throw error;
   }
 
+  // ── delad pin (PIN_SHARING_SPEC.md) ────────────────────────────────────
+  // Pin per (game_id, hole=globalt hålnr). Last-write-wins via upsert. Alla i
+  // matchen kan flytta (RLS Fas 1 permissiv, spelkod = barriär).
+  async function pushPin(gameId, hole, p) {
+    const { uid } = await initLive();
+    const c = db();
+    const { error } = await c.from("game_pins").upsert({
+      game_id: gameId, uid, hole,
+      lat: p.lat, lon: p.lon, acc: p.acc == null ? null : p.acc,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "game_id,hole" });
+    if (error) throw error;
+  }
+
+  // Prenumerera på matchens pins. cb får en karta { [globaltHålnr]: {lat,lon,acc} }.
+  function subscribePins(gameId, cb) {
+    const c = db();
+    async function refresh() {
+      const { data } = await c.from("game_pins")
+        .select("hole, lat, lon, acc").eq("game_id", gameId);
+      const m = {};
+      (data || []).forEach(r => { m[r.hole] = { lat: r.lat, lon: r.lon, acc: r.acc }; });
+      cb(m);
+    }
+    const ch = c.channel("pins:" + gameId)
+      .on("postgres_changes",
+          { event: "*", schema: "public", table: "game_pins", filter: "game_id=eq." + gameId },
+          refresh)
+      .subscribe();
+    refresh();   // första fyllning direkt
+    return () => c.removeChannel(ch);
+  }
+
   // ── leaderboard ──────────────────────────────────────────────────────
   // Bygger en färdig modell (sorterad). par = valfri { hole: par } för mot-par;
   // utelämnas den blir toPar 0 och vyn kan räkna mot par själv ur holes.
@@ -147,6 +180,7 @@ const SGLive = (() => {
     return () => c.removeChannel(channel);
   }
 
-  return { initLive, createGame, joinGame, pushHoleScore, finishGame, subscribeLeaderboard };
+  return { initLive, createGame, joinGame, pushHoleScore, finishGame,
+           subscribeLeaderboard, pushPin, subscribePins };
 })();
 if (typeof window !== "undefined") window.SGLive = SGLive;

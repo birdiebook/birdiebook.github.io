@@ -1,5 +1,11 @@
 # GPS-exakthet i rundlogg.html — implementationsplan
 
+> **STATUS 2026-07-11: implementerat i `mobile/index.html`** (GPS-blocket ~rad 229–305).
+> Alla tre åtgärderna klara: Wake Lock, bästa-fix-ur-ringbuffer, median-med-outlierfilter.
+> OBS: `rundlogg.html` är arkiverad (`mobile/_arkiv/`); den aktiva källan är `index.html`,
+> som speglas live via `tools/publish.ps1` (ingen `deploy/`-mapp längre). Kvar: skarpt
+> test på banan att acc håller sig låg mellan hål utan ny uppvärmning.
+
 **Mål:** maxa GPS-exaktheten i det ögonblick man trycker SLAG (stående över bollen),
 utan att lämna webbläsaren / bli en native-app. Loggmodellen är tryck-per-slag =
 appen är i förgrunden vid varje logg, så förgrunds-GPS är det avgörande.

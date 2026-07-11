@@ -16,8 +16,7 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
-          --warn:#e8c34a; --danger:#e26a5a; --good:#7ee2a8;
-          --reclaim:0px; }   /* hemskärm: skjuter flikraden till fysiska nederkanten */
+          --warn:#e8c34a; --danger:#e26a5a; --good:#7ee2a8; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; }
   body { background:var(--bg); color:var(--ink);
@@ -95,7 +94,7 @@
   .card-tbl tbody td.sc { padding:9px 6px; }
 
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:var(--reclaim); z-index:1200; display:flex; gap:6px;
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   /* Hemskärm: app-shell med FLIK-RADEN SOM FLEX-ELEMENT i botten (inte fixed).

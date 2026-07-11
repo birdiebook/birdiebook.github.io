@@ -19,7 +19,6 @@
     --ink: #e8f5ec; --dim: #9fc4ae; --line: #1f5540;
     --accent: #37b06b; --accent-ink: #06180f;
     --warn: #e8c34a; --danger: #e26a5a;
-    --reclaim: 0px;   /* hemskärm: skjuter flikraden till fysiska nederkanten */
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
@@ -32,7 +31,7 @@
   }
   #app { max-width: 480px; margin: 0 auto; padding: 12px 14px 96px; }
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:var(--reclaim); z-index:1200; display:flex; gap:6px;
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   /* Hemskärm: app-shell med FLIK-RADEN SOM FLEX-ELEMENT i botten (inte fixed).
@@ -228,19 +227,74 @@ function hole(n) {
 }
 
 /* ---------- GPS ---------- */
-let lastFix = null, watching = false, busy = false;
+let lastFix = null, watching = false, busy = false, wakeLock = null;
+const fixBuf = [];              // ringbuffer av watch-fixar (senaste ~6 s)
+const FIX_WINDOW = 6000;        // hur långt bakåt bufferten sträcker sig (ms)
+const CAPTURE_WINDOW = 4000;    // fixar inom detta fönster används vid tryck (ms)
+
+function pruneBuf(now) {
+  while (fixBuf.length && now - fixBuf[0].ts > FIX_WINDOW) fixBuf.shift();
+}
+
+// #1 Screen Wake Lock: håll skärmen tänd medan en runda är aktiv så GPS-chippet
+// förblir varmt (ingen kall uppvärmning per hål). Släpps av OS vid flikbyte/lås;
+// vi åter-begär på visibilitychange. Saknas API:t (äldre iOS) gör vi inget.
+async function requestWakeLock() {
+  if (wakeLock || !("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) { /* nekad/ej stödd — GPS funkar ändå, ignorera */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && watching) requestWakeLock();
+});
 
 function startWatch() {
   if (watching || !("geolocation" in navigator)) return;
   watching = true;
+  requestWakeLock();
   navigator.geolocation.watchPosition(
-    p => { lastFix = { lat: p.coords.latitude, lon: p.coords.longitude,
-                       acc: p.coords.accuracy, ts: Date.now() }; updateGpsChip(); },
+    p => { const now = Date.now();
+           lastFix = { lat: p.coords.latitude, lon: p.coords.longitude,
+                       acc: p.coords.accuracy, ts: now };
+           fixBuf.push(lastFix); pruneBuf(now); updateGpsChip(); },
     () => {}, { enableHighAccuracy: true, maximumAge: 0 });
 }
-function getFix() {  // färsk fix: senaste watch-punkten om <8 s, annars ny förfrågan
+
+const median = arr => {
+  const s = [...arr].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// #2 Bästa fixen, inte senaste + #3 median när man står stilla. Väljer ur
+// ringbufferten den bästa positionen: median av de stillastående fixarna (kastar
+// outliers), annars den med lägst accuracy. Faller tillbaka på lastFix om tomt.
+function bestFix() {
+  const now = Date.now();
+  pruneBuf(now);
+  const recent = fixBuf.filter(f => now - f.ts <= CAPTURE_WINDOW);
+  if (!recent.length) return lastFix;
+
+  const best = recent.reduce((a, b) => (b.acc < a.acc ? b : a));  // #2 lägst acc
+  if (recent.length < 3) return best;
+
+  // #3 median: släng fixar som ligger långt från medianpunkten (brus/rörelse)
+  const centre = { lat: median(recent.map(f => f.lat)),
+                   lon: median(recent.map(f => f.lon)) };
+  const inliers = recent.filter(f => hav(f, centre) <= Math.max(f.acc, 10));
+  if (inliers.length < 3) return best;
+
+  return { lat: median(inliers.map(f => f.lat)),
+           lon: median(inliers.map(f => f.lon)),
+           acc: best.acc,   // ärligt: inte lägre än bästa bidragande fixen
+           ts: now };
+}
+
+function getFix() {  // bästa fixen ur bufferten om färsk (<8 s), annars ny förfrågan
   return new Promise((res, rej) => {
-    if (lastFix && Date.now() - lastFix.ts < 8000) return res(lastFix);
+    const b = bestFix();
+    if (b && Date.now() - b.ts < 8000) return res(b);
     if (!("geolocation" in navigator)) return rej(new Error("Ingen GPS i webbläsaren."));
     navigator.geolocation.getCurrentPosition(
       p => res({ lat: p.coords.latitude, lon: p.coords.longitude,
