@@ -143,6 +143,19 @@ const SGLive = (() => {
     if (error) throw error;
   }
 
+  // Engångshämtning av matchens pins (samma karta som subscribePins ger, utan
+  // realtidskanal). Används av mobilappen vid uppladdning för att väva in andras
+  // markerade pins i den egna rundan (PIN_SHARING_SPEC: delad pin → allas analys).
+  async function fetchPins(gameId) {
+    const c = db();
+    const { data, error } = await c.from("game_pins")
+      .select("hole, lat, lon, acc").eq("game_id", gameId);
+    if (error) throw error;
+    const m = {};
+    (data || []).forEach(r => { m[r.hole] = { lat: r.lat, lon: r.lon, acc: r.acc }; });
+    return m;
+  }
+
   // Prenumerera på matchens pins. cb får en karta { [globaltHålnr]: {lat,lon,acc} }.
   function subscribePins(gameId, cb) {
     const c = db();
@@ -207,6 +220,6 @@ const SGLive = (() => {
   }
 
   return { initLive, createGame, joinGame, pushHoleScore, finishGame,
-           subscribeLeaderboard, pushPin, subscribePins, liveWarn };
+           subscribeLeaderboard, pushPin, subscribePins, fetchPins, liveWarn };
 })();
 if (typeof window !== "undefined") window.SGLive = SGLive;

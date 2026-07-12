@@ -430,12 +430,38 @@ async function doCopy(btn) {
     btn.textContent = "Kopierad ✓";
   } catch (e) { alert("Kunde inte kopiera — använd Ladda ner i stället."); }
 }
+// Delad pin → allas analys (PIN_SHARING_SPEC): innan uppladdning väver vi in
+// matchens delade pins i den egna rundloggen för hål man spelat men INTE själv
+// markerat pin på. Egen markerad pin vinner alltid (fyller bara tomma). Pins är
+// nycklade på globalt hålnr; rundloggen på spelarens 1–18 → översätt via SGRound.
+// Tyst och best-effort: fel/utan-match sväljs (analysen faller tillbaka på
+// kanonisk pin precis som förr). Persisteras lokalt så alla exportvägar får dem.
+async function enrichSharedPins() {
+  if (typeof SGLive === "undefined" || !Live.inGame()) return;
+  let shared;
+  try { shared = await SGLive.fetchPins(Live.state().gameId); }
+  catch (e) { SGLive.liveWarn("hämta pins", e); return; }
+  let changed = false;
+  for (const k of Object.keys(S.holes)) {
+    const h = S.holes[k];
+    if (!h || (h.pin && h.pin.lat != null)) continue;         // egen pin vinner
+    const g = SGRound.relToGlobal(Number(k));
+    const sp = g != null ? shared[g] : null;
+    if (sp && sp.lat != null) {
+      h.pin = { lat: sp.lat, lon: sp.lon, acc: sp.acc, ts: new Date().toISOString() };
+      changed = true;
+    }
+  }
+  if (changed) save();
+}
+
 async function doSend(btn) {
   const base = (localStorage.getItem("sg_base") || "").trim().replace(/\/+$/, "");
   const token = (localStorage.getItem("sg_token") || "").trim();
   if (!base || !token) { alert("Ange analys-adress och din token först (⚙ Analys-koppling)."); return; }
   const old = btn.textContent; btn.disabled = true; btn.textContent = "Skickar …";
   try {
+    await enrichSharedPins();   // väv in matchens delade pins innan export
     const r = await fetch(base + "/api/rounds/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Auth-Token": token },
