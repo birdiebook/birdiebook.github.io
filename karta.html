@@ -463,25 +463,106 @@ function orientToHole() {
 // zoom + pixeloffset) i stället för fitBounds, som snappar till hela zoomsteg
 // och därför blir olika grov beroende på hållängd.
 const FIT_GAP_PX = 8;   // luft mellan tee/green och UI-panelerna
-function fitHoleView(h) {
-  const teePt = (h.line && h.line.length) ? h.line[0]
-    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
-  if (!teePt || !h.green || !h.green.length) return false;
-  let farPt = h.green[0], farD = -1;
-  for (const gp of h.green) {
-    const d = hav(teePt, gp);
-    if (d > farD) { farD = d; farPt = gp; }
-  }
-  // Bandet = mellan play-panelerna (vindrutan uppe, GPS-raden nere). Den rena
-  // inramnings-matten (web-mercator + rotations-medveten centrering) bor i
-  // MapCore.fitBand → delas med redigera-sidan och autozoom.
+
+// --- Auto-zoom / follow-vy (syntes av AUTO_ZOOM-planerna) --------------------
+// Före teen: oförändrad tee→green-vy. Efter att man lämnat teen (loggat slag 1
+// ELLER GPS visar >LEFT_TEE_M från tee): vyn följer dig → green, zoomar in
+// progressivt med skarp-bild-tak, dämpat (ramar om först vid ≥FOLLOW_MOVE_M) och
+// mjukt animerat. Manuell gest pausar följningen och den återupptas själv.
+const FOLLOW_MOVE_M    = 9;       // ram om först vid så här stor förflyttning (jitter-dämp)
+const FOLLOW_PAUSE_MS  = 10000;   // manuell gest pausar följningen så länge
+const REFIT_ACC_M      = 25;      // ignorera fixar sämre än så här för inramning
+const LEFT_TEE_M       = 30;      // GPS "lämnat teen" → trigga follow
+const BOTTOM_MARGIN_FR = 0.12;    // luft under din prick (kontext bakåt), andel av bandet
+const NATIVE_MPP       = 0.16;    // ortofotots native m/px → skarp-bild-zoomtak
+const MIN_FRAME_M      = 40;      // golv på inramad sträcka (aldrig orimligt nära green)
+let followMode = false;           // per-hål latch: overview (false) vs follow (true)
+let lastFrameAnchor = null;       // [lat,lon] vid senaste inramning (jitter-dämp)
+let manualUntil = 0;              // paus-deadline efter manuell gest
+let programmaticMove = false;     // skilj våra egna setView från användargester
+let resumeTimer = null;
+
+// Bandet mellan play-panelerna (vindrutan uppe, GPS-raden nere) i #map-pixlar.
+function playBand() {
   const mapRect = document.getElementById("map").getBoundingClientRect();
   const topY = document.getElementById("wind").getBoundingClientRect().bottom
     - mapRect.top + FIT_GAP_PX;
   const botY = document.querySelector("#bottom .hint").getBoundingClientRect().top
     - mapRect.top - FIT_GAP_PX;
-  return MapCore.fitBand(map, teePt, farPt,
-    { topY, botY, width: mapRect.width, height: mapRect.height });
+  return { topY, botY, width: mapRect.width, height: mapRect.height };
+}
+
+// Grönpunkten längst från origin (bortre greenkant) — övre ankaret i båda lägen.
+function farGreen(origin, h) {
+  let farPt = h.green[0], farD = -1;
+  for (const gp of h.green) { const d = hav(origin, gp); if (d > farD) { farD = d; farPt = gp; } }
+  return farPt;
+}
+
+// Overview (tee→green) — oförändrad matte, nu via delade playBand/farGreen.
+function fitHoleView(h, opts) {
+  const teePt = (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+  if (!teePt || !h.green || !h.green.length) return false;
+  return MapCore.fitBand(map, teePt, farGreen(teePt, h), playBand(), opts);
+}
+
+// Skarp-bild-zoomtak: ortofotot är NATIVE_MPP m/px; på retina får varje käll-pixel
+// visas som flera skärmpixlar och ändå vara skarp → device-anpassat. Plus ett golv
+// (MIN_FRAME_M) så vyn aldrig blir orimligt tight nära green. Aldrig suddigt.
+function followZoomCap(lat, availPx) {
+  const minMppCss = NATIVE_MPP / (window.devicePixelRatio || 1);
+  const zSharp = Math.log2(156543.03392 * Math.cos(rad(lat)) / minMppCss);
+  const zFloor = Math.log2(40075016.686 * Math.cos(rad(lat)) * availPx / (256 * MIN_FRAME_M));
+  let z = Math.min(zSharp, zFloor);
+  if (map.getMaxZoom) z = Math.min(z, map.getMaxZoom());
+  return z;
+}
+
+// Follow (din pos → green) med skarp-bild-tak + luft bakåt under pricken.
+function fitFollowView(opts) {
+  const h = ROUND[hi];
+  if (!pos || !h || !h.green || !h.green.length) return false;
+  const band = playBand();
+  band.botY -= Math.round((band.botY - band.topY) * BOTTOM_MARGIN_FR);  // luft bakåt
+  const cap = followZoomCap(pos[0], band.botY - band.topY);
+  return MapCore.fitBand(map, pos, farGreen(pos, h), band,
+    { maxZoom: cap, animate: opts && opts.animate, duration: 0.6 });
+}
+
+// Väljer overview/follow, ramar in, och skyddar våra egna setView från att
+// misstas för manuella gester (annars pausar animeringen sig själv).
+function applyFrame(opts) {
+  const h = ROUND[hi];
+  if (!h) return;
+  programmaticMove = true;
+  let framed = false;
+  if (followMode && pos && h.green && h.green.length) framed = fitFollowView(opts);
+  if (!framed) framed = fitHoleView(h, opts);
+  if (!framed) {
+    const pts = [...(h.green || []), h.pin, ...(h.tees || []).map(t => [t.lat, t.lon]), ...(h.line || [])].filter(Boolean);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  }
+  // släpp guarden efter att vy-ändringen (+ ev. animering) lagt sig
+  setTimeout(() => { programmaticMove = false; }, (opts && opts.animate) ? 750 : 60);
+}
+
+// Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.
+function evalFollow(lat, lon, acc) {
+  const h = ROUND[hi];
+  if (!h) return;
+  if (!followMode) {
+    const shots = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
+    const tp = teePoint(h);
+    const leftTee = tp && acc != null && acc <= AUTO_ACC_M && hav([lat, lon], tp) > LEFT_TEE_M;
+    if (shots >= 1 || leftTee) { followMode = true; lastFrameAnchor = null; }
+    else return;
+  }
+  if (Date.now() < manualUntil) return;                 // pausad av manuell gest
+  if (acc != null && acc > REFIT_ACC_M) return;          // för dålig fix → rör inte vyn
+  if (lastFrameAnchor && hav([lat, lon], lastFrameAnchor) < FOLLOW_MOVE_M) return;  // för liten flytt
+  lastFrameAnchor = [lat, lon];
+  applyFrame({ animate: true });
 }
 
 // Reggade slag för aktuellt hål ur rundloggen (sg-rundlogg-v1, skrivs av Logga
@@ -803,12 +884,14 @@ function drawHole() {
   // delad pin från matchen (om satt för hålet)
   drawPin();
 
-  // rotera så hålet pekar uppåt, passa sedan vyn tee→green mellan UI-panelerna
+  // rotera så hålet pekar uppåt, passa sedan in vyn. Follow-läget latchas per hål:
+  // 0 slag & vid teen → overview (som förr); kommer man tillbaka mitt i hålet
+  // (slag redan loggade) → follow direkt från positionen (annars overview-fallback).
   orientToHole();
-  if (!fitHoleView(h)) {
-    const pts = [...(h.green||[]), h.pin, ...(h.tees||[]).map(t => [t.lat, t.lon]), ...(h.line||[])];
-    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
-  }
+  const shotsHere = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
+  followMode = shotsHere >= 1;
+  lastFrameAnchor = null; manualUntil = 0;
+  applyFrame();
   clearTap();
   updateWind();
   // Efter att vyn satts (och layouten satt sig): tvinga en tile-uppdatering så
@@ -829,6 +912,7 @@ function setPos(lat, lon, acc) {
   fetchPlayerElev();
   if (tapMarker) updateTap(tapMarker.getLatLng());
   maybeAutoAdvance(acc);   // sömlöst hålbyte om kraven slår in
+  evalFollow(lat, lon, acc);   // auto-zoom: trigga/följ vyn mot green
 }
 
 // Hålet styrs helt av rundloggen via localStorage-nyckeln sg_hole (spelarens
@@ -907,6 +991,15 @@ async function init() {
   map.setView([55.618, 13.07], 15);
   map.on("click", onTap);
   map.on("rotate", updateRose);   // rosen följer kartans rotation
+  // Autozoom: manuell gest (pan/pinch) pausar följningen FOLLOW_PAUSE_MS och
+  // återupptar sedan själv. programmaticMove skiljer våra egna setView från gester.
+  map.on("movestart zoomstart", () => {
+    if (programmaticMove) return;
+    manualUntil = Date.now() + FOLLOW_PAUSE_MS;
+    if (resumeTimer) clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => { if (followMode && pos) applyFrame({ animate: true }); },
+                             FOLLOW_PAUSE_MS + 60);
+  });
   for (const b of document.querySelectorAll("#modeToggle button"))
     b.onclick = () => setMode(b.dataset.mode);
   setMode(mode);   // sätter aktiv knapp + första renderingen
@@ -932,6 +1025,38 @@ async function init() {
       p => setPos(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
       () => {}, { enableHighAccuracy: true, maximumAge: 0 });
   initSharedPins();   // delade pins från ev. live-match (realtid)
+  initSimWalk();      // dev: ?simwalk=1 → känn på follow/zoom utan GPS/bana
+}
+
+// Dev-läge (gated bakom ?simwalk=1): interpolerar tee→green och matar SAMMA
+// setPos-väg som riktig GPS, så follow-övergången + progressiva inzoomningen
+// spelas upp på telefon/desktop hemma. Skriver inget → påverkar aldrig en runda.
+function initSimWalk() {
+  if (!new URLSearchParams(location.search).has("simwalk")) return;
+  const btn = document.createElement("button");
+  btn.textContent = "▶ sim";
+  btn.style.cssText = "position:absolute;left:8px;bottom:calc(env(safe-area-inset-bottom) + 150px);"
+    + "z-index:1200;background:#1a4c38;color:#e8f5ec;border:1px solid #37b06b;border-radius:10px;"
+    + "padding:9px 13px;font:inherit;font-weight:700;box-shadow:0 2px 8px #0007;";
+  let timer = null;
+  const stop = () => { if (timer) clearInterval(timer); timer = null; btn.textContent = "▶ sim"; };
+  btn.onclick = () => {
+    if (timer) { stop(); return; }
+    const h = ROUND[hi];
+    const tee = teePoint(h) || (h.line && h.line[0]);
+    const green = h.green_center || h.pin;
+    if (!tee || !green) return;
+    followMode = false; lastFrameAnchor = null; manualUntil = 0;   // starta i overview
+    drawHole();
+    btn.textContent = "⏸ sim";
+    const N = 40; let i = 0;
+    timer = setInterval(() => {
+      const t = i / N;
+      setPos(tee[0] + (green[0] - tee[0]) * t, tee[1] + (green[1] - tee[1]) * t, 6);
+      if (++i > N) stop();
+    }, 500);   // ~20 s tee→green
+  };
+  document.body.appendChild(btn);
 }
 // Vid VERKLIG viewport-ändring (rotation, webbläsarens verktygsfält som glider
 // in/ut): låt Leaflet läsa om behållarstorleken och passa in hålvyn igen.
@@ -944,8 +1069,7 @@ function onViewportChange() {
   _lastVpH = h;
   if (map) {
     map.invalidateSize({ pan: false });
-    const hole = ROUND[hi];
-    if (hole) fitHoleView(hole);
+    if (ROUND[hi]) applyFrame();   // re-applicera aktuellt läge (overview/follow)
   }
 }
 window.addEventListener("resize", onViewportChange);

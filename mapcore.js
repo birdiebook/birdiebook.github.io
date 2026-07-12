@@ -70,16 +70,24 @@ const MapCore = (() => {
   // Web-mercator-skala + bråkdels-zoom (inte fitBounds, som snappar till helsteg).
   // Rotations-medveten centrering via containerPointToLatLng (oroterad pixelrymd).
   // Returnerar true om inramad, false om bandet är för smalt.
-  function fitBand(map, botPt, topPt, band) {
+  // opts (valfritt): { maxZoom, animate, duration } — autozoom-planens follow-läge
+  // clampar zoomen (skarp-bild-tak) och animerar mjukt. Utan opts = oförändrat
+  // beteende (karta-overview + redigera-sidan): instant, inget tak.
+  function fitBand(map, botPt, topPt, band, opts) {
+    opts = opts || {};
     const availPx = band.botY - band.topY;
     if (availPx < 50) return false;
     const D = _hav(botPt, topPt);
     const midLat = (botPt[0] + topPt[0]) / 2;
-    const z = Math.log2(40075016.686 * Math.cos(_rad(midLat)) * availPx / (256 * D));
+    let z = Math.log2(40075016.686 * Math.cos(_rad(midLat)) * availPx / (256 * D));
+    if (opts.maxZoom != null) z = Math.min(z, opts.maxZoom);
+    // steg 1 (instant): sätt zoom + grov center så projektionen är korrekt vid z.
     map.setView([midLat, (botPt[1] + topPt[1]) / 2], z, { animate: false });
+    // steg 2: exakt center så bandet ramas rätt; animera slutläget om ombett
+    // (follow) — zoomen är redan satt i steg 1, så detta blir en mjuk pan.
     const cy = (band.topY + band.botY) / 2;
     map.setView(map.containerPointToLatLng([band.width / 2, band.height - cy]),
-      z, { animate: false });
+      z, { animate: !!opts.animate, duration: opts.duration });
     return true;
   }
 
