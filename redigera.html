@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Redigera slag">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Redigera slag</title>
+<link rel="stylesheet" href="./vendor/leaflet.css">
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
+          --danger:#e23b3b; --framebg: rgba(0,0,0,.55); --reclaim:0px; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
+    overscroll-behavior:none; }
+  #map { position:absolute; top:0; left:0; right:0; bottom:var(--reclaim); background:var(--bg); }
+  .leaflet-container { background:var(--bg); }
+
+  /* topp: hål-navigering + score + klar */
+  #top { position:absolute; top:0; left:0; right:0; z-index:1000;
+    padding:calc(env(safe-area-inset-top) + 6px) 10px 8px; }
+  .navrow { display:flex; align-items:center; gap:8px; }
+  .navbtn { flex:0 0 auto; width:44px; height:44px; border-radius:12px;
+    background:var(--framebg); border:1px solid var(--line); color:var(--ink);
+    font-size:18px; font-weight:800; box-shadow:0 2px 8px #0007; }
+  .navbtn:disabled { opacity:.35; }
+  .hname { flex:1 1 auto; text-align:center; font-weight:700; font-size:16px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:7px 12px; box-shadow:0 2px 8px #0007; }
+  .hname small { color:var(--dim); font-weight:400; font-size:12px; }
+  .donebtn { flex:0 0 auto; text-decoration:none; background:#1a4c38; color:var(--ink);
+    border:1px solid var(--accent); border-radius:12px; padding:11px 12px; font-weight:700;
+    font-size:14px; box-shadow:0 2px 8px #0007; }
+  .scoreline { margin-top:6px; text-align:center; font-size:14px; color:var(--ink);
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:6px 12px; width:max-content; max-width:100%; margin-left:auto; margin-right:auto;
+    box-shadow:0 2px 8px #0007; }
+
+  /* botten: instruktion + slag-remsa + åtgärder */
+  #bottom { position:absolute; left:0; right:0; z-index:1000;
+    bottom:calc(env(safe-area-inset-bottom) + var(--reclaim)); padding:8px 10px 12px; }
+  .ehint { color:var(--ink); font-size:13px; text-align:center; margin-bottom:8px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:8px 12px; box-shadow:0 2px 8px #0007; }
+  .ehint.flash { border-color:var(--accent); color:var(--accent); }
+  .strip { display:flex; align-items:center; gap:5px; overflow-x:auto; padding:8px 10px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:14px;
+    box-shadow:0 2px 8px #0007; -webkit-overflow-scrolling:touch; }
+  .chip { flex:0 0 auto; min-width:38px; height:38px; border-radius:50%;
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+    font-weight:800; font-size:16px; }
+  .chip.sel { background:var(--accent); color:var(--accent-ink); border-color:var(--accent);
+    transform:scale(1.06); }
+  .gap { flex:0 0 auto; width:22px; height:38px; border-radius:8px; background:transparent;
+    border:1px dashed var(--line); color:var(--dim); font-size:17px; font-weight:700; padding:0; }
+  .gap.sel { border-color:var(--accent); border-style:solid; color:var(--accent-ink);
+    background:var(--accent); }
+  .adj { flex:0 0 auto; min-width:38px; height:38px; border-radius:50%;
+    border:1px dashed var(--dim); background:var(--card); color:var(--dim);
+    font-weight:800; font-size:18px; }
+  .adj.sel { background:var(--accent); color:var(--accent-ink); border-color:var(--accent);
+    border-style:solid; transform:scale(1.06); }
+  .ctx { flex:0 0 auto; height:38px; display:flex; align-items:center; padding:0 12px;
+    border-radius:10px; border:1px solid var(--line); font-size:13px; font-weight:600;
+    color:var(--dim); opacity:.85; }
+  .ctx.green { color:#7ee2a8; } .ctx.pin { color:var(--danger); }
+  /* advisory-notiser (lugna, icke-blockerande) — bärnsten, ej danger-rött */
+  #notices { margin-top:6px; display:flex; flex-direction:column; gap:5px;
+    max-height:34vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  .notice { display:block; width:100%; text-align:left; font:inherit; font-size:12.5px;
+    line-height:1.3; color:#f2dda6; background:rgba(120,92,24,.42); border:1px solid #86671f;
+    border-radius:10px; padding:7px 10px; box-shadow:0 2px 8px #0007;
+    -webkit-appearance:none; appearance:none; }
+  button.notice:active { transform:scale(.99); border-color:var(--accent); }
+
+  .actions { margin-top:8px; min-height:0; }
+  .delbtn { width:100%; background:rgba(226,59,59,.15); color:#ff9a90;
+    border:1px solid var(--danger); border-radius:12px; padding:11px; font-weight:700; font-size:15px; }
+  .delbtn:active { transform:scale(.98); }
+
+  .shotlbl { background:transparent; border:0; box-shadow:none; padding:0;
+    color:#06180f; font-weight:800; font-size:11px; }
+  .shotlbl::before { display:none; }
+</style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="top">
+    <div class="navrow">
+      <button id="prev" class="navbtn" aria-label="Föregående hål">◀</button>
+      <div id="hname" class="hname">Hål –</div>
+      <button id="next" class="navbtn" aria-label="Nästa hål">▶</button>
+      <a id="done" class="donebtn" href="./index.html">✓ Klar</a>
+    </div>
+    <div id="scoreline" class="scoreline"></div>
+    <div id="notices"></div>
+  </div>
+
+  <div id="bottom">
+    <div id="hint" class="ehint"></div>
+    <div id="strip" class="strip"></div>
+    <div id="actions" class="actions"></div>
+  </div>
+
+<script src="./vendor/leaflet.js"></script>
+<script src="./vendor/leaflet-rotate.js"></script>
+<script src="./coursemap.js"></script>
+<script src="./mapcore.js"></script>
+<script src="./round.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./live.js"></script>
+<script src="./redigera.js"></script>
+</body>
+</html>

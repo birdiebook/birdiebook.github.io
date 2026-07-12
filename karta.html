@@ -248,18 +248,15 @@
 <script src="./vendor/leaflet.js"></script>
 <script src="./vendor/leaflet-rotate.js"></script>
 <script src="./coursemap.js"></script>
+<script src="./mapcore.js"></script>
 <script src="./round.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
-const R = 6371000;
-const rad = d => d * Math.PI / 180;
-function hav(a, b) {              // [lat,lon] par → meter
-  const dphi = rad(b[0]-a[0]), dl = rad(b[1]-a[1]);
-  const s = Math.sin(dphi/2)**2 + Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dl/2)**2;
-  return 2*R*Math.asin(Math.sqrt(s));
-}
+// Geometri-helpers bor i mapcore.js (MapCore.rad/hav/bearing) — aliasas här så
+// alla befintliga anrop (hav(...)/rad(...)/bearing(...)) fungerar oförändrat.
+const rad = MapCore.rad, hav = MapCore.hav;
 const SS = CourseMap.SURFACE_STYLE;
 
 // Numrering/rundsekvenser delas via round.js (SGRound). UI:t visar spelarens
@@ -296,21 +293,12 @@ let SHARED_PINS = {}, pinUnsub = null;
 
 function fmt(m) { return m == null ? "–" : Math.round(m); }
 
-// GPS-precisionsfärg — samma trösklar/färger som +-avståndet på Logga slag-sidan
-// (index.html gpsChipHtml): grön ±≤8, gul ±≤15, röd däröver. null = neutral.
-function accColor(acc) {
-  return acc == null ? "#9fc4ae" : acc <= 8 ? "#7ee2a8" : acc <= 15 ? "#e8c34a" : "#e26a5a";
-}
+// accColor (GPS-precisionsfärg) bor i mapcore.js och används av MapCore.drawShots.
 
 // ---- vind (Open-Meteo, gratis; samma konvention som src/api/wind.py) ----
 const COMPASS = ["N", "NO", "O", "SO", "S", "SV", "V", "NV"];
 const compass = deg => deg == null ? "" : COMPASS[Math.round(deg / 45) % 8];
-function bearing(a, b) {                    // [lat,lon] → grader 0=N,90=Ö
-  const p1 = rad(a[0]), p2 = rad(b[0]), dl = rad(b[1] - a[1]);
-  const y = Math.sin(dl) * Math.cos(p2);
-  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
-  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-}
+const bearing = MapCore.bearing;   // [lat,lon]→grader (0=N), bor i mapcore.js
 function relWind(shotBearing, ms, dirDeg) {  // vinden kommer FRÅN dirDeg
   const d = rad(dirDeg - shotBearing);
   const along = -ms * Math.cos(d), right = -ms * Math.sin(d);
@@ -362,25 +350,8 @@ async function fetchPlayerElev() {
 // bakre tee startar på rätt avstånd även utan digitaliserad box) — listas i _approx.
 // Appen gör bara en O(1)-uppslagning. Fallback när tabellen saknas: fördela numren
 // jämnt bakifrån (floor(rang·boxar/4)).
-const TEE_RANK = ["61", "57", "53", "48"];
-let TEE_POINTS = {};   // loop -> "hål" -> { teeNr: [lat,lon], _approx:[...] }, laddas i init
-function teePoint(h) {
-  const tees = h.tees || [];
-  if (!tees.length) return (h.line && h.line.length) ? h.line[0] : null;
-  const sel = localStorage.getItem("sg_tee") || "";
-  const pt = TEE_POINTS[h.loop] && TEE_POINTS[h.loop][h.hole] && TEE_POINTS[h.loop][h.hole][sel];
-  if (pt && pt.length === 2) return [pt[0], pt[1]];
-  const r = TEE_RANK.indexOf(sel);                     // fallback: rang·boxar/4
-  let idx = r < 0 ? 0 : Math.floor(r * tees.length / TEE_RANK.length);
-  if (idx > tees.length - 1) idx = tees.length - 1;
-  return [tees[idx].lat, tees[idx].lon];
-}
-// true om spelarens valda tee är en syntetisk punkt (OSM saknar boxen) — approx
-function teeIsApprox(h) {
-  const sel = localStorage.getItem("sg_tee") || "";
-  const m = TEE_POINTS[h.loop] && TEE_POINTS[h.loop][h.hole];
-  return !!(m && m._approx && m._approx.indexOf(sel) >= 0);
-}
+// teePoint/teeIsApprox + tee-tabellen bor i mapcore.js (laddas av loadCourse).
+const teePoint = MapCore.teePoint, teeIsApprox = MapCore.teeIsApprox;
 // utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
 // från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
 const FAR_FROM_HOLE_M = 1000;
@@ -501,27 +472,16 @@ function fitHoleView(h) {
     const d = hav(teePt, gp);
     if (d > farD) { farD = d; farPt = gp; }
   }
+  // Bandet = mellan play-panelerna (vindrutan uppe, GPS-raden nere). Den rena
+  // inramnings-matten (web-mercator + rotations-medveten centrering) bor i
+  // MapCore.fitBand → delas med redigera-sidan och autozoom.
   const mapRect = document.getElementById("map").getBoundingClientRect();
-  // green-måttets ruta (vindrutan) nedkant → GPS-radens ovankant = bandet
   const topY = document.getElementById("wind").getBoundingClientRect().bottom
     - mapRect.top + FIT_GAP_PX;
   const botY = document.querySelector("#bottom .hint").getBoundingClientRect().top
     - mapRect.top - FIT_GAP_PX;
-  const availPx = botY - topY;
-  if (availPx < 50) return false;
-  // zoom så att tee→bortre green täcker exakt bandet (web-mercator-skala)
-  const D = hav(teePt, farPt);
-  const midLat = (teePt[0] + farPt[0]) / 2;
-  const z = Math.log2(40075016.686 * Math.cos(rad(midLat)) * availPx / (256 * D));
-  const mid = [midLat, (teePt[1] + farPt[1]) / 2];
-  map.setView(mid, z, { animate: false });
-  // skjut mittpunkten från kartans mitt till bandets mitt: punkten som ligger
-  // speglat under bandmitten görs till nytt centrum (skärmkoordinater, så det
-  // funkar även med roterad karta — panBy räknar i oroterad pixelrymd)
-  const cy = (topY + botY) / 2;
-  map.setView(map.containerPointToLatLng([mapRect.width / 2, mapRect.height - cy]),
-    z, { animate: false });
-  return true;
+  return MapCore.fitBand(map, teePt, farPt,
+    { topY, botY, width: mapRect.width, height: mapRect.height });
 }
 
 // Reggade slag för aktuellt hål ur rundloggen (sg-rundlogg-v1, skrivs av Logga
@@ -530,35 +490,10 @@ function fitHoleView(h) {
 // [lat,lon]. Ritas in i samma layers-grupp som rensas vid varje hålbyte, så
 // plotten uppdateras när man kommer tillbaka från loggen (pageshow → syncHole).
 function drawShots() {
-  shotLayer.clearLayers();   // eget lager → kan ritas om utan att röra hålvyn
   let log = null;
   try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
   const rec = log && log.holes && log.holes[String(hi + 1)];
-  if (!rec) return;
-  const shots = (rec.shots || []).filter(s => s && s.lat != null && s.lon != null);
-  if (!shots.length) return;
-  const pts = shots.map(s => [s.lat, s.lon]);
-  // slagbanan: bärnstensfärgad linje mellan slagen (skild från hålets vita linje
-  // och tap-linjen). Fortsätter till reggad green-position om den finns.
-  const path = [...pts];
-  if (rec.green && rec.green.lat != null) path.push([rec.green.lat, rec.green.lon]);
-  if (path.length > 1)
-    L.polyline(path, { color: "#ffb703", weight: 3, opacity: .9 }).addTo(shotLayer);
-  // punkter, numrerade, färgade efter GPS-precisionen vid loggning (accColor)
-  shots.forEach((s, i) => {
-    L.circleMarker([s.lat, s.lon], { radius: 8, color: "#fff", weight: 2,
-        fillColor: accColor(s.acc), fillOpacity: 1 })
-      .addTo(shotLayer)
-      .bindTooltip(String(i + 1), { permanent: true, direction: "center", className: "shotlbl" });
-  });
-  // reggad boll-på-green (om satt): liten ljus ring, skild från pinnen
-  if (rec.green && rec.green.lat != null)
-    L.circleMarker([rec.green.lat, rec.green.lon], { radius: 5, color: "#fff",
-      weight: 2, fillColor: "#7ee2a8", fillOpacity: 1 }).addTo(shotLayer);
-  // reggad pin (om satt): röd punkt, skild från greenens ljusa ring
-  if (rec.pin && rec.pin.lat != null)
-    L.circleMarker([rec.pin.lat, rec.pin.lon], { radius: 5, color: "#fff",
-      weight: 2, fillColor: "#e23b3b", fillOpacity: 1 }).addTo(shotLayer);
+  MapCore.drawShots(shotLayer, rec);   // rensar + ritar slagbana/punkter/green/pin
 }
 
 // Logga ett slag direkt från kartvyn: färsk GPS-fix → pusha till rundloggen
@@ -858,24 +793,8 @@ function drawHole() {
   document.getElementById("holeName").innerHTML =
     `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>${approx}`;
 
-  // hål-linje — bara den vita sträckan där banan går, inga bankslager (bunker/vatten/green).
-  // linjens sista digitaliserade punkt ligger ~0,3 m från pin (olika fält i bandatan). Att
-  // LÄGGA TILL pinnen efter den punkten gav en synlig liten krok/dogleg vid pricken när man
-  // zoomar in på greenen. Byt istället UT slutpunkter som ligger nära pinnen mot pinnen själv
-  // → sista segmentet går rakt in i pricken, direkt till punkten utan extra stubb.
-  if (h.line && h.line.length > 1) {
-    // starta på spelarens valda tee (sg_tee) istället för linjens backersta punkt —
-    // line[0] ≈ backersta teen, byt ut den mot vald tee så sträcket börjar rätt.
-    const tee = teePoint(h);
-    let path = tee ? [tee, ...h.line.slice(1)] : h.line.slice();
-    if (h.pin) {
-      while (path.length > 1 && hav(path[path.length - 1], h.pin) < 8) path.pop();
-      path = [...path, h.pin];
-    }
-    L.polyline(path, { color: "#fff", weight: 3, opacity: .9 }).addTo(layers);
-  }
-  // pin
-  L.circleMarker(h.pin, { radius: 4, color: "#fff", fillColor: "#fff", fillOpacity: 1, weight: 1 }).addTo(layers);
+  // Hål-linje (vit, start på vald tee) + pin — geometrin inkl. dogleg-fixen bor i mapcore.js.
+  MapCore.drawHoleGeometry(layers, h);
 
   // reggade slag ur rundloggen (om några loggats för hålet)
   drawShots();
@@ -967,68 +886,9 @@ function onTap(e) {
 }
 
 async function init() {
-  map = L.map("map", { zoomControl: false, attributionControl: false,
-    zoomSnap: 0,   // bråkdels-zoom — krävs för att fitHoleView ska bli exakt
-    rotate: true, touchRotate: true, shiftKeyRotate: true, rotateControl: false });
-  // updateWhenIdle:false = ladda tiles direkt (inte först när kartan blir idle);
-  // keepBuffer:6 = håll extra rutor runt viewporten. Roterad karta täcker en
-  // STÖRRE yta diagonalt än den oroterade viewporten → default keepBuffer 2
-  // lämnar hörnen tomma tills en gest tvingar omritning ("laddar först vid zoom").
-  // detectRetina: på högupplösta skärmar (alla moderna telefoner) hämtar Leaflet
-  // en zoomnivå DJUPARE och ritar den i samma yta → dubbel bildupplösning, utnyttjar
-  // att ortofotot är 0,16 m/px (äkta detalj ner till ~z19). tileSize:128+zoomOffset:1
-  // slår in EN nivå djupare redan som baslinje (samma knep som detectRetina gör
-  // internt — tileSize måste halveras i takt med zoomOffset annars pekar {x}/{y}
-  // fel och rutorna 404:ar). detectRetina lägger på ytterligare en nivå på
-  // retina-skärmar (halverar tileSize + zoomOffset igen). Gör kartan skarpare
-  // även utzoomad (t.ex. hela par 5-hål), på bekostnad av fler rutor/mer
-  // mobildata per vy.
-  const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6, detectRetina: true,
-    tileSize: 128, zoomOffset: 1 };
-  // URL-zoom = native-zoom + zoomOffset(1 bas + 1 på retina-skärmar). Cappa
-  // native så URL-zoomen aldrig överstiger z19 (som finns) → annars 404 på
-  // djup inzoomning.
-  const deepMax = t => t.max_zoom - 1 - (L.Browser.retina ? 1 : 0);
-  // Esri läggs INTE på som baslager. Lantmäteriets ortofoto täcker alla 27 hål
-  // (330 m+ marginal) på de zoomnivåer kartan används, så Esri syntes bara som en
-  // snabb "blink" innan de lokala rutorna hann fram. Nu är #map:s mörkgröna
-  // bakgrund (--bg) platshållare medan ortofotot laddar. Esri sparas som
-  // NÖDFALLBACK om tiles/ saknas (t.ex. trasig deploy) → kartan blir aldrig blank.
-  const esriFallback = () => CourseMap.esriLayer(TILE_OPTS).addTo(map);
-  // Lantmäteriets ortofoto (0,16 m/px, 2024) om tiles/ finns bredvid appen —
-  // skarpare än Esri och funkar offline när webbläsaren cachat rutorna.
-  // Läggs i standard-tilePane. En egen pane funkar INTE med leaflet-rotate:
-  // pluginet flyttar bara standardpanerna in i sin roterade rotatePane, medan en
-  // createPane("imagery") hamnar i den oroterade mapPane och blir felplacerad/
-  // osynlig. Banritning/markörer ligger i overlay-/markerPane och hamnar ändå
-  // ovanpå tiles.
-  fetch("tiles/manifest.json", { cache: "no-cache" })
-    .then(r => r.ok ? r.json() : null)
-    .then(t => {
-      if (!t) { esriFallback(); return; }
-      // esriLayer() aktiverade förr ljus/färg-filtret på tile-panen — nu när Esri
-      // inte läggs på i normalfallet måste vi kalla det själva (idempotent).
-      CourseMap.applyImageFilter();
-      L.tileLayer("tiles/{z}/{x}/{y}.webp", {
-        bounds: t.bounds, zIndex: 10,
-        minNativeZoom: t.min_zoom, maxNativeZoom: deepMax(t),
-        minZoom: t.min_zoom, maxZoom: 21,
-        attribution: t.attribution,
-        ...TILE_OPTS,
-      }).addTo(map);
-      // Hindra utzoomning bortom där vi HAR bildmaterial → man kan inte "zooma bort
-      // helt" ut i en tom/blank vy. Golvet = ortofotots lägsta nivå (kan höjas för
-      // en tightare gräns).
-      map.setMinZoom(t.min_zoom);
-      // CC BY 4.0 kräver synlig attribution — attributionControl är av,
-      // så en egen diskret rad i kartans hörn.
-      const cred = document.createElement("div");
-      cred.textContent = "Ortofoto © Lantmäteriet (CC BY 4.0)";
-      cred.style.cssText = "position:absolute;right:4px;bottom:2px;z-index:800;" +
-        "font-size:9px;color:#fff;text-shadow:0 0 3px #000;pointer-events:none;";
-      document.getElementById("map").appendChild(cred);
-    })
-    .catch(esriFallback);   // lokala tiles otillgängliga → Esri räddar vyn
+  map = MapCore.createMap("map");
+  // Ortofoto (Lantmäteriet) i standard-tilePane + Esri-nödfallback — se mapcore.js.
+  MapCore.addOrthophoto(map);
   layers.addTo(map);
   shotLayer.addTo(map);
   pinLayer.addTo(map);
@@ -1054,12 +914,8 @@ async function init() {
   if (rs) rs.onchange = e => setRound(e.target.value);
 
   try {
-    const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
-    HOLES = data.holes;
-    for (const h of HOLES) { h.global = GLOBAL_BASE[h.loop] + h.hole; byGlobal[h.global] = h; }
-    // förberäknad tee→punkt-tabell → rigid tee-mappning i teePoint (valfri fil)
-    try { TEE_POINTS = await (await fetch("./data/tee_points.json", { cache: "no-cache" })).json(); }
-    catch (e) { TEE_POINTS = {}; }
+    const course = await MapCore.loadCourse();   // bandata + tee-tabell (se mapcore.js)
+    HOLES = course.HOLES; byGlobal = course.byGlobal;
     setRound(SGRound.roundName());   // val från startsidan
     // om man byter hål i rundloggen och kommer tillbaka hit: synka igen
     window.addEventListener("pageshow", syncHole);
