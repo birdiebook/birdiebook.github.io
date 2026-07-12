@@ -520,13 +520,18 @@ function followZoomCap(lat, availPx) {
 }
 
 // Follow (din pos → green) med skarp-bild-tak + luft bakåt under pricken.
+// Greenankaret tas från TEEN (stabilt per hål), inte från din pos — annars kan
+// "bortersta greenpunkten" bytas när du går → zoomen rycker ut. Nu står green
+// still högst upp och avståndet dig→green krymper monotont → ren progressiv inzoom.
 function fitFollowView(opts) {
   const h = ROUND[hi];
   if (!pos || !h || !h.green || !h.green.length) return false;
+  const teePt = (h.line && h.line.length) ? h.line[0]
+    : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : pos;
   const band = playBand();
   band.botY -= Math.round((band.botY - band.topY) * BOTTOM_MARGIN_FR);  // luft bakåt
   const cap = followZoomCap(pos[0], band.botY - band.topY);
-  return MapCore.fitBand(map, pos, farGreen(pos, h), band,
+  return MapCore.fitBand(map, pos, farGreen(teePt, h), band,
     { maxZoom: cap, animate: opts && opts.animate, duration: 0.6 });
 }
 
@@ -535,16 +540,21 @@ function fitFollowView(opts) {
 function applyFrame(opts) {
   const h = ROUND[hi];
   if (!h) return;
+  // Leaflet fyrar movestart/zoomstart SYNKRONT under setView → sätt guarden runt
+  // anropet och släpp den direkt efter. (Timer race:ade med animeringen och
+  // feltolkade våra egna rörelser som manuell gest → falsk 10 s-paus.)
   programmaticMove = true;
-  let framed = false;
-  if (followMode && pos && h.green && h.green.length) framed = fitFollowView(opts);
-  if (!framed) framed = fitHoleView(h, opts);
-  if (!framed) {
-    const pts = [...(h.green || []), h.pin, ...(h.tees || []).map(t => [t.lat, t.lon]), ...(h.line || [])].filter(Boolean);
-    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+  try {
+    let framed = false;
+    if (followMode && pos && h.green && h.green.length) framed = fitFollowView(opts);
+    if (!framed) framed = fitHoleView(h, opts);
+    if (!framed) {
+      const pts = [...(h.green || []), h.pin, ...(h.tees || []).map(t => [t.lat, t.lon]), ...(h.line || [])].filter(Boolean);
+      if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+    }
+  } finally {
+    programmaticMove = false;
   }
-  // släpp guarden efter att vy-ändringen (+ ev. animering) lagt sig
-  setTimeout(() => { programmaticMove = false; }, (opts && opts.animate) ? 750 : 60);
 }
 
 // Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.

@@ -81,13 +81,23 @@ const MapCore = (() => {
     const midLat = (botPt[0] + topPt[0]) / 2;
     let z = Math.log2(40075016.686 * Math.cos(_rad(midLat)) * availPx / (256 * D));
     if (opts.maxZoom != null) z = Math.min(z, opts.maxZoom);
-    // steg 1 (instant): sätt zoom + grov center så projektionen är korrekt vid z.
-    map.setView([midLat, (botPt[1] + topPt[1]) / 2], z, { animate: false });
-    // steg 2: exakt center så bandet ramas rätt; animera slutläget om ombett
-    // (follow) — zoomen är redan satt i steg 1, så detta blir en mjuk pan.
     const cy = (band.topY + band.botY) / 2;
-    map.setView(map.containerPointToLatLng([band.width / 2, band.height - cy]),
-      z, { animate: !!opts.animate, duration: opts.duration });
+    const rough = [midLat, (botPt[1] + topPt[1]) / 2];
+    if (opts.animate) {
+      // Mät exakt center vid z, ÅTERSTÄLL till nuvarande vy (opåmålat — webbläsaren
+      // renderar bara sluttillståndet i en synkron JS-tick), gör sedan EN mjuk
+      // animation dit. Undviker det synliga instant-hoppet (mät-steget syns aldrig).
+      const sc = map.getCenter(), sz = map.getZoom();
+      map.setView(rough, z, { animate: false });
+      const target = map.containerPointToLatLng([band.width / 2, band.height - cy]);
+      map.setView([sc.lat, sc.lng], sz, { animate: false });
+      map.setView(target, z, { animate: true, duration: opts.duration });
+    } else {
+      // Instant (overview/hålbyte/redigera): oförändrat tvåstegs-beteende.
+      map.setView(rough, z, { animate: false });
+      map.setView(map.containerPointToLatLng([band.width / 2, band.height - cy]),
+        z, { animate: false });
+    }
     return true;
   }
 
