@@ -245,12 +245,17 @@ function moveShot(i, ll) {
 }
 
 function addShot(i, ll) {
+  let absorbed = false;
   mutate(rec => {
     rec.shots.splice(i, 0, { lat: ll.lat, lon: ll.lng, acc: null, manual: true,
       manual_kind: "added", ts: new Date().toISOString() });
+    // Auto-avstämning: fanns en positiv justering (glömt slag) materialiserar det
+    // här slaget den → dra adj mot 0 så totalen står stilla (inte dubbelräknas).
+    if ((rec.adj || 0) > 0) { rec.adj -= 1; absorbed = true; }
   });
   sel = { type: "shot", i };   // markera det nya slaget
   refresh();
+  if (absorbed) flashHint("Justering +1 stämdes av — total oförändrad.");
 }
 
 function convertAdj(ll) {
@@ -266,14 +271,21 @@ function convertAdj(ll) {
 function deleteShot(i) {
   const rec = currentRec();
   if (!rec || !rec.shots[i]) return;
-  // spärr: totalen (shots + adj) får aldrig bli negativ
-  if ((rec.shots.length - 1) + (rec.adj || 0) < 0) {
+  // Auto-avstämning: fanns en negativ justering (spökslag) löser raderingen upp
+  // den → adj += 1 så totalen står stilla (radering + kvarvarande −1 tar annars
+  // ut varandra dubbelt och totalen blir 1 för låg).
+  const adj = rec.adj || 0;
+  const absorb = adj < 0;
+  const newAdj = absorb ? adj + 1 : adj;
+  // spärr: totalen (shots + adj) får aldrig bli negativ (räknat EFTER ev. avstämning)
+  if ((rec.shots.length - 1) + newAdj < 0) {
     flashHint("Kan inte radera — skulle ge negativ score."); return;
   }
   if (!confirm(`Radera slag ${i + 1}? Resten numreras om.`)) return;
-  mutate(r => { r.shots.splice(i, 1); });
+  mutate(r => { r.shots.splice(i, 1); if (absorb) r.adj = (r.adj || 0) + 1; });
   sel = null;
   refresh();
+  if (absorb) flashHint("Justering −1 stämdes av — total oförändrad.");
 }
 
 // ---- live-push ----
