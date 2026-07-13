@@ -95,6 +95,12 @@
   #modeToggle button { background:none; border:0; color:var(--dim);
     font-size:12px; font-weight:700; padding:6px 9px; border-radius:9px; }
   #modeToggle button.on { background:#1a4c38; color:var(--ink); }
+  /* auto-zoom på/av — kill-switch nåbar under spel (windrow, höger) */
+  /* precis under "Spelar som"-toggeln (vänster), bort från mätrutan uppe till höger */
+  #azToggle { display:inline-flex; align-items:center; margin-top:6px; -webkit-appearance:none; appearance:none;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px; color:var(--dim);
+    font-size:12px; font-weight:700; padding:8px 12px; box-shadow:0 2px 8px #0007; white-space:nowrap; }
+  #azToggle.on { color:var(--accent); border-color:var(--accent); }
   .row { display:flex; gap:6px; margin-top:6px; }
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
     color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:8px 4px;
@@ -210,6 +216,7 @@
       <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="#e8f5ec"></text>
     </svg>
   </div>
+  <button id="azToggle" aria-label="Auto-zoom på eller av">🎯 Auto-zoom</button>
   <div id="windrow">
     <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
   </div>
@@ -476,11 +483,22 @@ const LEFT_TEE_M       = 30;      // GPS "lämnat teen" → trigga follow
 const BOTTOM_MARGIN_FR = 0.12;    // luft under din prick (kontext bakåt), andel av bandet
 const NATIVE_MPP       = 0.16;    // ortofotots native m/px → skarp-bild-zoomtak
 const MIN_FRAME_M      = 40;      // golv på inramad sträcka (aldrig orimligt nära green)
+const ROT_FREEZE_M     = 30;      // follow-rotation fryser inom så här nära green (bäring instabil)
+const FOLLOW_ANIM_MS   = 450;     // mjuk follow-övergång via rAF-interpolering (0 = instant)
+// Mjuk vy-rörelse på/av (default på). ?smooth=0 → instant, för A/B-jämförelse.
+const SMOOTH_FOLLOW = new URLSearchParams(location.search).get("smooth") !== "0";
+// Auto-zoom master-switch (follow-inramning + pos→green-rotation + mjuk rörelse).
+// Av → klassisk statisk tee→green-overview hela hålet. Sparas i localStorage
+// (sg_autozoom), togglas i UI under spel. ?autozoom=0 = nöd-av för den laddningen.
+const AZ_KEY = "sg_autozoom";
+let autoZoom = localStorage.getItem(AZ_KEY) !== "off";
+if (new URLSearchParams(location.search).get("autozoom") === "0") autoZoom = false;
 let followMode = false;           // per-hål latch: overview (false) vs follow (true)
 let lastFrameAnchor = null;       // [lat,lon] vid senaste inramning (jitter-dämp)
 let manualUntil = 0;              // paus-deadline efter manuell gest
 let programmaticMove = false;     // skilj våra egna setView från användargester
 let resumeTimer = null;
+let animRAF = null;               // pågående follow-animering (rAF-id) eller null
 
 // Bandet mellan play-panelerna (vindrutan uppe, GPS-raden nere) i #map-pixlar.
 function playBand() {
@@ -535,18 +553,37 @@ function fitFollowView(opts) {
     { maxZoom: cap, animate: opts && opts.animate, duration: 0.6 });
 }
 
+// I follow: rotera så green hamnar rakt upp från DIN position (bättre på doglegs
+// än den statiska tee→green-vinkeln som gäller hela hålet i overview). Fryst nära
+// green där GPS-bruset annars ger stora bäringskast. setBearing är instant →
+// träffar inte leaflet-rotate-animeringsproblemet. Anropas inuti applyFrames
+// programmaticMove-guard så rotationen inte misstas för en manuell gest.
+function applyFollowBearing(h) {
+  const tgt = h.green_center || h.pin;
+  if (!tgt || !pos) return;
+  if (hav(pos, tgt) < ROT_FREEZE_M) return;   // frys nära green
+  map.setBearing(-bearing(pos, tgt));          // green rakt upp från din position
+}
+
 // Väljer overview/follow, ramar in, och skyddar våra egna setView från att
 // misstas för manuella gester (annars pausar animeringen sig själv).
 function applyFrame(opts) {
   const h = ROUND[hi];
   if (!h) return;
+  // Mjuk follow-rörelse: animera från nuvarande vy till målvyn (rAF) i stället för
+  // instant-hoppet. Bara för follow-omramningarna medan man går (opts.animate).
+  if (SMOOTH_FOLLOW && FOLLOW_ANIM_MS > 0 && opts && opts.animate
+      && followMode && pos && h.green && h.green.length) { applyFrameSmooth(h); return; }
   // Leaflet fyrar movestart/zoomstart SYNKRONT under setView → sätt guarden runt
   // anropet och släpp den direkt efter. (Timer race:ade med animeringen och
   // feltolkade våra egna rörelser som manuell gest → falsk 10 s-paus.)
   programmaticMove = true;
   try {
     let framed = false;
-    if (followMode && pos && h.green && h.green.length) framed = fitFollowView(opts);
+    if (followMode && pos && h.green && h.green.length) {
+      applyFollowBearing(h);   // green rakt upp från din position (fryst nära green)
+      framed = fitFollowView(opts);
+    }
     if (!framed) framed = fitHoleView(h, opts);
     if (!framed) {
       const pts = [...(h.green || []), h.pin, ...(h.tees || []).map(t => [t.lat, t.lon]), ...(h.line || [])].filter(Boolean);
@@ -557,8 +594,67 @@ function applyFrame(opts) {
   }
 }
 
+// Mjuk follow-övergång: räkna ut målvyn instant (samma tick → ingen paint),
+// återställ startvyn, och interpolera center/zoom/bäring över FOLLOW_ANIM_MS via
+// requestAnimationFrame. Många små instant-steg → ser mjukt ut, utan leaflet-
+// rotates opålitliga setView-animering.
+function applyFrameSmooth(h) {
+  const start = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing() };
+  programmaticMove = true;
+  applyFollowBearing(h);                 // målbäring (pos→green)
+  const framed = fitFollowView({});      // instant setView till målvyn (samma tick)
+  const target = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing() };
+  map.setBearing(start.bearing);         // återställ start (ännu ingen paint)
+  map.setView(start.center, start.zoom, { animate: false });
+  programmaticMove = false;
+  if (!framed) return;                   // ingen giltig follow-vy (bör ej ske här)
+  animateTo(target);
+}
+
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+// Interpolera nuvarande vy → target över FOLLOW_ANIM_MS. En ny fix mitt i
+// animeringen startar om härifrån (från nuvarande, mid-läge) → mjuk om-styrning.
+function animateTo(target) {
+  if (animRAF) cancelAnimationFrame(animRAF);
+  const start = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing() };
+  const dB = ((target.bearing - start.bearing + 540) % 360) - 180;   // kortaste vinkelväg
+  const t0 = performance.now();
+  const step = (now) => {
+    const e = easeOutCubic(Math.min(1, (now - t0) / FOLLOW_ANIM_MS));
+    programmaticMove = true;
+    map.setBearing(start.bearing + dB * e);
+    map.setView([start.center.lat + (target.center.lat - start.center.lat) * e,
+                 start.center.lng + (target.center.lng - start.center.lng) * e],
+                start.zoom + (target.zoom - start.zoom) * e, { animate: false });
+    programmaticMove = false;
+    animRAF = e < 1 ? requestAnimationFrame(step) : null;
+  };
+  animRAF = requestAnimationFrame(step);
+}
+
+// Auto-zoom master-switch: av → klassisk statisk overview direkt, på → utvärdera
+// follow för aktuellt hål. Sparas i localStorage, togglas i UI under spel.
+function renderAzToggle() {
+  const b = document.getElementById("azToggle");
+  if (!b) return;
+  b.textContent = autoZoom ? "🎯 Auto-zoom" : "🎯 Auto-zoom av";
+  b.classList.toggle("on", autoZoom);
+}
+function setAutoZoom(on) {
+  autoZoom = on;
+  try { localStorage.setItem(AZ_KEY, on ? "on" : "off"); } catch (e) {}
+  renderAzToggle();
+  if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
+  const shots = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
+  followMode = on && !!pos && shots >= 1;    // av → overview; på → follow om möjligt
+  lastFrameAnchor = null; manualUntil = 0;
+  orientToHole();   // klassisk tee→green-rotation (follow-rotationen sätts sen av applyFrame)
+  applyFrame();     // ram om direkt (instant): overview eller follow
+}
+
 // Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.
 function evalFollow(lat, lon, acc) {
+  if (!autoZoom) return;   // master-switch av → ingen follow/rotation/zoom
   const h = ROUND[hi];
   if (!h) return;
   if (!followMode) {
@@ -899,7 +995,7 @@ function drawHole() {
   // (slag redan loggade) → follow direkt från positionen (annars overview-fallback).
   orientToHole();
   const shotsHere = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-  followMode = shotsHere >= 1;
+  followMode = autoZoom && shotsHere >= 1;   // auto-zoom av → alltid overview
   lastFrameAnchor = null; manualUntil = 0;
   applyFrame();
   clearTap();
@@ -1005,6 +1101,7 @@ async function init() {
   // återupptar sedan själv. programmaticMove skiljer våra egna setView från gester.
   map.on("movestart zoomstart", () => {
     if (programmaticMove) return;
+    if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }   // avbryt vår animering – slåss inte med användaren
     manualUntil = Date.now() + FOLLOW_PAUSE_MS;
     if (resumeTimer) clearTimeout(resumeTimer);
     resumeTimer = setTimeout(() => { if (followMode && pos) applyFrame({ animate: true }); },
@@ -1015,6 +1112,9 @@ async function init() {
   setMode(mode);   // sätter aktiv knapp + första renderingen
   const rs = document.getElementById("roundSel");
   if (rs) rs.onchange = e => setRound(e.target.value);
+  const az = document.getElementById("azToggle");
+  if (az) az.onclick = () => setAutoZoom(!autoZoom);
+  renderAzToggle();
 
   try {
     const course = await MapCore.loadCourse();   // bandata + tee-tabell (se mapcore.js)
