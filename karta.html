@@ -490,6 +490,9 @@ const NATIVE_MPP       = 0.16;    // ortofotots native m/px → skarp-bild-zoomt
 const MIN_FRAME_M      = 40;      // golv på inramad sträcka (aldrig orimligt nära green)
 const ROT_FREEZE_M     = 30;      // follow-rotation fryser inom så här nära green (bäring instabil)
 const FOLLOW_ANIM_MS   = 450;     // mjuk follow-övergång via rAF-interpolering (0 = instant)
+const FOLLOW_START_M   = 30;      // följningen startar först när man gått så här långt från teet
+const GREEN_VIEW_M     = 30;      // inom så här nära green-centrum → lås en fast green-vy
+const GREEN_VIEW_PAD_FR= 0.16;    // luft runt greenen i den fasta green-vyn (andel av bandet)
 // Mjuk vy-rörelse på/av (default på). ?smooth=0 → instant, för A/B-jämförelse.
 const SMOOTH_FOLLOW = new URLSearchParams(location.search).get("smooth") !== "0";
 // Auto-zoom master-switch (follow-inramning + pos→green-rotation + mjuk rörelse).
@@ -505,6 +508,7 @@ let manualUntil = 0;              // paus-deadline efter manuell gest
 let programmaticMove = false;     // skilj våra egna setView från användargester
 let resumeTimer = null;
 let animRAF = null;               // pågående follow-animering (rAF-id) eller null
+let greenLatched = false;         // fast green-vy låst → ingen follow/zoom mer förrän hålbyte
 
 // Bandet mellan play-panelerna (vindrutan uppe, GPS-raden nere) i #map-pixlar.
 function playBand() {
@@ -521,6 +525,13 @@ function farGreen(origin, h) {
   let farPt = h.green[0], farD = -1;
   for (const gp of h.green) { const d = hav(origin, gp); if (d > farD) { farD = d; farPt = gp; } }
   return farPt;
+}
+
+// Har spelaren gått en god bit ut från teet? Följningen startar först då, så
+// slag 1 (vid teet) håller kvar overviewen utan död yta bakom teeboxen.
+function pastTee(pt, h) {
+  const teePt = MapCore.teePoint(h) || (h.line && h.line.length ? h.line[0] : null);
+  return !!(teePt && pt && hav(pt, teePt) >= FOLLOW_START_M);
 }
 
 // Overview (tee→green) — oförändrad matte, nu via delade playBand/farGreen.
@@ -557,6 +568,45 @@ function fitFollowView(opts) {
   const cap = followZoomCap(pos[0], band.botY - band.topY);
   return MapCore.fitBand(map, pos, farGreen(teePt, h), band,
     { maxZoom: cap, animate: opts && opts.animate, duration: 0.6 });
+}
+
+// Fast green-vy: när man är uppe vid green ramas HELA greenen in en gång och vyn
+// låses. Centrerad på green-centrum med greenens diameter (radie·2 + luft) inpassad
+// i bandets MINSTA dimension → hela greenen syns i BÅDA led (viktigt på smal
+// telefonskärm, annars klipps green-bredden). Löser "för inzoomad vid green" +
+// "vyn korrigerar flytt/zoom på green" — en stilla, fast bild tills hålbyte.
+function fitGreenView() {
+  const h = ROUND[hi];
+  if (!h || !h.green || !h.green.length || !h.green_center) return false;
+  const band = playBand();
+  const availPx = Math.min(band.width, band.botY - band.topY);
+  if (availPx < 50) return false;
+  let r = 0;   // radie: green-centrum → bortersta greenpunkt
+  for (const gp of h.green) { const d = hav(h.green_center, gp); if (d > r) r = d; }
+  const span = Math.max(2 * r * (1 + 2 * GREEN_VIEW_PAD_FR), MIN_FRAME_M);  // diameter + luft, golv
+  const z = Math.log2(40075016.686 * Math.cos(rad(h.green_center[0])) * availPx / (256 * span));
+  // centrera green-centrum i bandet (samma rotations-medvetna pixel-offset som fitBand)
+  const cy = (band.topY + band.botY) / 2;
+  map.setView(h.green_center, z, { animate: false });
+  map.setView(map.containerPointToLatLng([band.width / 2, band.height - cy]), z, { animate: false });
+  return true;
+}
+
+// Lås den fasta green-vyn en gång: hålet uppåt (stabil bäring) + inramning av hela
+// greenen. Avbryter ev. pågående follow-animering så rAF:en inte drar vidare. Låser
+// bara om inramningen lyckas (annars nytt försök vid nästa GPS-fix).
+function enterGreenView() {
+  const h = ROUND[hi];
+  if (!h) return;
+  if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
+  programmaticMove = true;
+  try {
+    orientToHole();                 // tee→green uppåt = fast, stabil bäring
+    if (!fitGreenView()) return;    // kunde ej rama in → lås inte
+    greenLatched = true;
+  } finally {
+    programmaticMove = false;
+  }
 }
 
 // I follow: rotera så green hamnar rakt upp från DIN position (bättre på doglegs
@@ -643,12 +693,22 @@ function evalFollow(lat, lon, acc) {
   if (!autoZoom) return;   // master-switch av → ingen follow/rotation/zoom
   const h = ROUND[hi];
   if (!h) return;
+  if (greenLatched) return;   // fast green-vy låst → rör inte vyn mer (till hålbyte)
+  // Uppe vid/på green → lås den fasta green-vyn. Går även från overview (t.ex. par-3
+  // på green i 1). Kräver hyfsad fix så en skräpfix inte låser vyn för tidigt.
+  if ((acc == null || acc <= REFIT_ACC_M) && nearHole([lat, lon], h)
+      && h.green_center && hav([lat, lon], h.green_center) <= GREEN_VIEW_M) {
+    enterGreenView();
+    if (greenLatched) return;
+  }
   if (!followMode) {
     const shots = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-    // Auto-aktivera följningen bara NÄRA BANAN (<1000 m, samma gräns som måtten)
-    // OCH efter slag 1. Långt bort eller före slaget → statisk overview.
-    if (shots >= 1 && nearHole([lat, lon], h)) { followMode = true; lastFrameAnchor = null; }
-    else return;
+    // Auto-aktivera följningen bara NÄRA BANAN (<1000 m), efter slag 1 OCH när man
+    // gått ut en god bit från teet (FOLLOW_START_M). Vid teet → kvar i overview →
+    // ingen utzoomning med död yta bakom teeboxen.
+    if (shots >= 1 && nearHole([lat, lon], h) && pastTee([lat, lon], h)) {
+      followMode = true; lastFrameAnchor = null;
+    } else return;
   }
   if (Date.now() < manualUntil) return;                 // pausad av manuell gest
   if (acc != null && acc > REFIT_ACC_M) return;          // för dålig fix → rör inte vyn
@@ -981,8 +1041,13 @@ function drawHole() {
   // (slag redan loggade) → follow direkt från positionen (annars overview-fallback).
   orientToHole();
   const shotsHere = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-  // follow bara nära banan (<1000 m) OCH efter slag 1; annars statisk overview.
-  followMode = autoZoom && shotsHere >= 1 && nearHole(pos, h);
+  // Hålbyte: nolla follow/green-lås OCH avbryt ev. pågående follow-animering — annars
+  // drar rAF:en vidare mot förra hålets max-zoom och nya hålet fastnar inzoomat
+  // (zoom-återställning vid hålbyte). follow bara nära banan, efter slag 1 och en
+  // god bit ut från teet (kommer man tillbaka mitt i hålet).
+  if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
+  greenLatched = false;
+  followMode = autoZoom && shotsHere >= 1 && nearHole(pos, h) && pastTee(pos, h);
   lastFrameAnchor = null; manualUntil = 0;
   applyFrame();
   clearTap();
@@ -1091,8 +1156,10 @@ async function init() {
     if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }   // avbryt vår animering – slåss inte med användaren
     manualUntil = Date.now() + FOLLOW_PAUSE_MS;
     if (resumeTimer) clearTimeout(resumeTimer);
-    resumeTimer = setTimeout(() => { if (followMode && pos) applyFrame({ animate: true }); },
-                             FOLLOW_PAUSE_MS + 60);
+    resumeTimer = setTimeout(() => {
+      if (greenLatched) enterGreenView();            // fast green-vy → återställ till den
+      else if (followMode && pos) applyFrame({ animate: true });
+    }, FOLLOW_PAUSE_MS + 60);
   });
   for (const b of document.querySelectorAll("#modeToggle button"))
     b.onclick = () => setMode(b.dataset.mode);
@@ -1140,7 +1207,7 @@ function initSimWalk() {
     const tee = teePoint(h) || (h.line && h.line[0]);
     const green = h.green_center || h.pin;
     if (!tee || !green) return;
-    followMode = false; lastFrameAnchor = null; manualUntil = 0;   // starta i overview
+    followMode = false; greenLatched = false; lastFrameAnchor = null; manualUntil = 0;   // starta i overview
     drawHole();
     btn.textContent = "⏸ sim";
     const N = 40; let i = 0;
