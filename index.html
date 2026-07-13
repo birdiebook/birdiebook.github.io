@@ -172,7 +172,12 @@
           transition: transform .15s; }
   .toggle.on.green .knob { background: var(--accent); border-color: var(--accent); }
   .toggle.on.pin .knob { background: var(--danger); border-color: var(--danger); }
+  .toggle.on.az .knob { background: var(--accent); border-color: var(--accent); }
   .toggle.on .knob::after { transform: translateX(18px); }
+  /* auto-zoom-kill-switch: styr hålkartans (karta.html) follow/inzoom via localStorage.
+     Egen rad under green/pin — global karta-inställning, inte per-hål-data. */
+  .toggle.az { width: 100%; margin: 0 0 10px; color: var(--dim); font-weight: 700; }
+  .toggle.az.on { color: var(--ink); }
   .tstatus { min-height: 16px; color: var(--dim); font-size: 12px; margin: 0 2px 6px; }
   .tstatus .ok { color: #7ee2a8; }
 </style>
@@ -789,6 +794,10 @@ function renderHole() {
     </div>
     <div class="tstatus">${tstatus}</div>
 
+    <button class="toggle az ${localStorage.getItem("sg_autozoom") !== "off" ? "on" : ""}"
+      id="azToggle" aria-label="Auto-zoom på hålkartan">
+      <span class="knob"></span><span>🎯 AUTO-ZOOM PÅ KARTAN</span></button>
+
     <button class="big" id="next">Nästa hål ›</button>
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
 
@@ -830,6 +839,14 @@ function renderHole() {
   document.getElementById("finish").onclick = () => {
     livePush();   // pusha sista hålets score innan sammanfattningen
     S.endedAt = new Date().toISOString(); S.view = "summary"; save(); render();
+  };
+  // Auto-zoom-kill-switch: flyttad hit från karta.html. Skriver bara sg_autozoom;
+  // hålkartan läser värdet vid nästa laddning (flikbyte = full sidladdning).
+  const azBtn = document.getElementById("azToggle");
+  if (azBtn) azBtn.onclick = () => {
+    const on = localStorage.getItem("sg_autozoom") !== "off";
+    localStorage.setItem("sg_autozoom", on ? "off" : "on");
+    render();
   };
 }
 

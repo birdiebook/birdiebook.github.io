@@ -63,8 +63,13 @@
   #rose g { transition:transform .4s; transform-origin:32px 32px; transform-box:view-box; }
 
   /* botten: tap-mät + status */
+  /* Sitt direkt ovanför flikraden: SAMMA bas som .tabs (var(--reclaim)) + flikhöjd,
+     UTAN egen safe-area-term. .tabs räknar medvetet inte safe-area, så när #bottom
+     gjorde det (env(safe-area-inset-bottom) ~34 px i vanlig browser) flöt GPS-raden
+     upp och lämnade tomrum mot fliken. Bort med den → raden ligger tätt, och
+     playBand()-bandet (mäter #bottom .hint) växer nedåt → mindre utzoomad follow-vy. */
   #bottom { position:absolute; left:0; right:0; z-index:1000;
-    bottom:calc(env(safe-area-inset-bottom) + 62px + var(--reclaim));
+    bottom:calc(var(--reclaim) + 62px);
     padding:8px 10px; }
   /* gemensam flik-rad (samma på alla sidor) */
   /* Flikraden fixed mot viewportens nederkant (= fysiska nederkanten i standalone,
@@ -95,12 +100,8 @@
   #modeToggle button { background:none; border:0; color:var(--dim);
     font-size:12px; font-weight:700; padding:6px 9px; border-radius:9px; }
   #modeToggle button.on { background:#1a4c38; color:var(--ink); }
-  /* auto-zoom på/av — kill-switch nåbar under spel (windrow, höger) */
-  /* precis under "Spelar som"-toggeln (vänster), bort från mätrutan uppe till höger */
-  #azToggle { display:inline-flex; align-items:center; margin-top:6px; -webkit-appearance:none; appearance:none;
-    background:var(--framebg); border:1px solid var(--line); border-radius:12px; color:var(--dim);
-    font-size:12px; font-weight:700; padding:8px 12px; box-shadow:0 2px 8px #0007; white-space:nowrap; }
-  #azToggle.on { color:var(--accent); border-color:var(--accent); }
+  /* Auto-zoom-kill-switchen bor på Logga slag-sidan (index.html), inte på kartan.
+     karta.html läser bara sg_autozoom ur localStorage vid laddning (se AZ_KEY). */
   .row { display:flex; gap:6px; margin-top:6px; }
   .row a, .row button { flex:1; text-align:center; text-decoration:none; background:var(--card);
     color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:8px 4px;
@@ -216,7 +217,6 @@
       <text id="roseGust" x="32" y="47" text-anchor="middle" font-size="10" font-weight="600" fill="#e8f5ec"></text>
     </svg>
   </div>
-  <button id="azToggle" aria-label="Auto-zoom på eller av">🎯 Auto-zoom</button>
   <div id="windrow">
     <div id="wind"><div id="windTxt"><span class="sub">vind …</span></div></div>
   </div>
@@ -370,6 +370,12 @@ function measureOrigin() {
   }
   return { pt: pos, fromTee: false };
 }
+// "På/nära banan" — samma 1000 m-gräns mot green-centrum som distansmåtten
+// (measureOrigin). Auto-zoom-följningen aktiveras bara när detta är sant; står
+// man längre bort (hemma/klubbhuset) → statisk overview, ingen inzoom.
+function nearHole(pt, h) {
+  return !!(pt && h && h.green_center && hav(pt, h.green_center) <= FAR_FROM_HOLE_M);
+}
 
 // "spelas som"-avstånd till en punkt: geometriskt + vind (range medelvind–by) + ev. slope.
 // Returnerar null om vind eller utgångspunkt saknas. Byn antas komma från samma håll som
@@ -472,14 +478,13 @@ function orientToHole() {
 const FIT_GAP_PX = 8;   // luft mellan tee/green och UI-panelerna
 
 // --- Auto-zoom / follow-vy (syntes av AUTO_ZOOM-planerna) --------------------
-// Före teen: oförändrad tee→green-vy. Efter att man lämnat teen (loggat slag 1
-// ELLER GPS visar >LEFT_TEE_M från tee): vyn följer dig → green, zoomar in
-// progressivt med skarp-bild-tak, dämpat (ramar om först vid ≥FOLLOW_MOVE_M) och
-// mjukt animerat. Manuell gest pausar följningen och den återupptas själv.
+// Statisk tee→green-vy tills BÅDE nära banan (<1000 m, nearHole) OCH slag 1 är
+// loggat — då följer vyn dig → green, zoomar in progressivt med skarp-bild-tak,
+// dämpat (ramar om först vid ≥FOLLOW_MOVE_M) och mjukt animerat. Manuell gest
+// pausar följningen och den återupptas själv.
 const FOLLOW_MOVE_M    = 9;       // ram om först vid så här stor förflyttning (jitter-dämp)
 const FOLLOW_PAUSE_MS  = 10000;   // manuell gest pausar följningen så länge
 const REFIT_ACC_M      = 25;      // ignorera fixar sämre än så här för inramning
-const LEFT_TEE_M       = 30;      // GPS "lämnat teen" → trigga follow
 const BOTTOM_MARGIN_FR = 0.12;    // luft under din prick (kontext bakåt), andel av bandet
 const NATIVE_MPP       = 0.16;    // ortofotots native m/px → skarp-bild-zoomtak
 const MIN_FRAME_M      = 40;      // golv på inramad sträcka (aldrig orimligt nära green)
@@ -489,7 +494,8 @@ const FOLLOW_ANIM_MS   = 450;     // mjuk follow-övergång via rAF-interpolerin
 const SMOOTH_FOLLOW = new URLSearchParams(location.search).get("smooth") !== "0";
 // Auto-zoom master-switch (follow-inramning + pos→green-rotation + mjuk rörelse).
 // Av → klassisk statisk tee→green-overview hela hålet. Sparas i localStorage
-// (sg_autozoom), togglas i UI under spel. ?autozoom=0 = nöd-av för den laddningen.
+// (sg_autozoom), togglas på Logga slag-sidan (index.html) — läses här vid laddning.
+// ?autozoom=0 = nöd-av för den laddningen.
 const AZ_KEY = "sg_autozoom";
 let autoZoom = localStorage.getItem(AZ_KEY) !== "off";
 if (new URLSearchParams(location.search).get("autozoom") === "0") autoZoom = false;
@@ -632,26 +638,6 @@ function animateTo(target) {
   animRAF = requestAnimationFrame(step);
 }
 
-// Auto-zoom master-switch: av → klassisk statisk overview direkt, på → utvärdera
-// follow för aktuellt hål. Sparas i localStorage, togglas i UI under spel.
-function renderAzToggle() {
-  const b = document.getElementById("azToggle");
-  if (!b) return;
-  b.textContent = autoZoom ? "🎯 Auto-zoom" : "🎯 Auto-zoom av";
-  b.classList.toggle("on", autoZoom);
-}
-function setAutoZoom(on) {
-  autoZoom = on;
-  try { localStorage.setItem(AZ_KEY, on ? "on" : "off"); } catch (e) {}
-  renderAzToggle();
-  if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
-  const shots = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-  followMode = on && !!pos && shots >= 1;    // av → overview; på → follow om möjligt
-  lastFrameAnchor = null; manualUntil = 0;
-  orientToHole();   // klassisk tee→green-rotation (follow-rotationen sätts sen av applyFrame)
-  applyFrame();     // ram om direkt (instant): overview eller follow
-}
-
 // Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.
 function evalFollow(lat, lon, acc) {
   if (!autoZoom) return;   // master-switch av → ingen follow/rotation/zoom
@@ -659,9 +645,9 @@ function evalFollow(lat, lon, acc) {
   if (!h) return;
   if (!followMode) {
     const shots = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-    const tp = teePoint(h);
-    const leftTee = tp && acc != null && acc <= AUTO_ACC_M && hav([lat, lon], tp) > LEFT_TEE_M;
-    if (shots >= 1 || leftTee) { followMode = true; lastFrameAnchor = null; }
+    // Auto-aktivera följningen bara NÄRA BANAN (<1000 m, samma gräns som måtten)
+    // OCH efter slag 1. Långt bort eller före slaget → statisk overview.
+    if (shots >= 1 && nearHole([lat, lon], h)) { followMode = true; lastFrameAnchor = null; }
     else return;
   }
   if (Date.now() < manualUntil) return;                 // pausad av manuell gest
@@ -995,7 +981,8 @@ function drawHole() {
   // (slag redan loggade) → follow direkt från positionen (annars overview-fallback).
   orientToHole();
   const shotsHere = (currentHoleRec() && currentHoleRec().shots) ? currentHoleRec().shots.length : 0;
-  followMode = autoZoom && shotsHere >= 1;   // auto-zoom av → alltid overview
+  // follow bara nära banan (<1000 m) OCH efter slag 1; annars statisk overview.
+  followMode = autoZoom && shotsHere >= 1 && nearHole(pos, h);
   lastFrameAnchor = null; manualUntil = 0;
   applyFrame();
   clearTap();
@@ -1112,9 +1099,6 @@ async function init() {
   setMode(mode);   // sätter aktiv knapp + första renderingen
   const rs = document.getElementById("roundSel");
   if (rs) rs.onchange = e => setRound(e.target.value);
-  const az = document.getElementById("azToggle");
-  if (az) az.onclick = () => setAutoZoom(!autoZoom);
-  renderAzToggle();
 
   try {
     const course = await MapCore.loadCourse();   // bandata + tee-tabell (se mapcore.js)
