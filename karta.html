@@ -584,7 +584,11 @@ function fitGreenView() {
   let r = 0;   // radie: green-centrum → bortersta greenpunkt
   for (const gp of h.green) { const d = hav(h.green_center, gp); if (d > r) r = d; }
   const span = Math.max(2 * r * (1 + 2 * GREEN_VIEW_PAD_FR), MIN_FRAME_M);  // diameter + luft, golv
-  const z = Math.log2(40075016.686 * Math.cos(rad(h.green_center[0])) * availPx / (256 * span));
+  // Zooma så hela greenen (+ luft) ryms, men ALDRIG bortom skarp-bild-taket
+  // (ortofotots 0.16 m/px · devicePixelRatio) → ingen upp-skalning/pixelering. Taket
+  // biter bara på liten green/stor skärm (t.ex. desktop dpr 1) och ger då mer marginal.
+  let z = Math.log2(40075016.686 * Math.cos(rad(h.green_center[0])) * availPx / (256 * span));
+  z = Math.min(z, followZoomCap(h.green_center[0], availPx));
   // centrera green-centrum i bandet (samma rotations-medvetna pixel-offset som fitBand)
   const cy = (band.topY + band.botY) / 2;
   map.setView(h.green_center, z, { animate: false });
