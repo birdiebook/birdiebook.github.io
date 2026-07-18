@@ -1376,6 +1376,24 @@ function initSimWalk() {
     }, 500);   // ~20 s tee→green
   };
   document.body.appendChild(btn);
+
+  // Snabbtest: hoppa direkt till green-centrum → fasta green-vyn låses på en gång
+  // och green-lutnings-overlayen ritas. Bläddra hål med hålväljaren och tryck här
+  // för att inspektera varje greens lutning hemifrån (utan att vänta ut walken).
+  const gbtn = document.createElement("button");
+  gbtn.textContent = "⛳ green";
+  gbtn.style.cssText = "position:absolute;left:8px;bottom:calc(env(safe-area-inset-bottom) + 196px);"
+    + "z-index:1200;background:#1a4c38;color:#e8f5ec;border:1px solid #37b06b;border-radius:10px;"
+    + "padding:9px 13px;font:inherit;font-weight:700;box-shadow:0 2px 8px #0007;";
+  gbtn.onclick = () => {
+    stop();                                   // avbryt ev. pågående walk
+    const h = ROUND[hi];
+    const green = h && (h.green_center || h.pin);
+    if (!green) return;
+    followMode = false; greenLatched = false; lastFrameAnchor = null; manualUntil = 0;
+    setPos(green[0], green[1], 6);            // inom GREEN_VIEW_M → enterGreenView → showSlope
+  };
+  document.body.appendChild(gbtn);
 }
 // Vid VERKLIG viewport-ändring (rotation, webbläsarens verktygsfält som glider
 // in/ut): låt Leaflet läsa om behållarstorleken och passa in hålvyn igen.
