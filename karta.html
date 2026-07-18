@@ -293,8 +293,10 @@ function setRound(name) {
   hi = 0;
   syncHole();
 }
-let map, layers = L.layerGroup(), shotLayer = L.layerGroup(), pinLayer = L.layerGroup(),
+let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
+    shotLayer = L.layerGroup(), pinLayer = L.layerGroup(),
     meMarker = null, tapMarker = null, tapLine = null;
+let SLOPE_IDX = null;   // "loop|hål" → [fall-features], laddas en gång ur green_slope.geojson
 // delad pin per matchhål (globalt hålnr → {lat,lon,acc}), fylls av live-prenumeration
 let SHARED_PINS = {}, pinUnsub = null;
 
@@ -348,6 +350,67 @@ async function fetchPlayerElev() {
   } catch (err) { PLAYER_ELEV = null; }
   updateWind();
 }
+
+// --- Höjd ur 3D-metan (C1, SPELVARDE_3D_PLAN.md) -----------------------------
+// LM-DEM:ens höjder följer med holes3d-exporten: ll2xz-affinen lägger en
+// lat/lon i hålets lokala meterram (SWEREF-skevningen ~1,6° är inbakad — rak
+// grad-till-meter räcker inte), profile ger höjden längs hållinjen var 10:e m
+// och tees[].dh ger Δh tee→green per tee. PRIMÄR höjdkälla (offline, 1 m-nät);
+// Open-Meteo ovan blir fallback när metan saknas.
+let ELEV3D = {};   // slug -> meta | null (null = laddar/saknas)
+function holeSlug(h) { return `${h.loop.replace(" Course", "").toLowerCase()}_${h.hole}`; }
+function loadElev3d(h) {
+  const slug = holeSlug(h);
+  if (ELEV3D[slug] !== undefined) return;
+  ELEV3D[slug] = null;
+  fetch(`data/holes3d/${slug}.json`).then(r => r.json()).then(m => {
+    if (m && m.ll2xz && m.profile) { ELEV3D[slug] = m; updateWind(); }
+  }).catch(() => {});
+}
+function ll2local(m, lat, lon) {
+  const [lon0, lat0, a, b, c, d] = m.ll2xz;
+  return [(lon - lon0) * a + (lat - lat0) * b,
+          (lon - lon0) * c + (lat - lat0) * d];
+}
+// lokal höjd (y, meter över tee-marken) för en lat/lon: projicera punkten på
+// hållinjen och interpolera profilen där. Fairway följer linjen — bra approx.
+function elev3dAt(m, lat, lon) {
+  const [x, z] = ll2local(m, lat, lon);
+  let best = null, acc = 0;
+  for (let i = 0; i < m.line.length - 1; i++) {
+    const [x1, , z1] = m.line[i], [x2, , z2] = m.line[i + 1];
+    const dx = x2 - x1, dz = z2 - z1, L = Math.hypot(dx, dz);
+    const t = L ? Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / (L * L))) : 0;
+    const d2 = (x - (x1 + t * dx)) ** 2 + (z - (z1 + t * dz)) ** 2;
+    if (!best || d2 < best.d2) best = { d2, s: acc + t * L };
+    acc += L;
+  }
+  if (!best) return null;
+  const p = m.profile, s = Math.max(0, Math.min(best.s, p[p.length - 1][0]));
+  let i = 1;
+  while (i < p.length - 1 && p[i][0] < s) i++;
+  const [s0, y0] = p[i - 1], [s1, y1] = p[i];
+  return s1 > s0 ? y0 + (y1 - y0) * (s - s0) / (s1 - s0) : y0;
+}
+// Δh (m, + = uppför) från mätpunkten till green för aktuellt hål, ur 3D-metan.
+// Från tee används vald tees förberäknade dh (spelarens GPS säger inget om tee).
+// null när metan inte (ännu) finns → anroparen faller tillbaka på Open-Meteo.
+function dh3dToGreen(o, h) {
+  const m = ELEV3D[holeSlug(h)];
+  if (!m) return null;
+  if (o.fromTee) {
+    const t = m.tees && m.tees[localStorage.getItem("sg_tee") || ""];
+    return t ? t.dh : null;
+  }
+  const y = elev3dAt(m, o.pt[0], o.pt[1]);
+  if (y == null) return null;
+  const gy = m.green_center ? m.green_center[1] : m.profile[m.profile.length - 1][1];
+  return gy - y;
+}
+// asymmetrisk spellängdseffekt: uppför spelar hela höjden, nedför ger inte
+// hela höjden tillbaka (flackare infallsvinkel äts av rull/carry-geometri)
+const SLOPE_DOWN_FACTOR = 0.8;
+function slopeEffect(dh) { return dh >= 0 ? dh : SLOPE_DOWN_FACTOR * dh; }
 
 // tee-punkt för ett hål = den tee spelaren valde när rundan startades (sg_tee).
 // RIGID mappning: förberäknad punkttabell tee_points.json (tools/build_tee_box.ps1),
@@ -446,16 +509,24 @@ function updateWind() {
     return;
   }
   const h = ROUND[hi];
-  // slope bara när måttet utgår från spelaren — spelarens höjd säger inget om tee.
-  // uppför positiv, bakas in tyst (samma green-höjd antas för fram-/bakkant).
-  const slope = (!o.fromTee && h.green_elev_m != null && PLAYER_ELEV != null)
-    ? h.green_elev_m - PLAYER_ELEV : 0;
+  // Δh till green: PRIMÄRT ur 3D-metan (LM-DEM, offline, funkar även från
+  // tee via vald tees dh) — fallback Open-Meteo-vägen (bara från spelaren).
+  // Asymmetriskt: uppför spelar hela höjden, nedför ger 0,8× tillbaka.
+  let dh = dh3dToGreen(o, h);
+  if (dh == null) {
+    dh = (!o.fromTee && h.green_elev_m != null && PLAYER_ELEV != null)
+      ? h.green_elev_m - PLAYER_ELEV : null;
+  }
+  const slope = dh != null ? slopeEffect(dh) : 0;
   // spelas-som per punkt: geometriskt + medelvind + slope (byn/"i by" borttaget)
   const distFn = t => {
     const pa = playAsRange(o.pt, t, slope);
     return pa ? pa.mean : Math.round(hav(o.pt, t) + slope);
   };
-  el.innerHTML = greenDistHtml(o.pt, h, distFn);
+  // diskret Δh-rad under måtten när höjden faktiskt påverkar (≥1 m)
+  const dhTxt = (dh != null && Math.abs(dh) >= 1)
+    ? `<div class="sub">${dh > 0 ? "&#8599;" : "&#8600;"} Δh ${dh > 0 ? "+" : "−"}${Math.abs(dh).toFixed(0)} m</div>` : "";
+  el.innerHTML = greenDistHtml(o.pt, h, distFn) + dhTxt;
 }
 
 // riktning tee→green för hålet (grader 0=N), null om data saknas
@@ -608,6 +679,7 @@ function enterGreenView() {
     orientToHole();                 // tee→green uppåt = fast, stabil bäring
     if (!fitGreenView()) return;    // kunde ej rama in → lås inte
     greenLatched = true;
+    showSlope(h);                   // närmaste zoom nådd → lägg på green-lutningen
   } finally {
     programmaticMove = false;
   }
@@ -691,6 +763,76 @@ function animateTo(target) {
   };
   animRAF = requestAnimationFrame(step);
 }
+
+// ── Green-lutnings-overlay (fallpilar) ───────────────────────────────────────
+// Ritas BARA i den fasta green-vyn (närmaste zoomläget). Datat är fallinje-
+// segment ur green_slope.geojson (byggs av tools/build_green_slope.py --mobile);
+// varje 'fall'-feature är en kort LineString [upp→ned] med slope_pct + bearing.
+// Green-book-paletten (0–6 %, vit=platt) speglar src/gis/visualize.py._BOOK_COLORS
+// så pilarna matchar de renderade greenbilderna.
+const SLOPE_STOPS = [[0.000,[255,255,255]],[0.167,[238,246,236]],[0.300,[191,224,178]],
+  [0.450,[143,208,138]],[0.600,[233,221,110]],[0.740,[239,180,90]],
+  [0.870,[224,123,69]],[1.000,[201,67,47]]];
+const SLOPE_VMAX = 6.0;   // %, fast skala (samma som greenbilderna)
+function slopeColor(pct) {
+  const t = Math.max(0, Math.min(1, pct / SLOPE_VMAX));
+  let a = SLOPE_STOPS[0], b = SLOPE_STOPS[SLOPE_STOPS.length - 1];
+  for (let i = 0; i < SLOPE_STOPS.length - 1; i++) {
+    if (t >= SLOPE_STOPS[i][0] && t <= SLOPE_STOPS[i + 1][0]) { a = SLOPE_STOPS[i]; b = SLOPE_STOPS[i + 1]; break; }
+  }
+  const f = b[0] === a[0] ? 0 : (t - a[0]) / (b[0] - a[0]);
+  const c = k => Math.round(a[1][k] + (b[1][k] - a[1][k]) * f);
+  return `rgb(${c(0)},${c(1)},${c(2)})`;
+}
+
+// Destination-punkt (liten sträcka, ekvirektangulär approximation räcker på green).
+function destPoint(pt, brgDeg, dM) {
+  const br = rad(brgDeg);
+  return [pt[0] + (dM * Math.cos(br)) / 111320,
+          pt[1] + (dM * Math.sin(br)) / (111320 * Math.cos(rad(pt[0])))];
+}
+
+// En fallpil: skaft upp→ned + pilspets i nedre (nedförs-)änden. lat/lon-geometri
+// (inte pixlar) så pilen roterar rätt med den roterade kartan (orientToHole).
+function drawArrow(a, b, color) {
+  const shaft = { color, weight: 2.4, opacity: 0.95, lineCap: "round", interactive: false };
+  L.polyline([a, b], shaft).addTo(slopeLayer);
+  const back = bearing(b, a);                              // rikta barb bakåt mot uppförsänden
+  const barb = Math.max(hav(a, b) * 0.55, 0.45);          // barb-längd (golv så korta segment syns)
+  L.polyline([destPoint(b, back + 32, barb), b, destPoint(b, back - 32, barb)], shaft).addTo(slopeLayer);
+}
+
+// Ladda green_slope.geojson EN gång och indexera fall-features på "loop|hål".
+// Saknas filen (offline/ej byggd) → tyst av, kartan funkar som förr.
+async function loadSlope() {
+  if (SLOPE_IDX) return SLOPE_IDX;
+  SLOPE_IDX = {};
+  try {
+    const fc = await (await fetch("./data/green_slope.geojson", { cache: "no-cache" })).json();
+    for (const f of fc.features || []) {
+      const p = f.properties || {};
+      if (p.t !== "fall") continue;
+      (SLOPE_IDX[p.loop + "|" + p.hole] ||= []).push(f);
+    }
+  } catch (e) { /* ingen slope-data → overlayen visas bara inte */ }
+  return SLOPE_IDX;
+}
+
+// Rita green-lutningen för hålet h i slopeLayer (rensar först). Anropas när den
+// fasta green-vyn låses; hideSlope() rensar vid hålbyte.
+async function showSlope(h) {
+  slopeLayer.clearLayers();
+  if (!h) return;
+  if (localStorage.getItem("sg_slope") === "off") return;   // avstängd på Logga slag-sidan
+  const idx = await loadSlope();
+  const feats = idx[h.loop + "|" + h.hole];
+  if (!feats || !greenLatched) return;   // hunnit lämna green-vyn medan vi laddade → skippa
+  for (const f of feats) {
+    const c = f.geometry.coordinates;    // [[lon,lat](upp), [lon,lat](ned)]
+    drawArrow([c[0][1], c[0][0]], [c[1][1], c[1][0]], slopeColor(f.properties.slope_pct));
+  }
+}
+function hideSlope() { slopeLayer.clearLayers(); }
 
 // Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.
 function evalFollow(lat, lon, acc) {
@@ -1024,6 +1166,7 @@ function drawHole() {
   layers.clearLayers();
   const h = ROUND[hi];
   if (!h) return;
+  loadElev3d(h);   // höjddata (C1) — async, updateWind körs om när den landat
   const teeSel = localStorage.getItem("sg_tee") || "";
   const approx = teeIsApprox(h)
     ? ` <small style="color:#e2a45a">tee ${teeSel} ~approx</small>` : "";
@@ -1051,6 +1194,7 @@ function drawHole() {
   // god bit ut från teet (kommer man tillbaka mitt i hålet).
   if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
   greenLatched = false;
+  hideSlope();                      // ny green-vy låses först vid nästa GPS-fix nära green
   followMode = autoZoom && shotsHere >= 1 && nearHole(pos, h) && pastTee(pos, h);
   lastFrameAnchor = null; manualUntil = 0;
   applyFrame();
@@ -1098,7 +1242,15 @@ function updateTap(latlng) {
   const o = measureOrigin();
   const rem = fmt(hav(target, ROUND[hi].green_center));
   const sub = `${rem} m kvar`;
-  const pa = playAsRange(o.pt, target, 0);   // vind (medel + by); slope okänd för fri punkt
+  // slope för fri punkt: höjdskillnad mätpunkt→mål ur 3D-metan (närmaste-
+  // linje-approx för båda ändar); saknas metan → 0 som förr
+  const m3 = ELEV3D[holeSlug(ROUND[hi])];
+  let tapSlope = 0;
+  if (m3 && o.pt) {
+    const y0 = elev3dAt(m3, o.pt[0], o.pt[1]), y1 = elev3dAt(m3, target[0], target[1]);
+    if (y0 != null && y1 != null) tapSlope = slopeEffect(y1 - y0);
+  }
+  const pa = playAsRange(o.pt, target, tapSlope);   // vind (medel + by) + höjd
   if (mode === "play" && pa) {
     let s = `<b>${pa.mean} m</b>`;
     // "i by"-spannet dolt i UX (testar utan) — beräkningen finns kvar ovan:
@@ -1136,8 +1288,10 @@ async function init() {
   // Ortofoto (Lantmäteriet) i standard-tilePane + Esri-nödfallback — se mapcore.js.
   MapCore.addOrthophoto(map);
   layers.addTo(map);
+  slopeLayer.addTo(map);   // under slag/pin så pricken syns ovanpå pilarna
   shotLayer.addTo(map);
   pinLayer.addTo(map);
+  loadSlope();             // förladda green-lutningen (tyst av om filen saknas)
   const lf = document.getElementById("logfab");
   if (lf) lf.onclick = logShot;
   const gf = document.getElementById("greenfab");

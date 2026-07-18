@@ -29,7 +29,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-07-13a";
+const VERSION = "2026-07-17a";
 
 const SHELL_CACHE = "sg-shell-v" + VERSION;
 const DATA_CACHE  = "sg-data";
@@ -91,7 +91,9 @@ self.addEventListener("activate", (event) => {
 // ── hjälpare ───────────────────────────────────────────────────────────────
 const isTile = (url) => /\/tiles\/\d+\/\d+\/\d+\.webp$/.test(url.pathname);
 const isData = (url) =>
-  /\/data\/burlov\.json$/.test(url.pathname) || /\/tiles\/manifest\.json$/.test(url.pathname);
+  /\/data\/burlov\.json$/.test(url.pathname) ||
+  /\/data\/green_slope\.geojson$/.test(url.pathname) ||
+  /\/tiles\/manifest\.json$/.test(url.pathname);
 
 // cache-first: serva ur cache, annars nät + spara. Används för tiles + shell-assets.
 async function cacheFirst(request, cacheName) {

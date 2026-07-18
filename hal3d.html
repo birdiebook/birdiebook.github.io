@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hål i 3D">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>SG Hål i 3D</title>
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; overflow:hidden; }
+  body { background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif;
+    touch-action:none; overscroll-behavior:none; }
+  #scen { position:fixed; inset:0; }
+  #topp { position:fixed; top:0; left:0; right:0; z-index:5;
+    display:flex; gap:8px; align-items:center;
+    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    background:linear-gradient(#0c2e22ee, #0c2e2200); }
+  #topp a.back { color:var(--ink); text-decoration:none; font-size:20px;
+    padding:4px 10px 4px 4px; }
+  #topp select { flex:1; min-width:0; background:var(--card); color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:8px 10px;
+    font-size:15px; font-weight:600; }
+  #fakta { font-size:13px; color:var(--dim); white-space:nowrap; }
+  #botten { position:fixed; left:0; right:0; z-index:5;
+    bottom:0; padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);
+    background:linear-gradient(#0c2e2200, #0c2e22ee);
+    display:flex; align-items:center; gap:10px; }
+  #botten label { font-size:13px; color:var(--dim); white-space:nowrap; }
+  #exag { flex:1; accent-color:var(--accent); }
+  #status { position:fixed; inset:0; display:flex; align-items:center;
+    justify-content:center; z-index:4; color:var(--dim); font-size:15px;
+    text-align:center; padding:0 30px; pointer-events:none; }
+  #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:#9fc4ae88;
+    bottom:calc(env(safe-area-inset-bottom) + 58px); }
+</style>
+</head>
+<body>
+<div id="scen"></div>
+<div id="topp">
+  <a class="back" href="index.html" aria-label="tillbaka">‹</a>
+  <select id="hal"></select>
+  <span id="fakta"></span>
+</div>
+<div id="status">laddar…</div>
+<div id="kalla">Foto & höjddata © Lantmäteriet (CC BY 4.0)</div>
+<div id="botten">
+  <label>överdrift <span id="exagv">3×</span></label>
+  <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from './vendor/GLTFLoader.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const el = id => document.getElementById(id);
+const status = t => { el('status').textContent = t || ''; };
+
+// ---------------------------------------------------------------- scenen ---
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+el('scen').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9ec3d8);           // dis-himmel
+scene.fog = new THREE.Fog(0x9ec3d8, 600, 1600);
+
+scene.add(new THREE.HemisphereLight(0xdfeaf2, 0x3a4a38, 0.9));
+const sol = new THREE.DirectionalLight(0xfff2dd, 1.6);   // NV, som hillshaden
+sol.position.set(-0.5, 0.8, -0.6);
+scene.add(sol);
+
+const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 4000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;             // aldrig under marken
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+// ------------------------------------------------------- hål-innehållet ---
+// Marken (glb) ligger i sanna meter och y-skalas med överdriften. Träden är
+// SANN höjd oavsett överdrift (samma grepp som PC-vyn): deras instans-
+// matriser räknas om — bara markfoten (groundY) följer skalan.
+const loader = new GLTFLoader();
+let ground = null, treeParts = [], lineObj = null, markers = [];
+let meta = null;
+let exag = 3;
+
+const CROWN_GREENS = [0x4a6741, 0x587644, 0x405c3a, 0x62804e];
+
+function clearHole() {
+  for (const o of [ground, lineObj, ...treeParts, ...markers]) {
+    if (!o) continue;
+    scene.remove(o);
+    o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
+  }
+  ground = null; lineObj = null; treeParts = []; markers = [];
+}
+
+// Träd byggs ur meta-JSON:ens kompakta format (per hole_gltf.py):
+//   trees[i] = [x, y_mark, z, höjd, rx, ry, yaw°, kronbas_frac, widest_frac, r, g, b]
+//   hulls[i] = {v: [[dx, h, dz]...], f: [i0,i1,i2,...]} | null
+// Kronan är trädets VERKLIGA siluett (kronhölje ur laserpunkterna, steg 3)
+// när hull finns — ett gemensamt mesh med vertexfärger (ortofotots ton,
+// mörkare undertill). Träd utan hölje faller tillbaka på kon (widest_frac
+// < 0.33, gran-lik) eller tillplattad sfär som InstancedMesh.
+// Höjden är SANN oavsett överdrift; bara markfoten (y_mark) följer exag.
+function buildTrees() {
+  for (const o of treeParts) scene.remove(o);
+  treeParts = [];
+  const trees = (meta.trees || []).map(t => t.length >= 12 ? t
+    : [t[0], t[1], t[2], t[3], t[4], t[4], 0, 0.45, 0.5, 74, 103, 65]);
+  if (!trees.length) return;
+  const hulls = meta.hulls || [];
+
+  // --- kronhöljen → ett sammanslaget mesh ---
+  const pos = [], colArr = [], idxArr = [];
+  let vOff = 0;
+  const coneIdx = [], sphIdx = [];
+  trees.forEach((t, i) => {
+    const hull = hulls[i];
+    if (!hull) { (t[8] < 0.33 ? coneIdx : sphIdx).push(i); return; }
+    const [x, gy, z, , , , , , , r, g, b] = t;
+    const base = gy * exag;
+    let hMin = Infinity, hMax = -Infinity;
+    for (const v of hull.v) { if (v[1] < hMin) hMin = v[1]; if (v[1] > hMax) hMax = v[1]; }
+    const span = Math.max(hMax - hMin, 0.5);
+    const c = new THREE.Color();
+    for (const [dx, hh, dz] of hull.v) {
+      pos.push(x + dx, base + hh, z + dz);
+      const k = 0.72 + 0.28 * (hh - hMin) / span;   // mörkare undersida
+      // sRGB → linjärt arbetsfärgrum (annars urtvättade kronor)
+      c.setRGB(r / 255 * k, g / 255 * k, b / 255 * k, THREE.SRGBColorSpace);
+      colArr.push(c.r, c.g, c.b);
+    }
+    for (const fi of hull.f) idxArr.push(vOff + fi);
+    vOff += hull.v.length;
+  });
+  if (pos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colArr, 3));
+    geo.setIndex(idxArr);
+    geo.computeVertexNormals();
+    const hullMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+      vertexColors: true }));
+    scene.add(hullMesh);
+    treeParts.push(hullMesh);
+  }
+
+  const trunkG = new THREE.CylinderGeometry(1, 1, 1, 6);
+  const trunks = new THREE.InstancedMesh(
+    trunkG, new THREE.MeshLambertMaterial({ color: 0x5c4a37 }), trees.length);
+
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
+        yAxis = new THREE.Vector3(0, 1, 0),
+        p = new THREE.Vector3(), s = new THREE.Vector3(), col = new THREE.Color();
+
+  const makeCrowns = (geo, idx, coneY) => {
+    if (!idx.length) return null;
+    const mesh = new THREE.InstancedMesh(
+      geo, new THREE.MeshLambertMaterial(), idx.length);
+    idx.forEach((ti, slot) => {
+      const [x, gy, z, h, rx, ry, yawDeg, baseFrac, , r, g, b] = trees[ti];
+      const base = gy * exag;                 // markfoten följer överdriften
+      const cb = baseFrac * h;                // kronbas (sann höjd)
+      const depth = Math.max(h - cb, 0.4);
+      // (E,N)->(x,-z) i vyn speglar horisontalplanet → rotera −yaw kring y
+      q.setFromAxisAngle(yAxis, -yawDeg * Math.PI / 180);
+      p.set(x, base + cb + depth / 2, z);
+      s.set(rx, coneY ? depth : depth / 2, ry);   // kon: höjd; sfär: radie
+      mesh.setMatrixAt(slot, m.compose(p, q, s));
+      col.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+      mesh.setColorAt(slot, col);
+    });
+    mesh.instanceColor.needsUpdate = true;
+    return mesh;
+  };
+  const cones = makeCrowns(new THREE.ConeGeometry(1, 1, 7), coneIdx, true);
+  const sph = makeCrowns(new THREE.SphereGeometry(1, 8, 6), sphIdx, false);
+
+  const qi = new THREE.Quaternion();
+  trees.forEach(([x, gy, z, h, , , , baseFrac], i) => {
+    const base = gy * exag;
+    const cb = Math.max(baseFrac * h, 0.3);
+    const tr = Math.max(0.1, 0.05 * h);
+    p.set(x, base + cb / 2, z); s.set(tr, cb, tr);
+    trunks.setMatrixAt(i, m.compose(p, qi, s));
+  });
+
+  const parts = [trunks];
+  if (cones) parts.push(cones);
+  if (sph) parts.push(sph);
+  parts.forEach(o => scene.add(o));
+  treeParts.push(...parts);
+}
+
+function buildLine() {
+  if (lineObj) scene.remove(lineObj);
+  markers.forEach(o => scene.remove(o));
+  const pts = meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag + 0.6, z));
+  lineObj = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
+  scene.add(lineObj);
+  markers = [[pts[0], 0x1d2e22], [pts[pts.length - 1], 0xd21f1f]].map(([pt, c]) => {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(1.6, 10, 8),
+                             new THREE.MeshLambertMaterial({ color: c }));
+    s.position.copy(pt);
+    scene.add(s);
+    return s;
+  });
+}
+
+function applyExag() {
+  if (!meta) return;
+  if (ground) ground.scale.y = exag;
+  buildTrees();
+  buildLine();
+}
+
+function placeCamera() {
+  // lågt bakom teen, blick mot hålets mitt (som PC-vyn)
+  const a = meta.line[0], b = meta.line[meta.line.length - 1];
+  const dx = b[0] - a[0], dz = b[2] - a[2];
+  const L = Math.hypot(dx, dz) || 1;
+  const ux = dx / L, uz = dz / L;
+  camera.position.set(a[0] - ux * 0.45 * L, a[1] * exag + 4 + 0.18 * L,
+                      a[2] - uz * 0.45 * L);
+  controls.target.set((a[0] + b[0]) / 2, ((a[1] + b[1]) / 2) * exag, (a[2] + b[2]) / 2);
+  controls.update();
+}
+
+async function loadHole(slug) {
+  clearHole();
+  status('laddar ' + slug.replace('_', ' ') + '…');
+  el('fakta').textContent = '';
+  try {
+    meta = await (await fetch(`data/holes3d/${slug}.json`)).json();
+    const gltf = await loader.loadAsync(`data/holes3d/${meta.glb}`);
+    ground = gltf.scene;
+    ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    scene.add(ground);
+    applyExag();
+    placeCamera();
+    const dh = meta.delta_h;
+    el('fakta').textContent =
+      `${dh >= 0 ? '+' : '−'}${Math.abs(dh).toFixed(1)} m · ${meta.length_m} m`;
+    status('');
+  } catch (e) {
+    status('kunde inte ladda hålet — är det exporterat? (' + e.message + ')');
+  }
+}
+
+// ---------------------------------------------------------------- UI-yta ---
+el('exag').addEventListener('input', ev => {
+  exag = parseFloat(ev.target.value);
+  el('exagv').textContent = exag.toFixed(1).replace('.0', '') + '×';
+  applyExag();
+});
+
+(async () => {
+  let idx;
+  try {
+    idx = await (await fetch('data/holes3d/index.json')).json();
+  } catch { status('inga 3D-hål exporterade än (tools/hole_gltf.py)'); return; }
+  const sel = el('hal');
+  for (const h of idx.holes) {
+    const o = document.createElement('option');
+    o.value = h.slug;
+    o.textContent = `${h.loop.replace(' Course', '')} ${h.hole}  (Δh ${h.delta_h >= 0 ? '+' : '−'}${Math.abs(h.delta_h)} m)`;
+    sel.appendChild(o);
+  }
+  if (!idx.holes.length) { status('inga 3D-hål exporterade än'); return; }
+  sel.addEventListener('change', () => loadHole(sel.value));
+  const want = new URLSearchParams(location.search).get('hal');
+  if (want && idx.holes.some(h => h.slug === want)) sel.value = want;
+  loadHole(sel.value);
+})();
+</script>
+</body>
+</html>

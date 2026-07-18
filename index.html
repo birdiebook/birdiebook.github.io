@@ -174,10 +174,11 @@
   .toggle.on.pin .knob { background: var(--danger); border-color: var(--danger); }
   .toggle.on.az .knob { background: var(--accent); border-color: var(--accent); }
   .toggle.on .knob::after { transform: translateX(18px); }
-  /* auto-zoom-kill-switch: styr hålkartans (karta.html) follow/inzoom via localStorage.
-     Egen rad under green/pin — global karta-inställning, inte per-hål-data. */
-  .toggle.az { width: 100%; margin: 0 0 10px; color: var(--dim); font-weight: 700; }
-  .toggle.az.on { color: var(--ink); }
+  /* auto-zoom & green-lutning: globala karta-inställningar (styr karta.html via
+     localStorage), sida vid sida på egen rad under green/pin. */
+  .toggle.on.sl .knob { background: var(--accent); border-color: var(--accent); }
+  .toggle.az, .toggle.sl { color: var(--dim); }
+  .toggle.az.on, .toggle.sl.on { color: var(--ink); }
   .tstatus { min-height: 16px; color: var(--dim); font-size: 12px; margin: 0 2px 6px; }
   .tstatus .ok { color: #7ee2a8; }
 </style>
@@ -794,9 +795,14 @@ function renderHole() {
     </div>
     <div class="tstatus">${tstatus}</div>
 
-    <button class="toggle az ${localStorage.getItem("sg_autozoom") !== "off" ? "on" : ""}"
-      id="azToggle" aria-label="Auto-zoom på hålkartan">
-      <span class="knob"></span><span>🎯 AUTO-ZOOM PÅ KARTAN</span></button>
+    <div class="togglerow">
+      <button class="toggle az ${localStorage.getItem("sg_autozoom") !== "off" ? "on" : ""}"
+        id="azToggle" aria-label="Auto-zoom på hålkartan">
+        <span class="knob"></span><span>🎯 AUTO-ZOOM</span></button>
+      <button class="toggle sl ${localStorage.getItem("sg_slope") !== "off" ? "on" : ""}"
+        id="slToggle" aria-label="Green-lutning på hålkartan">
+        <span class="knob"></span><span>⛳ GREEN-LUTNING</span></button>
+    </div>
 
     <button class="big" id="next">Nästa hål ›</button>
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
@@ -846,6 +852,15 @@ function renderHole() {
   if (azBtn) azBtn.onclick = () => {
     const on = localStorage.getItem("sg_autozoom") !== "off";
     localStorage.setItem("sg_autozoom", on ? "off" : "on");
+    render();
+  };
+
+  // Green-lutnings-overlay på/av: skriver bara sg_slope; hålkartan läser det när
+  // den fasta green-vyn ritas (nästa green / nästa laddning).
+  const slBtn = document.getElementById("slToggle");
+  if (slBtn) slBtn.onclick = () => {
+    const on = localStorage.getItem("sg_slope") !== "off";
+    localStorage.setItem("sg_slope", on ? "off" : "on");
     render();
   };
 }
