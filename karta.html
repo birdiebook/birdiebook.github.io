@@ -889,29 +889,34 @@ async function showSlope(h) {
     dx: Math.sin(rad(f.properties.bearing)), dy: Math.cos(rad(f.properties.bearing)) }));
   const heat = slopeHeatOverlay(h, cells);
   if (heat) heat.addTo(slopeLayer);
-  // Tätt, regelbundet pilrutnät: sampla var FALL_GRID_M meter inne i greenen och
-  // interpolera fallriktning + lutning från cellerna (IDW). Ger fler, jämnare pilar
-  // än de glesa fall-cellerna. Små, centrerade pilar; INGA på ~platt yta (vit i
-  // paletten). Brantheten bärs av heatmap-färgen.
-  const FALL_LEN_M = 0.85;        // liten, kompakt pillängd
-  const FALL_GRID_M = 2.1;        // avstånd mellan pilar (mindre = fler)
+  // Lutningsberoende pil-täthet: ett fint bas-rutnät (FALL_FINE_M) där varje punkt
+  // behålls efter en lutnings-nivå — brant yta = behåll ALLA punkter (tätt),
+  // medel = varannan, svag lutning = var tredje, platt (<min) = inga. Ger tätare,
+  // mer detaljerade pilar just där det lutar mest. Riktning + lutning interpoleras
+  // från fallcellerna (IDW). i/j räknas över HELA bbox:en så gallret ligger stilla.
+  const FALL_LEN_M = 0.85;        // liten, fast pillängd
+  const FALL_FINE_M = 1.3;        // finaste rutnät (brantaste zonerna)
   const FALL_MIN_SLOPE = 1.3;     // %: under detta = platt/vit → ingen pil
+  const fallLevel = s => s >= 3.5 ? 1 : s >= 2.2 ? 2 : s >= FALL_MIN_SLOPE ? 3 : 0;
   const mLat = 111320, mLon = 111320 * Math.cos(rad(h.green_center[0]));
   let latMin = Infinity, latMax = -Infinity, lonMin = Infinity, lonMax = -Infinity;
   for (const p of h.green) {
     if (p[0] < latMin) latMin = p[0]; if (p[0] > latMax) latMax = p[0];
     if (p[1] < lonMin) lonMin = p[1]; if (p[1] > lonMax) lonMax = p[1];
   }
-  const dLat = FALL_GRID_M / mLat, dLon = FALL_GRID_M / mLon;
-  for (let lat = latMin + dLat / 2; lat < latMax; lat += dLat) {
-    for (let lon = lonMin + dLon / 2; lon < lonMax; lon += dLon) {
+  const dLat = FALL_FINE_M / mLat, dLon = FALL_FINE_M / mLon;
+  let j = 0;
+  for (let lat = latMin + dLat / 2; lat < latMax; lat += dLat, j++) {
+    let i = 0;
+    for (let lon = lonMin + dLon / 2; lon < lonMax; lon += dLon, i++) {
       if (!pointInGreen(h.green, lat, lon)) continue;
       let sw = 0, ss = 0, ux = 0, uy = 0;
       for (const c of cells) {
         const ex = (lon - c.lon) * mLon, ny = (lat - c.lat) * mLat, d2 = ex * ex + ny * ny + 0.6;
         const w = 1 / (d2 * Math.sqrt(d2)); sw += w; ss += w * c.s; ux += w * c.dx; uy += w * c.dy;
       }
-      if (ss / sw < FALL_MIN_SLOPE) continue;
+      const L = fallLevel(ss / sw);
+      if (!L || (i % L) !== 0 || (j % L) !== 0) continue;   // lutnings-beroende gallring
       const brg = (Math.atan2(ux, uy) * 180 / Math.PI + 360) % 360;   // ux=öst(sin), uy=norr(cos)
       const mid = [lat, lon];   // centrera pilen på rutnätspunkten
       drawArrow(destPoint(mid, (brg + 180) % 360, FALL_LEN_M / 2),
