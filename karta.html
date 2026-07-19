@@ -878,12 +878,15 @@ async function showSlope(h) {
   const heat = slopeHeatOverlay(h, cells);
   if (heat) heat.addTo(slopeLayer);
   // Fast pillängd: rita bara RIKTNINGEN (bäringen), inte fall-segmentets längd, så
-  // alla pilar blir lika stora. Brantheten bärs av heatmap-färgen.
-  const FALL_LEN_M = 1.4;
+  // alla pilar blir lika stora. Brantheten bärs av heatmap-färgen. Små, kompakta
+  // pilar, och INGA på ~platt yta (vit i paletten) — där finns inget att putta efter.
+  const FALL_LEN_M = 1.0;         // fast, kompakt pillängd
+  const FALL_MIN_SLOPE = 1.3;     // %: under detta = platt/vit → ingen pil
   for (const f of feats) {
+    if (f.properties.slope_pct < FALL_MIN_SLOPE) continue;
     const c = f.geometry.coordinates;    // [[lon,lat](upp), [lon,lat](ned)]
     const start = [c[0][1], c[0][0]];    // [lat,lon] uppförsänden
-    drawArrow(start, destPoint(start, f.properties.bearing, FALL_LEN_M), "#14261b", 1.8);
+    drawArrow(start, destPoint(start, f.properties.bearing, FALL_LEN_M), "#14261b", 1.5);
   }
 }
 function hideSlope() { slopeLayer.clearLayers(); }
