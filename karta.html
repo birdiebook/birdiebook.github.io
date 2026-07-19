@@ -563,6 +563,8 @@ const ROT_FREEZE_M     = 30;      // follow-rotation fryser inom så här nära 
 const FOLLOW_ANIM_MS   = 450;     // mjuk follow-övergång via rAF-interpolering (0 = instant)
 const FOLLOW_START_M   = 30;      // följningen startar först när man gått så här långt från teet
 const GREEN_VIEW_M     = 30;      // inom så här nära green-centrum → lås en fast green-vy
+const SLOPE_VIEW_M     = 160;     // inom så här nära green-centrum → visa green-lutningen
+let slopeShownKey = null;         // "loop|hål" vars lutning ritas just nu (annars null)
 const GREEN_VIEW_PAD_FR= 0.16;    // luft runt greenen i den fasta green-vyn (andel av bandet)
 // Mjuk vy-rörelse på/av (default på). ?smooth=0 → instant, för A/B-jämförelse.
 const SMOOTH_FOLLOW = new URLSearchParams(location.search).get("smooth") !== "0";
@@ -679,7 +681,7 @@ function enterGreenView() {
     orientToHole();                 // tee→green uppåt = fast, stabil bäring
     if (!fitGreenView()) return;    // kunde ej rama in → lås inte
     greenLatched = true;
-    showSlope(h);                   // närmaste zoom nådd → lägg på green-lutningen
+    if (pos) evalSlopeView(pos[0], pos[1]);   // säkerställ att lutningen ligger på (även vid pageshow-re-lås)
   } finally {
     programmaticMove = false;
   }
@@ -873,15 +875,17 @@ async function loadSlope() {
   return SLOPE_IDX;
 }
 
-// Rita green-lutningen för hålet h i slopeLayer (rensar först). Anropas när den
-// fasta green-vyn låses; hideSlope() rensar vid hålbyte.
+// Rita green-lutningen för hålet h i slopeLayer (rensar först). Drivs av avstånd
+// till green via evalSlopeView (≤ SLOPE_VIEW_M); hideSlope() rensar när man går
+// långt bort eller vid hålbyte.
 async function showSlope(h) {
   slopeLayer.clearLayers();
   if (!h) return;
   if (localStorage.getItem("sg_slope") === "off") return;   // avstängd på Logga slag-sidan
   const idx = await loadSlope();
+  if (ROUND[hi] !== h) return;           // hål bytt medan vi laddade → skippa
   const feats = idx[h.loop + "|" + h.hole];
-  if (!feats || !greenLatched) return;   // hunnit lämna green-vyn medan vi laddade → skippa
+  if (!feats) return;
   // Green-book-stil (som de renderade greenbilderna): slät lutnings-heatmap under
   // + mörka fallpilar över. Heatmapen först → hamnar under pilarnas SVG-lager.
   const cells = feats.map(f => ({ lon: f.geometry.coordinates[0][0],
@@ -925,6 +929,24 @@ async function showSlope(h) {
   }
 }
 function hideSlope() { slopeLayer.clearLayers(); }
+
+// Visa/dölj green-lutningen efter avstånd till green (oberoende av auto-zoom och
+// green-låset): rita när man är inom SLOPE_VIEW_M, dölj en bit utanför (hysteres
+// mot flimmer vid gränsen). Bygger bara om när hålet/nära-läget faktiskt ändras.
+function evalSlopeView(lat, lon) {
+  const h = ROUND[hi];
+  const key = h ? h.loop + "|" + h.hole : null;
+  if (!h || !h.green_center || localStorage.getItem("sg_slope") === "off") {
+    if (slopeShownKey) { hideSlope(); slopeShownKey = null; }
+    return;
+  }
+  const d = hav([lat, lon], h.green_center);
+  if (d <= SLOPE_VIEW_M) {
+    if (slopeShownKey !== key) { slopeShownKey = key; showSlope(h); }   // sätt nyckel FÖRE await
+  } else if (d > SLOPE_VIEW_M + 20 && slopeShownKey) {
+    hideSlope(); slopeShownKey = null;
+  }
+}
 
 // Utvärdera follow-trigger + strypt om-inramning vid varje GPS-fix.
 function evalFollow(lat, lon, acc) {
@@ -1286,7 +1308,7 @@ function drawHole() {
   // god bit ut från teet (kommer man tillbaka mitt i hålet).
   if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }
   greenLatched = false;
-  hideSlope();                      // ny green-vy låses först vid nästa GPS-fix nära green
+  hideSlope(); slopeShownKey = null;   // ritas om vid nästa GPS-fix om man är inom 160 m
   followMode = autoZoom && shotsHere >= 1 && nearHole(pos, h) && pastTee(pos, h);
   lastFrameAnchor = null; manualUntil = 0;
   applyFrame();
@@ -1311,6 +1333,7 @@ function setPos(lat, lon, acc) {
   if (tapMarker) updateTap(tapMarker.getLatLng());
   maybeAutoAdvance(acc);   // sömlöst hålbyte om kraven slår in
   evalFollow(lat, lon, acc);   // auto-zoom: trigga/följ vyn mot green
+  evalSlopeView(lat, lon);     // green-lutning: visa när man är inom 160 m
 }
 
 // Hålet styrs helt av rundloggen via localStorage-nyckeln sg_hole (spelarens
