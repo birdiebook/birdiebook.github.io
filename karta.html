@@ -294,9 +294,11 @@ function setRound(name) {
   syncHole();
 }
 let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
+    slopeArrowLayer = L.layerGroup(),
     shotLayer = L.layerGroup(), pinLayer = L.layerGroup(),
     meMarker = null, tapMarker = null, tapLine = null;
 let SLOPE_IDX = null;   // "loop|hål" → [fall-features], laddas en gång ur green_slope.geojson
+let slopeHole = null, slopeCells = null, lastArrowZoom = null;   // för zoom-om-ritning av pilarna
 // delad pin per matchhål (globalt hålnr → {lat,lon,acc}), fylls av live-prenumeration
 let SHARED_PINS = {}, pinUnsub = null;
 
@@ -798,10 +800,16 @@ function destPoint(pt, brgDeg, dM) {
 // (inte pixlar) så pilen roterar rätt med den roterade kartan (orientToHole).
 function drawArrow(a, b, color, weight) {
   const shaft = { color, weight: weight || 2.4, opacity: 0.95, lineCap: "round", interactive: false };
-  L.polyline([a, b], shaft).addTo(slopeLayer);
+  L.polyline([a, b], shaft).addTo(slopeArrowLayer);
   const back = bearing(b, a);                              // rikta barb bakåt mot uppförsänden
   const barb = Math.max(hav(a, b) * 0.55, 0.45);          // barb-längd (golv så korta segment syns)
-  L.polyline([destPoint(b, back + 32, barb), b, destPoint(b, back - 32, barb)], shaft).addTo(slopeLayer);
+  L.polyline([destPoint(b, back + 32, barb), b, destPoint(b, back - 32, barb)], shaft).addTo(slopeArrowLayer);
+}
+
+// Meter per skärmpixel vid given latitud/zoom (web-mercator) — för skärmkonstant
+// pilstorlek: samma antal pixlar oavsett om man är nära eller 160 m bort.
+function metersPerPixel(lat, zoom) {
+  return 40075016.686 * Math.cos(rad(lat)) / Math.pow(2, zoom + 8);
 }
 
 // Slät lutnings-heatmap (green-book-stil) som imageOverlay, klippt till green-
@@ -893,14 +901,25 @@ async function showSlope(h) {
     dx: Math.sin(rad(f.properties.bearing)), dy: Math.cos(rad(f.properties.bearing)) }));
   const heat = slopeHeatOverlay(h, cells);
   if (heat) heat.addTo(slopeLayer);
-  // Lutningsberoende pil-täthet: ett fint bas-rutnät (FALL_FINE_M) där varje punkt
-  // behålls efter en lutnings-nivå — brant yta = behåll ALLA punkter (tätt),
-  // medel = varannan, svag lutning = var tredje, platt (<min) = inga. Ger tätare,
-  // mer detaljerade pilar just där det lutar mest. Riktning + lutning interpoleras
-  // från fallcellerna (IDW). i/j räknas över HELA bbox:en så gallret ligger stilla.
-  const FALL_LEN_M = 0.85;        // liten, fast pillängd
-  const FALL_FINE_M = 1.3;        // finaste rutnät (brantaste zonerna)
-  const FALL_MIN_SLOPE = 1.3;     // %: under detta = platt/vit → ingen pil
+  slopeHole = h; slopeCells = cells;   // spara för zoom-om-ritning av pilarna
+  drawSlopeArrows();
+}
+
+// Rita fallpilarna för den aktuella greenen med SKÄRMKONSTANT storlek: både
+// pillängd och rut-avstånd sätts i pixlar (via meter-per-pixel) så pilarna syns
+// lika bra på 160 m (utzoomat) som uppe vid greenen. Ritas om vid varje zoom.
+// Lutningsberoende täthet ligger kvar: brant = behåll alla, medel = varannan,
+// svag = var tredje, platt (<min) = inga.
+function drawSlopeArrows() {
+  slopeArrowLayer.clearLayers();
+  const h = slopeHole, cells = slopeCells;
+  if (!h || !cells || !h.green || !h.green_center) return;
+  const z = map.getZoom();
+  lastArrowZoom = z;
+  const mpp = metersPerPixel(h.green_center[0], z);
+  const FALL_LEN_M = Math.max(0.8, 17 * mpp);   // ~17 px pil (golv så den ej försvinner nära)
+  const FALL_FINE_M = Math.max(1.3, 26 * mpp);  // ~26 px mellan pilar (golv = dagens täta vy)
+  const FALL_MIN_SLOPE = 1.3;                   // %: under detta = platt/vit → ingen pil
   const fallLevel = s => s >= 3.5 ? 1 : s >= 2.2 ? 2 : s >= FALL_MIN_SLOPE ? 3 : 0;
   const mLat = 111320, mLon = 111320 * Math.cos(rad(h.green_center[0]));
   let latMin = Infinity, latMax = -Infinity, lonMin = Infinity, lonMax = -Infinity;
@@ -924,11 +943,11 @@ async function showSlope(h) {
       const brg = (Math.atan2(ux, uy) * 180 / Math.PI + 360) % 360;   // ux=öst(sin), uy=norr(cos)
       const mid = [lat, lon];   // centrera pilen på rutnätspunkten
       drawArrow(destPoint(mid, (brg + 180) % 360, FALL_LEN_M / 2),
-                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 1.4);
+                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 1.8);
     }
   }
 }
-function hideSlope() { slopeLayer.clearLayers(); }
+function hideSlope() { slopeLayer.clearLayers(); slopeArrowLayer.clearLayers(); slopeHole = null; slopeCells = null; }
 
 // Visa/dölj green-lutningen efter avstånd till green (oberoende av auto-zoom och
 // green-låset): rita när man är inom SLOPE_VIEW_M, dölj en bit utanför (hysteres
@@ -1403,10 +1422,17 @@ async function init() {
   // Ortofoto (Lantmäteriet) i standard-tilePane + Esri-nödfallback — se mapcore.js.
   MapCore.addOrthophoto(map);
   layers.addTo(map);
-  slopeLayer.addTo(map);   // under slag/pin så pricken syns ovanpå pilarna
+  slopeLayer.addTo(map);        // heatmap-ytan, under slag/pin
+  slopeArrowLayer.addTo(map);   // fallpilarna, ovanpå heatmapen
   shotLayer.addTo(map);
   pinLayer.addTo(map);
   loadSlope();             // förladda green-lutningen (tyst av om filen saknas)
+  // Skärmkonstanta pilar: rita om dem när zoomen ändrats märkbart (utan att bygga
+  // om heatmapen). Så syns de lika bra på 160 m som uppe vid greenen.
+  map.on("zoomend", () => {
+    if (slopeHole && (lastArrowZoom === null || Math.abs(map.getZoom() - lastArrowZoom) > 0.15))
+      drawSlopeArrows();
+  });
   const lf = document.getElementById("logfab");
   if (lf) lf.onclick = logShot;
   const gf = document.getElementById("greenfab");
