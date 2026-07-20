@@ -799,11 +799,16 @@ function destPoint(pt, brgDeg, dM) {
 // En fallpil: skaft upp→ned + pilspets i nedre (nedförs-)änden. lat/lon-geometri
 // (inte pixlar) så pilen roterar rätt med den roterade kartan (orientToHole).
 function drawArrow(a, b, color, weight) {
-  const shaft = { color, weight: weight || 2.4, opacity: 0.95, lineCap: "round", interactive: false };
-  L.polyline([a, b], shaft).addTo(slopeArrowLayer);
-  const back = bearing(b, a);                              // rikta barb bakåt mot uppförsänden
-  const barb = Math.max(hav(a, b) * 0.55, 0.45);          // barb-längd (golv så korta segment syns)
-  L.polyline([destPoint(b, back + 32, barb), b, destPoint(b, back - 32, barb)], shaft).addTo(slopeArrowLayer);
+  const len = hav(a, b);                       // pillängd (meter)
+  const back = bearing(b, a);                  // tip→uppför (bakåt)
+  const base = destPoint(b, back, len * 0.42); // pilspetsens bas (något liten spets)
+  // skaft fram till spetsens bas → den fyllda spetsen sitter rent på toppen
+  L.polyline([a, base], { color, weight: weight || 2, opacity: 0.95,
+    lineCap: "round", interactive: false }).addTo(slopeArrowLayer);
+  const half = len * 0.2;                       // halva spetsbredden
+  L.polygon([b, destPoint(base, (back + 90) % 360, half), destPoint(base, (back + 270) % 360, half)],
+    { color, weight: 1, fillColor: color, fillOpacity: 1, opacity: 1,
+      lineJoin: "round", interactive: false }).addTo(slopeArrowLayer);
 }
 
 // Meter per skärmpixel vid given latitud/zoom (web-mercator) — för skärmkonstant
@@ -939,7 +944,7 @@ function drawSlopeArrows() {
       const brg = (Math.atan2(ux, uy) * 180 / Math.PI + 360) % 360;   // ux=öst(sin), uy=norr(cos)
       const mid = [lat, lon];   // centrera pilen på rutnätspunkten
       drawArrow(destPoint(mid, (brg + 180) % 360, FALL_LEN_M / 2),
-                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 1.8);
+                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 2);
     }
   }
 }
