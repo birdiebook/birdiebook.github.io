@@ -262,10 +262,13 @@ function convertAdj(ll) {
   const ok = mutate(rec => {
     if (!(rec.adj > 0)) return false;
     rec.adj -= 1;
-    rec.shots.push({ lat: ll.lat, lon: ll.lng, acc: null, manual: true,
+    // Längst fram (index 0) — ett bortglömt utslag är hålets FÖRSTA slag. Då blir
+    // det presses[0] på servern och manual-flaggan spärrar synth_tee_origin så
+    // slaget inte dubbelräknas (jfr mobile_source.round_from_dict B4-spärren).
+    rec.shots.splice(0, 0, { lat: ll.lat, lon: ll.lng, acc: null, manual: true,
       manual_kind: "added", ts: new Date().toISOString() });
   });
-  if (ok) { sel = { type: "shot", i: (currentRec().shots.length - 1) }; refresh(); }
+  if (ok) { sel = { type: "shot", i: 0 }; refresh(); }
 }
 
 function deleteShot(i) {

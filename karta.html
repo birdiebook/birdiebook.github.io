@@ -298,6 +298,7 @@ let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
     shotLayer = L.layerGroup(), pinLayer = L.layerGroup(),
     meMarker = null, tapMarker = null, tapLine = null;
 let SLOPE_IDX = null;   // "loop|hål" → [fall-features], laddas en gång ur green_slope.geojson
+let SLOPE_GRIDS = null;   // "loop|hål" → tätt slope-rutnät {ny,nx,lat0,lon0,dLat,dLon,slope[]}
 let slopeHole = null, slopeCells = null, lastArrowZoom = null;   // för zoom-om-ritning av pilarna
 // delad pin per matchhål (globalt hålnr → {lat,lon,acc}), fylls av live-prenumeration
 let SHARED_PINS = {}, pinUnsub = null;
@@ -801,13 +802,13 @@ function destPoint(pt, brgDeg, dM) {
 function drawArrow(a, b, color, weight) {
   const len = hav(a, b);                       // pillängd (meter)
   const back = bearing(b, a);                  // tip→uppför (bakåt)
-  const base = destPoint(b, back, len * 0.42); // pilspetsens bas (något liten spets)
+  const base = destPoint(b, back, len * 0.4);  // pilspetsens bas (liten spets)
   // skaft fram till spetsens bas → den fyllda spetsen sitter rent på toppen
-  L.polyline([a, base], { color, weight: weight || 2, opacity: 0.95,
+  L.polyline([a, base], { color, weight: weight || 1.5, opacity: 0.95,
     lineCap: "round", interactive: false }).addTo(slopeArrowLayer);
-  const half = len * 0.2;                       // halva spetsbredden
+  const half = len * 0.17;                      // halva spetsbredden (smalare)
   L.polygon([b, destPoint(base, (back + 90) % 360, half), destPoint(base, (back + 270) % 360, half)],
-    { color, weight: 1, fillColor: color, fillOpacity: 1, opacity: 1,
+    { color, weight: 0.6, fillColor: color, fillOpacity: 1, opacity: 1,
       lineJoin: "round", interactive: false }).addTo(slopeArrowLayer);
 }
 
@@ -817,48 +818,33 @@ function metersPerPixel(lat, zoom) {
   return 40075016.686 * Math.cos(rad(lat)) / Math.pow(2, zoom + 8);
 }
 
-// Slät lutnings-heatmap (green-book-stil) som imageOverlay, klippt till green-
-// polygonen. IDW-interpolerar fallcellernas slope_pct över en liten canvas i
-// lat/lon-bbox:en; Leaflet placerar/roterar rektangeln geografiskt (norr upp),
-// och webbläsaren skalar upp den mjukt → samma släta yta som greenbilderna.
-// cells = [{lat, lon, s}] (s = slope_pct). Ligger i standard-overlayPane → roterar
-// rätt med kartan (till skillnad från ett eget createPane, se mobile/CLAUDE.md).
-function slopeHeatOverlay(h, cells) {
-  if (!h.green || h.green.length < 3 || !cells.length) return null;
-  let latMin = Infinity, latMax = -Infinity, lonMin = Infinity, lonMax = -Infinity;
-  for (const p of h.green) {
-    if (p[0] < latMin) latMin = p[0]; if (p[0] > latMax) latMax = p[0];
-    if (p[1] < lonMin) lonMin = p[1]; if (p[1] > lonMax) lonMax = p[1];
-  }
-  const lat0 = (latMin + latMax) / 2, mLat = 111320, mLon = 111320 * Math.cos(rad(lat0));
-  const wM = (lonMax - lonMin) * mLon, hM = (latMax - latMin) * mLat, LONG = 220;
-  const cw = wM >= hM ? LONG : Math.max(24, Math.round(LONG * wM / hM));
-  const ch = wM >= hM ? Math.max(24, Math.round(LONG * hM / wM)) : LONG;
-  const cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
-  const cx = cv.getContext("2d"), img = cx.createImageData(cw, ch);
-  for (let py = 0; py < ch; py++) {
-    const lat = latMax - (py + 0.5) / ch * (latMax - latMin);   // rad 0 = norr (överst)
-    for (let px = 0; px < cw; px++) {
-      const lon = lonMin + (px + 0.5) / cw * (lonMax - lonMin);
-      let sw = 0, ss = 0;
-      for (const c of cells) {
-        const dx = (lon - c.lon) * mLon, dy = (lat - c.lat) * mLat, d2 = dx * dx + dy * dy + 0.6;
-        const w = 1 / (d2 * Math.sqrt(d2)); sw += w; ss += w * c.s;
-      }
-      const col = slopeRGB(ss / sw), o = (py * cw + px) * 4;
-      img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
-    }
+// Trogen lutnings-heatmap (green-book-stil) som imageOverlay, ur det TÄTA slope-
+// rutnätet (green_slope.geojson:s `grids`, samma DEM-raster som datorbilderna →
+// full nyans + branta kanter/rött). Rutnätet är norr-upp lat/lon; en canvas nx×ny
+// målas cell-för-cell och klipps till green-polygonen. Leaflet skalar upp mjukt
+// och roterar rektangeln geografiskt (standard-overlayPane → följer kartan).
+function slopeHeatOverlay(h) {
+  const grid = SLOPE_GRIDS && SLOPE_GRIDS[h.loop + "|" + h.hole];
+  if (!grid || !h.green || h.green.length < 3) return null;
+  const nx = grid.nx, ny = grid.ny, sl = grid.slope;
+  const latMax = grid.lat0, latMin = grid.lat0 - (ny - 1) * grid.dLat;
+  const lonMin = grid.lon0, lonMax = grid.lon0 + (nx - 1) * grid.dLon;
+  const cv = document.createElement("canvas"); cv.width = nx; cv.height = ny;
+  const cx = cv.getContext("2d"), img = cx.createImageData(nx, ny);
+  for (let k = 0; k < nx * ny; k++) {   // rad 0 = norr (lat0)
+    const col = slopeRGB(sl[k]), o = k * 4;
+    img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
   }
   cx.putImageData(img, 0, 0);
   cx.globalCompositeOperation = "destination-in";   // behåll bara insidan av greenen
   cx.beginPath();
   h.green.forEach((p, i) => {
-    const X = (p[1] - lonMin) / (lonMax - lonMin) * cw, Y = (latMax - p[0]) / (latMax - latMin) * ch;
+    const X = (p[1] - lonMin) / (lonMax - lonMin) * nx, Y = (latMax - p[0]) / (latMax - latMin) * ny;
     i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
   });
   cx.closePath(); cx.fillStyle = "#000"; cx.fill();
   return L.imageOverlay(cv.toDataURL(), [[latMin, lonMin], [latMax, lonMax]],
-    { opacity: 0.72, interactive: false });
+    { opacity: 0.82, interactive: false });
 }
 
 // Punkt i green-polygon (ray casting). poly = [[lat,lon], ...].
@@ -884,6 +870,7 @@ async function loadSlope() {
       if (p.t !== "fall") continue;
       (SLOPE_IDX[p.loop + "|" + p.hole] ||= []).push(f);
     }
+    SLOPE_GRIDS = fc.grids || {};
   } catch (e) { /* ingen slope-data → overlayen visas bara inte */ }
   return SLOPE_IDX;
 }
@@ -904,9 +891,9 @@ async function showSlope(h) {
   const cells = feats.map(f => ({ lon: f.geometry.coordinates[0][0],
     lat: f.geometry.coordinates[0][1], s: f.properties.slope_pct,
     dx: Math.sin(rad(f.properties.bearing)), dy: Math.cos(rad(f.properties.bearing)) }));
-  const heat = slopeHeatOverlay(h, cells);
+  const heat = slopeHeatOverlay(h);   // trogen heatmap ur det täta slope-rutnätet
   if (heat) heat.addTo(slopeLayer);
-  slopeHole = h; slopeCells = cells;   // spara för zoom-om-ritning av pilarna
+  slopeHole = h; slopeCells = cells;   // cells = pilarnas riktning (IDW); spara för zoom-om-ritning
   drawSlopeArrows();
 }
 
@@ -944,7 +931,7 @@ function drawSlopeArrows() {
       const brg = (Math.atan2(ux, uy) * 180 / Math.PI + 360) % 360;   // ux=öst(sin), uy=norr(cos)
       const mid = [lat, lon];   // centrera pilen på rutnätspunkten
       drawArrow(destPoint(mid, (brg + 180) % 360, FALL_LEN_M / 2),
-                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 2);
+                destPoint(mid, brg, FALL_LEN_M / 2), "#14261b", 1.5);
     }
   }
 }
