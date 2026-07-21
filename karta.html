@@ -829,17 +829,28 @@ function slopeHeatOverlay(h) {
   const nx = grid.nx, ny = grid.ny, sl = grid.slope;
   const latMax = grid.lat0, latMin = grid.lat0 - (ny - 1) * grid.dLat;
   const lonMin = grid.lon0, lonMax = grid.lon0 + (nx - 1) * grid.dLon;
-  const cv = document.createElement("canvas"); cv.width = nx; cv.height = ny;
-  const cx = cv.getContext("2d"), img = cx.createImageData(nx, ny);
-  for (let k = 0; k < nx * ny; k++) {   // rad 0 = norr (lat0)
-    const col = slopeRGB(sl[k]), o = k * 4;
-    img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+  // Hög upplösning: bilinjär uppsampling av LUTNINGEN (inte RGB → rätt palettfärg
+  // vid mellanvärden, ingen "muddy" interpolation) och färglägg varje pixel. Ger
+  // jämn gradient + ren polygon-kant i stället för pixliga 1 m-celler.
+  const S = Math.max(6, Math.round(420 / Math.max(nx, ny)));
+  const cw = nx * S, ch = ny * S;
+  const cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
+  const cx = cv.getContext("2d"), img = cx.createImageData(cw, ch);
+  for (let y = 0; y < ch; y++) {
+    const gy = y / (ch - 1) * (ny - 1), j0 = Math.min(ny - 2, Math.floor(gy)), ty = gy - j0;
+    for (let x = 0; x < cw; x++) {
+      const gx = x / (cw - 1) * (nx - 1), i0 = Math.min(nx - 2, Math.floor(gx)), tx = gx - i0;
+      const s = (sl[j0 * nx + i0] * (1 - tx) + sl[j0 * nx + i0 + 1] * tx) * (1 - ty)
+              + (sl[(j0 + 1) * nx + i0] * (1 - tx) + sl[(j0 + 1) * nx + i0 + 1] * tx) * ty;
+      const col = slopeRGB(s), o = (y * cw + x) * 4;
+      img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+    }
   }
   cx.putImageData(img, 0, 0);
   cx.globalCompositeOperation = "destination-in";   // behåll bara insidan av greenen
   cx.beginPath();
   h.green.forEach((p, i) => {
-    const X = (p[1] - lonMin) / (lonMax - lonMin) * nx, Y = (latMax - p[0]) / (latMax - latMin) * ny;
+    const X = (p[1] - lonMin) / (lonMax - lonMin) * cw, Y = (latMax - p[0]) / (latMax - latMin) * ch;
     i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
   });
   cx.closePath(); cx.fillStyle = "#000"; cx.fill();
@@ -909,8 +920,8 @@ function drawSlopeArrows() {
   const z = map.getZoom();
   lastArrowZoom = z;
   const mpp = metersPerPixel(h.green_center[0], z);
-  const FALL_LEN_M = Math.max(0.8, 17 * mpp);   // ~17 px pil (golv så den ej försvinner nära)
-  const FALL_FINE_M = Math.max(1.1, 22 * mpp);  // ~22 px mellan pilar (jämn, ganska tät)
+  const FALL_LEN_M = Math.max(0.7, 14 * mpp);   // ~14 px pil (något mindre)
+  const FALL_FINE_M = Math.max(1.0, 18 * mpp);  // ~18 px mellan pilar (något tightare)
   const FALL_MIN_SLOPE = 1.3;                   // %: under detta = platt/vit → ingen pil
   const mLat = 111320, mLon = 111320 * Math.cos(rad(h.green_center[0]));
   let latMin = Infinity, latMax = -Infinity, lonMin = Infinity, lonMax = -Infinity;
