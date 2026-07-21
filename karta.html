@@ -854,8 +854,10 @@ function slopeHeatOverlay(h) {
     i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
   });
   cx.closePath(); cx.fillStyle = "#000"; cx.fill();
+  // Nästan opak → green-book-färgerna slår igenom rent (matchar datorbilden), i
+  // stället för att dras mot pale-grönt av det uppljusta ortofotot under.
   return L.imageOverlay(cv.toDataURL(), [[latMin, lonMin], [latMax, lonMax]],
-    { opacity: 0.82, interactive: false });
+    { opacity: 0.95, interactive: false });
 }
 
 // Punkt i green-polygon (ray casting). poly = [[lat,lon], ...].
