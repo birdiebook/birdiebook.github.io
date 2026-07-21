@@ -105,17 +105,18 @@
     }
   }
   .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
-    font-size:13px; font-weight:600; padding:10px 0; border-radius:10px; }
+    font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
+  .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <nav class="tabs">
-  <a href="./index.html">Logga slag</a>
-  <a href="./karta.html">Karta</a>
-  <a href="./oversikt.html">Översikt</a>
-  <a href="./analys.html" class="active">Analys</a>
+  <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
+  <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
+  <a href="./oversikt.html"><span class="ico">📋</span>Översikt</a>
+  <a href="./analys.html" class="active"><span class="ico">📊</span>Analys</a>
 </nav>
 <script src="./round.js"></script>
 <script src="./analys-core.js"></script>
