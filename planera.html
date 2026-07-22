@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Planera runda">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Planera runda</title>
+<style>
+  :root {
+    --bg: #0c2e22; --card: #123c2d; --ink: #e8f5ec; --dim: #9fc4ae;
+    --line: #1f5540; --accent: #37b06b; --accent-ink: #06180f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation; overscroll-behavior: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #app { max-width: 480px; margin: 0 auto; padding: 12px 14px 40px; }
+  .top { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+  .top a.back { color: var(--ink); text-decoration: none; font-size: 22px;
+    padding: 4px 10px 4px 2px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0 0 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          padding: 14px; margin: 10px 0; }
+  label { display: block; font-size: 13px; color: var(--dim); margin: 10px 0 4px; }
+  label:first-child { margin-top: 0; }
+  select.field { width: 100%; font-size: 17px; padding: 12px; border-radius: 10px;
+          border: 1px solid var(--line); background: #0e332656; color: var(--ink); }
+  .tools { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .tool { display: flex; align-items: center; gap: 14px; text-decoration: none;
+          background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          padding: 16px 14px; color: var(--ink); }
+  .tool .ic { font-size: 28px; flex: none; width: 34px; text-align: center; }
+  .tool .tx { flex: 1; min-width: 0; }
+  .tool .tt { font-size: 17px; font-weight: 700; }
+  .tool .td { color: var(--dim); font-size: 13px; margin-top: 2px; }
+  .tool .arr { color: var(--dim); font-size: 20px; flex: none; }
+  .tool:active { background: #16412f; }
+  .hint { color: var(--dim); font-size: 13px; line-height: 1.5; }
+  .banner { background: #4a3413; border: 1px solid #7a5a1f; color: #f0d48a;
+          border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <a class="back" href="./index.html" aria-label="tillbaka">‹</a>
+    <div>
+      <h1>🗓 Planera runda</h1>
+    </div>
+  </div>
+  <p class="sub">Gå igenom banan i förväg — utan att starta en runda.</p>
+
+  <div class="card">
+    <label for="round">Runda</label>
+    <select class="field" id="round">
+      <option value="1-18">1–18</option>
+      <option value="10-27">10–27</option>
+      <option value="19-9">19–9</option>
+    </select>
+    <label for="hole">Hål</label>
+    <select class="field" id="hole"></select>
+  </div>
+
+  <div class="tools" id="tools">
+    <a class="tool" id="t3d" href="#">
+      <span class="ic">🛰</span>
+      <span class="tx"><span class="tt">3D-genomgång</span>
+        <span class="td">Flyg över hålet i 3D</span></span>
+      <span class="arr">›</span></a>
+    <a class="tool" id="tslag" href="#">
+      <span class="ic">🗺</span>
+      <span class="tx"><span class="tt">Planera slag</span>
+        <span class="td">Lägg upp slagen tee → green i 2D</span></span>
+      <span class="arr">›</span></a>
+    <a class="tool" id="tslope" href="#">
+      <span class="ic">⛳</span>
+      <span class="tx"><span class="tt">Green-lutning</span>
+        <span class="td">Se var på greenen du vill hamna</span></span>
+      <span class="arr">›</span></a>
+  </div>
+
+  <div class="card hint">
+    Planeringen påverkar aldrig en pågående runda eller din score — den bara läser
+    bandata. Starta rundan från startsidan när du är på plats.
+  </div>
+  <div id="err"></div>
+</div>
+
+<script src="./round.js"></script>
+<script>
+"use strict";
+// Plan-hub: välj runda + hål, öppna sedan ett verktyg (3D / 2D-slag / green-lutning).
+// Ingen GPS, ingen live, rör aldrig rundloggen (sg-rundlogg-v1). Hålvalet minns i
+// sg_plan_hole; rundvalet delar sg_round med resten av appen.
+const $ = id => document.getElementById(id);
+const slugOf = h => `${h.loop.replace(" Course", "").toLowerCase()}_${h.hole}`;
+
+let byGlobal = {};
+
+function currentRel() {
+  const v = parseInt($("hole").value, 10);
+  return v >= 1 && v <= SGRound.HOLES ? v : 1;
+}
+
+// Sätt verktygens href efter valt hål. 3D → hal3d (slug), 2D → planera-karta (rel).
+function syncLinks() {
+  const rel = currentRel();
+  try { localStorage.setItem("sg_plan_hole", String(rel)); } catch (e) {}
+  const g = SGRound.relToGlobal(rel);
+  const h = g != null ? byGlobal[g] : null;
+  $("t3d").href = h ? `hal3d.html?hal=${slugOf(h)}&from=plan` : "hal3d.html?from=plan";
+  $("tslag").href = `planera-karta.html?hal=${rel}`;
+  $("tslope").href = `planera-karta.html?hal=${rel}&slope=1`;
+}
+
+// Fyll hål-väljaren för vald runda (spelarens 1–18 med loop/lokalnummer + par).
+function fillHoles() {
+  const round = SGRound.roundName();
+  const seq = SGRound.ROUND_SEQ[round] || SGRound.ROUND_SEQ["1-18"];
+  const sel = $("hole");
+  const want = parseInt(localStorage.getItem("sg_plan_hole"), 10);
+  sel.innerHTML = "";
+  seq.forEach((g, i) => {
+    const rel = i + 1, h = byGlobal[g];
+    const o = document.createElement("option");
+    o.value = String(rel);
+    const short = h ? (SGRound.LOOP_SHORT[h.loop] || h.loop) : "";
+    o.textContent = h ? `Hål ${rel} · ${short} ${h.hole} · Par ${h.par ?? "–"}` : `Hål ${rel}`;
+    sel.appendChild(o);
+  });
+  sel.value = String(want >= 1 && want <= seq.length ? want : 1);
+  syncLinks();
+}
+
+(async () => {
+  // rundval: förvälj det delade sg_round och spara vid ändring
+  const roundSel = $("round");
+  roundSel.value = SGRound.roundName();
+  roundSel.onchange = () => {
+    try { localStorage.setItem("sg_round", roundSel.value); } catch (e) {}
+    fillHoles();
+  };
+  $("hole").onchange = syncLinks;
+  try {
+    const d = await (await fetch("data/" + SGRound.mobileJson())).json();
+    for (const h of d.holes) byGlobal[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
+  } catch (e) {
+    $("err").innerHTML = `<div class="banner">Kunde inte ladda bandata — hålval visas utan namn.</div>`;
+  }
+  fillHoles();
+})();
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone) — samma som övriga sidor. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>

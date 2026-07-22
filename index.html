@@ -93,6 +93,25 @@
   ul.shots .meta { color: var(--dim); font-size: 13px; margin-left: auto; }
   ul.shots .del { background: none; color: var(--danger); font-size: 18px;
           width: 36px; height: 36px; flex: none; }
+
+  /* ---- banväljare: sökfält + lista (ersätter <select id="course">) ---- */
+  .cpick { position: relative; }
+  /* Listan är en dropdown: dold tills fältet fokuseras (öppnas via .open), och
+     absolut-positionerad som overlay så den inte trycker ner rund/tee-fälten.
+     Skalar till många banor (scroll i listan) utan att fylla skärmen i vila. */
+  .cpick-list { display: none; position: absolute; left: 0; right: 0; top: 100%;
+          z-index: 50; margin-top: 6px; max-height: 260px; overflow-y: auto;
+          border: 1px solid var(--line); border-radius: 10px; background: var(--card2);
+          box-shadow: 0 8px 24px rgba(0,0,0,.38); }
+  .cpick-list.open { display: block; }
+  .cpick-sec { color: var(--dim); font-size: 12px; font-weight: 700;
+          padding: 8px 12px 4px; text-transform: uppercase; letter-spacing: .3px; }
+  .cpick-row { display: block; width: 100%; text-align: left; background: none;
+          color: var(--ink); font-size: 15px; padding: 10px 12px; border-radius: 0;
+          border-top: 1px solid var(--line); }
+  .cpick-row:first-child, .cpick-sec:first-child + .cpick-row { border-top: none; }
+  .cpick-row.active { background: #1a4c38; font-weight: 700; }
+  .cpick-empty { color: var(--dim); font-size: 14px; padding: 10px 12px; }
   .step { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
   .step button { width: 56px; height: 56px; font-size: 26px; font-weight: 700;
           background: #1a4c38; color: var(--ink); flex: none; }
@@ -205,6 +224,41 @@ const KEY = "sg-rundlogg-v1";
 const KEY_LAST = "sg-rundlogg-sist";
 const DEFAULT_COURSE = "Malmö Burlöv Golfklubb";
 const MAX_HOLE = SGRound.HOLES;   // spelarens hål 1–18, oavsett vald runda
+
+/* ---------- banväljare (B3) ----------
+   Registryn (mobile/data/courses.json) hämtas async — synkront state (SGRound)
+   är redan uppe (Burlöv-default eller cachad meta) så UI inte hoppar medan den
+   laddar. Faller tyst tillbaka till bara aktiv/cachad bana om fetchen failar
+   (offline vid första besöket). */
+let coursesRegistry = null; // array | null (ej laddad än)
+function loadCoursesRegistry() {
+  if (coursesRegistry) return Promise.resolve(coursesRegistry);
+  return fetch("./data/courses.json", { cache: "no-cache" }).then(r => r.json())
+    .then(list => (coursesRegistry = Array.isArray(list) && list.length ? list : null))
+    .catch(() => null);
+}
+function courseMetaBySlug(list, slug) {
+  return (list || []).find(c => c.slug === slug) || null;
+}
+
+/* ---------- bana-historik (senast spelade) ----------
+   Ren hjälpfunktion: lägger `slug` främst i `list`, deduplicerar, cappar till
+   MAX. Testbar utan DOM (se tests/js/test_course_history.mjs). */
+const KEY_COURSE_HIST = "sg_course_history";
+const COURSE_HIST_MAX = 5;
+function pushCourseHistory(slug, list) {
+  const out = [slug, ...(Array.isArray(list) ? list : []).filter(s => s !== slug)];
+  return out.slice(0, COURSE_HIST_MAX);
+}
+function loadCourseHistory() {
+  try {
+    const v = JSON.parse(localStorage.getItem(KEY_COURSE_HIST));
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+function saveCourseHistory(list) {
+  try { localStorage.setItem(KEY_COURSE_HIST, JSON.stringify(list)); } catch (e) {}
+}
 
 /* ---------- state ---------- */
 let S = load() || freshState();
@@ -521,7 +575,7 @@ const TilePreload = (() => {
   function loadHoles() {
     if (holesP) return holesP;
     holesP = Promise.all([
-      fetch("data/burlov.json").then(r => r.json()).then(d => d.holes),
+      fetch("data/" + SGRound.mobileJson()).then(r => r.json()).then(d => d.holes),
       fetch("tiles/manifest.json").then(r => r.ok ? r.json() : null).catch(() => null),
     ]).then(([holes, man]) => {
       if (man) cfg = { min: man.min_zoom, max: man.max_zoom };
@@ -665,22 +719,16 @@ function renderSetup() {
       <label>Ditt namn</label>
       <input type="text" id="player" value="${esc(S.player)}" placeholder="Förnamn Efternamn" autocomplete="name">
       <label>Bana</label>
-      <input type="text" id="course" value="${esc(S.course)}">
+      <div class="cpick">
+        <input type="text" class="field" id="courseSearch" placeholder="Sök bana …" autocomplete="off">
+        <div class="cpick-list" id="courseList"></div>
+      </div>
       <label>Vilken runda spelar du? <span style="color:var(--dim)">(för hålkartan)</span></label>
-      <select class="field" id="round">
-        <option value="1-18">1–18</option>
-        <option value="10-27">10–27</option>
-        <option value="19-9">19–9</option>
-      </select>
+      <select class="field" id="round"></select>
       <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
-      <select class="field" id="tee">
-        <option value="">– välj tee –</option>
-        <option value="61">61</option>
-        <option value="57">57</option>
-        <option value="53">53</option>
-        <option value="48">48</option>
-      </select>
+      <select class="field" id="tee"></select>
       <button class="big" id="start">Starta runda</button>
+      <a class="big" href="./planera.html" style="display:block;text-align:center;text-decoration:none;margin-top:10px;background:#1a4c38;color:var(--ink)">🗓 Planera runda</a>
     </div>
     <div class="card hint">
       <b>Så funkar det</b><br>
@@ -695,25 +743,127 @@ function renderSetup() {
     ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
   wireLiveCard();
   if (window.SGOffline) window.SGOffline.mount("offline-tools");
-  // rundval (1–18/10–27/19–9) delas via localStorage ('sg_round'): kartan och
-  // översikten visar rätt hål, och exporten översätter spelarens hål 1–18 till
-  // banans globala hålnummer.
+
+  // rundval (1–18/10–27/19–9 för Burlöv, annat för andra banor) delas via
+  // localStorage ('sg_round'): kartan och översikten visar rätt hål, och
+  // exporten översätter spelarens hål 1–18 till banans globala hålnummer.
   const roundSel = document.getElementById("round");
-  roundSel.value = localStorage.getItem("sg_round") || "1-18";
-  roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
-  // tee-val (rundnivå): förvälj senast använda; sparas vid start och delas via
-  // 'sg_tee' så det ligger kvar mellan rundor. Färgen exporteras i fältet `tee`.
   const teeSel = document.getElementById("tee");
-  teeSel.value = S.tee || localStorage.getItem("sg_tee") || "";
+  function fillRoundAndTee(meta) {
+    const rounds = (meta && meta.rounds) || SGRound.BURLOV_DEFAULT.rounds;
+    const tees = (meta && meta.tees) || SGRound.BURLOV_DEFAULT.tees;
+    const savedRound = localStorage.getItem("sg_round");
+    const roundVal = rounds.some(r => r.value === savedRound) ? savedRound : rounds[0].value;
+    roundSel.innerHTML = rounds.map(r => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join("");
+    roundSel.value = roundVal;
+    localStorage.setItem("sg_round", roundVal);
+    // tee-val (rundnivå): förvälj senast använda om den finns i banans tee-lista;
+    // sparas vid start och delas via 'sg_tee' så det ligger kvar mellan rundor.
+    const savedTee = S.tee || localStorage.getItem("sg_tee") || "";
+    teeSel.innerHTML = '<option value="">– välj tee –</option>' +
+      tees.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    teeSel.value = tees.includes(savedTee) ? savedTee : "";
+  }
+  roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
   teeSel.onchange = () => localStorage.setItem("sg_tee", teeSel.value);
+
+  // banväljare: sökbart fält + lista. Tills registryn laddat visas bara
+  // aktiv/cachad bana (offline-degradering). Val bygger om SGRound + rund/tee.
+  const courseSearch = document.getElementById("courseSearch");
+  const courseList = document.getElementById("courseList");
+  const activeMeta = SGRound.meta || SGRound.BURLOV_DEFAULT;
+  let selectedSlug = activeMeta.slug;
+
+  function norm(s) { return String(s || "").toLowerCase(); }
+  function matches(c, q) {
+    return norm(c.name).includes(q) || norm(c.slug).includes(q);
+  }
+  function courseRowHtml(c) {
+    const on = c.slug === selectedSlug;
+    return `<button type="button" class="cpick-row${on ? " active" : ""}" data-slug="${esc(c.slug)}">${esc(c.name)}</button>`;
+  }
+  function renderCourseList() {
+    const list = coursesRegistry;
+    if (!list) {
+      // offline vid första besöket: visa bara aktiv/cachad bana
+      courseList.innerHTML = courseRowHtml(activeMeta);
+      return;
+    }
+    // Fältet fylls med vald banas namn efter val — behandla det som TOMT sök
+    // (visa historik + alla, med den valda markerad) så "sök först, aldrig tomt"
+    // gäller även när man fokuserar fältet igen. Skriver man något annat filtreras.
+    const selMeta = courseMetaBySlug(list, selectedSlug);
+    const raw = courseSearch.value.trim();
+    const q = (selMeta && norm(raw) === norm(selMeta.name)) ? "" : norm(raw);
+    if (q) {
+      const hits = list.filter(c => matches(c, q));
+      courseList.innerHTML = hits.length
+        ? hits.map(courseRowHtml).join("")
+        : '<div class="cpick-empty">Inga banor matchar</div>';
+      return;
+    }
+    const hist = loadCourseHistory().filter(slug => list.some(c => c.slug === slug));
+    const histSet = new Set(hist);
+    const rest = list.filter(c => !histSet.has(c.slug));
+    let html = "";
+    if (hist.length) {
+      html += '<div class="cpick-sec">Senast spelad</div>';
+      html += hist.map(slug => courseRowHtml(courseMetaBySlug(list, slug))).join("");
+    }
+    html += '<div class="cpick-sec">Alla banor</div>';
+    html += rest.length ? rest.map(courseRowHtml).join("") : '<div class="cpick-empty">Inga banor</div>';
+    courseList.innerHTML = html;
+  }
+  // Dropdownen öppnas bara när man vill välja bana (fokus/klick på fältet) och
+  // stängs vid val, Esc eller klick utanför — så alla banor inte fyller skärmen
+  // i vila (skalar till många banor).
+  function openList() { courseList.classList.add("open"); renderCourseList(); wireCourseRows(); }
+  function closeList() { courseList.classList.remove("open"); }
+  function wireCourseRows() {
+    courseList.querySelectorAll("[data-slug]").forEach(btn => btn.onclick = () => {
+      const meta = courseMetaBySlug(coursesRegistry, btn.dataset.slug) ||
+        (btn.dataset.slug === activeMeta.slug ? activeMeta : null);
+      if (!meta) return;
+      selectedSlug = meta.slug;
+      SGRound.setActiveCourse(meta);
+      localStorage.removeItem("sg_round"); // nollställ till banans första runda
+      S.course = meta.name;
+      courseSearch.value = meta.name;
+      fillRoundAndTee(meta);
+      closeList();            // val gjort → fäll ihop
+      courseSearch.blur();
+    });
+  }
+  courseSearch.value = SGRound.courseName();   // visa aktiv bana i vila (list stängd)
+  fillRoundAndTee(activeMeta);
+  loadCoursesRegistry().then(list => {
+    if (!list) return;        // offline vid första besöket — behåll aktiv/cachad bana
+    if (courseList.classList.contains("open")) { renderCourseList(); wireCourseRows(); }
+  });
+  courseSearch.oninput = openList;   // skriva öppnar + filtrerar
+  // fokus öppnar hela listan och markerar texten så första tangenttrycket
+  // ersätter banans namn (i st.f. att söka på "namn"+bokstav).
+  courseSearch.onfocus = () => { openList(); courseSearch.select(); };
+  courseSearch.onkeydown = (e) => { if (e.key === "Escape") { closeList(); courseSearch.blur(); } };
+  // stäng när fokus lämnar väljaren (klick/tap utanför blurrar fältet); liten
+  // fördröjning så ett rad-klick hinner registreras innan vi fäller ihop.
+  courseSearch.closest(".cpick").addEventListener("focusout", () => {
+    setTimeout(() => {
+      const cp = document.querySelector(".cpick");
+      if (cp && !cp.contains(document.activeElement)) closeList();
+    }, 150);
+  });
+
   document.getElementById("start").onclick = () => {
     const p = document.getElementById("player").value.trim();
     if (!p) { alert("Fyll i ditt namn."); return; }
     S.player = p;
-    S.course = document.getElementById("course").value.trim() || DEFAULT_COURSE;
+    const meta = courseMetaBySlug(coursesRegistry, selectedSlug) || SGRound.meta;
+    S.course = (meta && meta.name) || DEFAULT_COURSE;
     S.tee = teeSel.value;
     localStorage.setItem("sg_tee", teeSel.value);
     localStorage.setItem("sg_round", roundSel.value);
+    saveCourseHistory(pushCourseHistory((meta && meta.slug) || SGRound.activeSlug(), loadCourseHistory()));
     if (!S.startedAt) S.startedAt = new Date().toISOString();
     S.view = "hole";
     startWatch(); save(); render();

@@ -29,7 +29,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-07-21c";
+const VERSION = "2026-07-22a";
 
 const SHELL_CACHE = "sg-shell-v" + VERSION;
 const DATA_CACHE  = "sg-data";
@@ -41,6 +41,8 @@ const SHELL_ASSETS = [
   "./",
   "index.html",
   "karta.html",
+  "planera.html",
+  "planera-karta.html",
   "redigera.html",
   "oversikt.html",
   "oversikt-analys.html",
@@ -50,6 +52,8 @@ const SHELL_ASSETS = [
   "analys-core.js",
   "coursemap.js",
   "mapcore.js",
+  "playas.js",
+  "slopeoverlay.js",
   "redigera.js",
   "score.js",
   "live.js",
@@ -58,6 +62,7 @@ const SHELL_ASSETS = [
   "vendor/leaflet.css",
   "vendor/leaflet-rotate.js",
   "manifest.json",
+  "data/courses.json",
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",
@@ -92,8 +97,12 @@ self.addEventListener("activate", (event) => {
 
 // ── hjälpare ───────────────────────────────────────────────────────────────
 const isTile = (url) => /\/tiles\/\d+\/\d+\/\d+\.webp$/.test(url.pathname);
+// Bandata för VALFRI bana (t.ex. data/burlov.json, data/ven.json) — network-first
+// så senaste versionen alltid vinner online, med cache-fallback offline. Ingen
+// bana hårdkodad här: mönstret matchar "<slug/mobile_json>.json" generellt.
+// courses.json (registryn) räknas som app-shell (precachas, se SHELL_ASSETS ovan).
 const isData = (url) =>
-  /\/data\/burlov\.json$/.test(url.pathname) ||
+  (/\/data\/[^/]+\.json$/.test(url.pathname) && !/\/data\/courses\.json$/.test(url.pathname)) ||
   /\/data\/green_slope\.geojson$/.test(url.pathname) ||
   /\/tiles\/manifest\.json$/.test(url.pathname);
 

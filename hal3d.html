@@ -48,16 +48,31 @@
 <body>
 <div id="scen"></div>
 <div id="topp">
-  <a class="back" href="index.html" aria-label="tillbaka">‹</a>
+  <a class="back" id="back" href="index.html" aria-label="tillbaka">‹</a>
   <select id="hal"></select>
   <span id="fakta"></span>
 </div>
+<script>
+  /* Öppnad från plan-läget (?from=plan) → tillbaka-knappen går till hubben. */
+  if (new URLSearchParams(location.search).get("from") === "plan") {
+    const back = document.getElementById("back");
+    back.setAttribute("href", "planera.html");
+    back.textContent = "‹ Tillbaka till plan";
+    back.style.fontSize = "15px";
+    back.style.fontWeight = "600";
+  }
+</script>
 <div id="status">laddar…</div>
 <div id="kalla">Foto & höjddata © Lantmäteriet (CC BY 4.0)</div>
 <div id="botten">
   <label>överdrift <span id="exagv">3×</span></label>
   <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
 </div>
+<button id="flyavbryt" style="display:none; position:fixed; z-index:6;
+  left:50%; transform:translateX(-50%);
+  bottom:calc(env(safe-area-inset-bottom) + 66px);
+  background:#123c2dee; color:#e8f5ec; border:1px solid #1f5540;
+  border-radius:20px; padding:8px 16px; font-size:14px;">⏸ Avbryt flygning</button>
 
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
@@ -98,7 +113,65 @@ function resize() {
 }
 addEventListener('resize', resize); resize();
 
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+const fromPlan = new URLSearchParams(location.search).get('from') === 'plan';
+
+// -------------------------------------------------------- fly-through (PR4) ---
+// Gated helt på ?from=plan (hård invariant: utan den flaggan körs INGET av detta).
+// Kameran glider längs meta.line (samma georef som scenen), blicken mot nästa
+// punkt på linjen. Avbryts av användarens första pekar-/hjul-interaktion.
+let fly = null; // { pts, cum, total, t0, dur } | null
+
+function flyDistances(pts) {
+  const d = [0];
+  for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + pts[i - 1].distanceTo(pts[i]));
+  return d;
+}
+
+function startFly() {
+  if (!fromPlan || !meta || !meta.line || meta.line.length < 2) return;
+  const pts = meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag + 6, z));
+  const cum = flyDistances(pts);
+  const total = cum[cum.length - 1] || 1;
+  const dur = Math.min(16000, Math.max(6000, total * 60));
+  fly = { pts, cum, total, t0: performance.now(), dur };
+  controls.enabled = false;
+  el('flyavbryt').style.display = 'block';
+}
+
+function stopFly() {
+  fly = null;
+  controls.enabled = true;
+  el('flyavbryt').style.display = 'none';
+}
+
+function updateFly() {
+  if (!fly) return;
+  const t = Math.min(1, (performance.now() - fly.t0) / fly.dur);
+  const s = t * fly.total;
+  const { pts, cum } = fly;
+  let i = 0;
+  while (i < cum.length - 2 && cum[i + 1] < s) i++;
+  const segLen = cum[i + 1] - cum[i] || 1;
+  const frac = (s - cum[i]) / segLen;
+  camera.position.copy(pts[i]).lerp(pts[i + 1], frac);
+  const lookIdx = Math.min(i + 1, pts.length - 1);
+  const look = pts[Math.min(lookIdx + 1, pts.length - 1)];
+  camera.lookAt(look);
+  controls.target.copy(look);
+  if (t >= 1) { stopFly(); placeCamera(); }
+}
+
+if (fromPlan) {
+  el('flyavbryt').addEventListener('click', stopFly);
+  // Första användarinteraktionen med scenen avbryter flygningen och lämnar
+  // fri orbit (OrbitControls är avstängd under flygningen, så vi lyssnar
+  // direkt på canvasen i stället för på 'start'-eventet).
+  const cancelOnInput = () => { if (fly) stopFly(); };
+  ['pointerdown', 'wheel', 'touchstart'].forEach(ev =>
+    renderer.domElement.addEventListener(ev, cancelOnInput, { passive: true }));
+}
+
+renderer.setAnimationLoop(() => { updateFly(); controls.update(); renderer.render(scene, camera); });
 
 // ------------------------------------------------------- hål-innehållet ---
 // Marken (glb) ligger i sanna meter och y-skalas med överdriften. Träden är
@@ -266,6 +339,8 @@ async function loadHole(slug) {
     scene.add(ground);
     applyExag();
     placeCamera();
+    stopFly();
+    startFly();
     const dh = meta.delta_h;
     el('fakta').textContent =
       `${dh >= 0 ? '+' : '−'}${Math.abs(dh).toFixed(1)} m · ${meta.length_m} m`;

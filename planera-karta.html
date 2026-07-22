@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Planera slag">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Planera slag</title>
+<link rel="stylesheet" href="./vendor/leaflet.css">
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
+          --framebg: rgba(0,0,0,.55); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
+    overscroll-behavior:none; }
+  #map { position:absolute; inset:0; background:var(--bg); }
+  .leaflet-container { background:var(--bg); }
+
+  /* topp: tillbaka + hål-namn + hål-stegare */
+  #top { position:absolute; top:0; left:0; right:0; z-index:1000;
+    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    display:flex; align-items:center; gap:8px; }
+  #top a.back { color:var(--ink); text-decoration:none; font-size:22px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:4px 12px; box-shadow:0 2px 8px #0007; }
+  #top .name { flex:1; min-width:0; text-align:center; font-weight:700; font-size:16px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:7px 10px; box-shadow:0 2px 8px #0007; }
+  #top .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
+  #top .step { display:flex; gap:4px; }
+  #top .step button { background:var(--framebg); border:1px solid var(--line);
+    color:var(--ink); font-size:20px; width:42px; height:42px; border-radius:12px;
+    box-shadow:0 2px 8px #0007; }
+  #top .step button:disabled { opacity:.4; }
+
+  /* botten: green-lutnings-toggle + hint */
+  #bottom { position:absolute; left:0; right:0; z-index:1000;
+    bottom:calc(env(safe-area-inset-bottom) + 10px);
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    padding:0 12px; }
+  #slopeBtn { background:var(--framebg); border:1px solid var(--accent); color:var(--accent);
+    font-weight:800; font-size:14px; padding:12px 20px; border-radius:14px;
+    box-shadow:0 2px 8px #0007; }
+  #slopeBtn.on { background:rgba(55,176,107,.85); color:var(--accent-ink); }
+  .hint { color:var(--dim); font-size:12px; background:var(--framebg);
+    border:1px solid var(--line); border-radius:10px; padding:6px 12px; }
+
+  /* slagkedja: ben-lista + ångra-knapp */
+  #legs { max-width:min(92vw, 420px); max-height:22vh; overflow-y:auto;
+    background:var(--framebg); border:1px solid var(--line); border-radius:10px;
+    padding:6px 10px; font-size:13px; display:none; }
+  #legs.show { display:block; }
+  #legs .leg { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+  #legs .leg b { color:var(--ink); }
+  #legs .leg span { color:var(--dim); display:flex; align-items:center; gap:6px; }
+  #legs .legX { background:transparent; border:1px solid var(--line); color:var(--dim);
+    font-size:11px; line-height:1; width:18px; height:18px; border-radius:50%; padding:0; }
+  #legs .legX:active { color:var(--ink); border-color:var(--dim); }
+  #legRow { display:flex; gap:8px; }
+  #undoBtn { background:var(--framebg); border:1px solid var(--line); color:var(--ink);
+    font-size:13px; padding:10px 16px; border-radius:14px; box-shadow:0 2px 8px #0007; }
+  #undoBtn:disabled { opacity:.4; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="top">
+  <a class="back" href="./planera.html" aria-label="tillbaka">‹</a>
+  <div class="name" id="holeName">Laddar …</div>
+  <div class="step">
+    <button id="prev" aria-label="föregående hål">‹</button>
+    <button id="next" aria-label="nästa hål">›</button>
+  </div>
+</div>
+<div id="bottom">
+  <div id="legs"></div>
+  <div id="legRow">
+    <button id="slopeBtn">⛳ Green-lutning</button>
+    <button id="undoBtn" disabled>↩ Ångra</button>
+  </div>
+  <div class="hint" id="hint">Tappa på kartan för att lägga ett slag</div>
+</div>
+
+<script src="./vendor/leaflet.js"></script>
+<script src="./vendor/leaflet-rotate.js"></script>
+<script src="./coursemap.js"></script>
+<script src="./mapcore.js"></script>
+<script src="./playas.js"></script>
+<script src="./slopeoverlay.js"></script>
+<script src="./round.js"></script>
+<script>
+"use strict";
+// Plan-kartan (PR1+PR2): visa ett hål i 2D för planering — tee→green + green-lutning
+// + manuell slagkedja (tappa landningspunkter, se "spelar som" per ben), utan GPS
+// och utan att röra rundloggen. Kedjan sparas i sg-plan-v1 (se PLANERA_RUNDA_PLAN.md
+// §PR2). Återanvänder MapCore/SlopeOverlay/PlayAs (utbrutna i PR0).
+const $ = id => document.getElementById(id);
+const rad = MapCore.rad, hav = MapCore.hav;
+
+let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(), slopeArrowLayer = L.layerGroup();
+let legLayer = L.layerGroup();
+let ROUND = [], GLOBALS = [], hi = 0, WIND = null, slopeOn = false;
+let legs = [];   // [[lat,lon], …] landningspunkter för valt hål (tee→green-kedjan)
+
+// ---- Slagkedje-persistens: sg-plan-v1, { [globaltHålnr]: { legs: [[lat,lon],…] } }.
+// Egen nyckel, helt skild från rundloggen (sg-rundlogg-v1) — rör ALDRIG den.
+const PLAN_KEY = "sg-plan-v1";
+function loadPlanStore() {
+  try { return JSON.parse(localStorage.getItem(PLAN_KEY) || "{}") || {}; } catch (e) { return {}; }
+}
+let PLAN = loadPlanStore();
+function loadLegsFor(g) {
+  const e = PLAN[String(g)];
+  return (e && Array.isArray(e.legs)) ? e.legs.map(p => [p[0], p[1]]) : [];
+}
+function saveLegsFor(g, ls) {
+  if (g == null) return;
+  PLAN[String(g)] = { legs: ls };
+  try { localStorage.setItem(PLAN_KEY, JSON.stringify(PLAN)); } catch (e) {}
+}
+function saveCurrentLegs() { saveLegsFor(GLOBALS[hi], legs); }
+
+const params = new URLSearchParams(location.search);
+
+// Utgångshål: ?hal=<rel> annars sg_plan_hole annars 1.
+function initialRel() {
+  const q = parseInt(params.get("hal"), 10);
+  if (q >= 1 && q <= SGRound.HOLES) return q;
+  const s = parseInt(localStorage.getItem("sg_plan_hole"), 10);
+  return s >= 1 && s <= SGRound.HOLES ? s : 1;
+}
+
+// Vind för aktuellt hål (Open-Meteo via PlayAs); tyst null offline.
+async function loadWind() {
+  const h = ROUND[hi];
+  const loc = (h && h.green_center) || [55.618, 13.07];
+  WIND = await PlayAs.fetchWind(loc[0], loc[1]);
+  updateHeader();
+  drawLegs();
+}
+
+// Tee→green-avstånd från vald tee: "spelar som" (vind + Δh ur 3D-metan) om vind
+// finns, annars geometriskt. Δh från tee via vald tees förberäknade dh (sg_tee).
+function teeToGreenText(h) {
+  const teePt = MapCore.teePoint(h) || (h.line && h.line[0]);
+  if (!teePt || !h.green_center) return "";
+  const geo = Math.round(hav(teePt, h.green_center));
+  const dh = PlayAs.dh3dToGreen({ fromTee: true, pt: teePt }, h);
+  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
+  const pa = WIND ? PlayAs.playAsRange(teePt, h.green_center, WIND, slope) : null;
+  const shown = pa ? pa.mean : Math.round(geo + slope);
+  const dhTxt = (dh != null && Math.abs(dh) >= 1)
+    ? ` · ${dh > 0 ? "↗" : "↘"} ${Math.abs(dh).toFixed(0)} m` : "";
+  return `${shown} m till green${dhTxt}`;
+}
+
+function updateHeader() {
+  const h = ROUND[hi];
+  if (!h) { $("holeName").textContent = "—"; return; }
+  const short = SGRound.LOOP_SHORT[h.loop] || h.loop;
+  const dist = teeToGreenText(h);
+  $("holeName").innerHTML =
+    `Hål ${hi + 1} <small>${short} ${h.hole} · Par ${h.par ?? "–"}` +
+    `${dist ? " · " + dist : ""}</small>`;
+  $("prev").disabled = hi <= 0;
+  $("next").disabled = hi >= ROUND.length - 1;
+}
+
+// Rama in hålet: green-vy (hela greenen) när lutningen visas, annars tee→green-overview.
+function frameHole() {
+  const h = ROUND[hi];
+  if (!h) return;
+  MapCore.orientToHole(map, h);
+  if (slopeOn && h.green && h.green.length) {
+    map.fitBounds(L.latLngBounds(h.green).pad(0.6), { animate: false });
+  } else {
+    const teePt = (h.line && h.line.length) ? h.line[0]
+      : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+    const pts = [...(h.green || []), ...(h.line || []), teePt].filter(Boolean);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.12), { animate: false });
+  }
+  requestAnimationFrame(() => map && map.invalidateSize({ pan: false }));
+}
+
+function showSlope() {
+  slopeOn = true;
+  $("slopeBtn").classList.add("on");
+  SlopeOverlay.show(map, slopeLayer, slopeArrowLayer, ROUND[hi], null, () => true);
+  frameHole();
+}
+function hideSlope() {
+  slopeOn = false;
+  $("slopeBtn").classList.remove("on");
+  SlopeOverlay.hide(slopeLayer, slopeArrowLayer);
+  frameHole();
+}
+
+// Numrerad landningspunkt-ikon (grön prick, vit kant, samma palett som appen).
+function legIcon(n) {
+  return L.divIcon({ className: "legpin", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<div style="width:26px;height:26px;border-radius:50%;background:#37b06b;`
+      + `border:2px solid #fff;color:#06180f;font-weight:800;font-size:13px;`
+      + `display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0007;">${n}</div>` });
+}
+
+// "Spelar som" a→b enligt PLANERA_RUNDA_PLAN.md §PR2 (Δh via 3D-metan, inte
+// dh3dToGreen som bara gäller *till green* — mellanben behöver punkt→punkt-Δh).
+function legPlaysAs(a, b) {
+  const h = ROUND[hi];
+  const m = h && PlayAs.meta(h);
+  const y1 = m && PlayAs.elev3dAt(m, a[0], a[1]);
+  const y2 = m && PlayAs.elev3dAt(m, b[0], b[1]);
+  const dh = (y1 != null && y2 != null) ? y2 - y1 : null;
+  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
+  const pa = WIND ? PlayAs.playAsRange(a, b, WIND, slope) : null;
+  return pa ? pa.mean : Math.round(hav(a, b) + slope);
+}
+
+// Rita kedjan (linjer + numrerade pins) + textlistan under kartan.
+function drawLegs() {
+  legLayer.clearLayers();
+  const h = ROUND[hi];
+  const box = $("legs");
+  if (!h || !h.green_center) { box.classList.remove("show"); box.innerHTML = ""; $("undoBtn").disabled = true; return; }
+  const origin = MapCore.teePoint(h) || (h.line && h.line[0]);
+  if (!origin) { box.classList.remove("show"); box.innerHTML = ""; $("undoBtn").disabled = true; return; }
+
+  // Tee = slag 1 (fast, ej dragbar/borttagbar). Landningspunkter numreras
+  // i+2 (legs[0] = slag 2, dvs där du slår slag 2 ifrån osv).
+  L.marker(origin, { icon: legIcon(1) }).addTo(legLayer);
+  legs.forEach((p, i) => {
+    const mk = L.marker(p, { icon: legIcon(i + 2), draggable: true }).addTo(legLayer);
+    mk.on("dragend", () => {
+      const ll = mk.getLatLng();
+      legs[i] = [ll.lat, ll.lng];
+      saveCurrentLegs();
+      drawLegs();
+    });
+  });
+  const solid = [origin, ...legs];
+  if (solid.length > 1) L.polyline(solid, { color: "#37b06b", weight: 3 }).addTo(legLayer);
+  const last = legs.length ? legs[legs.length - 1] : origin;
+  L.polyline([last, h.green_center], { color: "#37b06b", weight: 3, dashArray: "4,6" }).addTo(legLayer);
+
+  let rows = "", prev = origin;
+  legs.forEach((p, i) => {
+    const d = legPlaysAs(prev, p);
+    const rem = Math.round(hav(p, h.green_center));
+    rows += `<div class="leg"><b>Slag ${i + 1}: ${d} m</b><span>${rem} m kvar `
+      + `<button class="legX" data-i="${i}" aria-label="ta bort slag ${i + 1}">✕</button></span></div>`;
+    prev = p;
+  });
+  const dGreen = legPlaysAs(prev, h.green_center);
+  rows += `<div class="leg"><b>${legs.length ? `Slag ${legs.length + 1} (green)` : "Slag 1 (green)"}: ${dGreen} m</b><span></span></div>`;
+  box.innerHTML = rows;
+  box.classList.add("show");
+  box.querySelectorAll(".legX").forEach(btn => {
+    btn.onclick = () => removeLeg(parseInt(btn.dataset.i, 10));
+  });
+  $("undoBtn").disabled = legs.length === 0;
+}
+
+function removeLeg(i) {
+  if (i < 0 || i >= legs.length) return;
+  legs.splice(i, 1);
+  saveCurrentLegs();
+  drawLegs();
+}
+
+function onMapTap(e) {
+  if (!ROUND[hi]) return;
+  legs.push([e.latlng.lat, e.latlng.lng]);
+  saveCurrentLegs();
+  drawLegs();
+}
+
+function undoLeg() {
+  if (!legs.length) return;
+  legs.pop();
+  saveCurrentLegs();
+  drawLegs();
+}
+
+function drawHole() {
+  const h = ROUND[hi];
+  layers.clearLayers();
+  legLayer.clearLayers();
+  SlopeOverlay.hide(slopeLayer, slopeArrowLayer);
+  if (!h) return;
+  legs = loadLegsFor(GLOBALS[hi]);
+  PlayAs.loadElev3d(h, () => { updateHeader(); drawLegs(); });   // höjddata landar async → räkna om "spelar som"
+  MapCore.drawHoleGeometry(layers, h);
+  updateHeader();
+  drawLegs();
+  if (slopeOn) showSlope(); else frameHole();
+  loadWind();
+}
+
+function goTo(rel) {
+  if (rel < 1 || rel > ROUND.length) return;
+  hi = rel - 1;
+  try { localStorage.setItem("sg_plan_hole", String(rel)); } catch (e) {}
+  drawHole();
+}
+
+async function init() {
+  map = MapCore.createMap("map");
+  MapCore.addOrthophoto(map);
+  layers.addTo(map);
+  slopeLayer.addTo(map);
+  slopeArrowLayer.addTo(map);
+  legLayer.addTo(map);
+  SlopeOverlay.load();
+  // skärmkonstanta pilar: rita om vid märkbar zoom-ändring (som hålkartan)
+  map.on("zoomend", () => {
+    if (SlopeOverlay.activeHole()
+        && (SlopeOverlay.lastZoom() === null || Math.abs(map.getZoom() - SlopeOverlay.lastZoom()) > 0.15))
+      SlopeOverlay.drawArrows(map, slopeArrowLayer, null);
+  });
+  map.setView([55.618, 13.07], 15);
+
+  $("prev").onclick = () => goTo(hi);        // hi 0-baserat → föregående rel = hi
+  $("next").onclick = () => goTo(hi + 2);    // nästa rel = hi+2
+  $("slopeBtn").onclick = () => slopeOn ? hideSlope() : showSlope();
+  $("undoBtn").onclick = undoLeg;
+  map.on("click", onMapTap);
+
+  try {
+    const course = await MapCore.loadCourse();
+    const seq = SGRound.ROUND_SEQ[SGRound.roundName()] || SGRound.ROUND_SEQ["1-18"];
+    ROUND = []; GLOBALS = [];
+    seq.forEach(g => { const h = course.byGlobal[g]; if (h) { ROUND.push(h); GLOBALS.push(g); } });
+  } catch (e) {
+    $("holeName").textContent = "Kunde ej ladda bandata";
+    return;
+  }
+  slopeOn = params.get("slope") === "1";
+  if (slopeOn) $("slopeBtn").classList.add("on");
+  goTo(initialRel());
+}
+window.addEventListener("resize", () => { if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
+window.addEventListener("orientationchange", () => { if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
+init();
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone) — samma som övriga sidor. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>

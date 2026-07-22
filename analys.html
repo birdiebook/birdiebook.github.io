@@ -138,7 +138,7 @@ function loadState() { try { return JSON.parse(localStorage.getItem(KEY)); } cat
 let coursePromise = null;
 function loadCourse() {
   if (coursePromise) return coursePromise;
-  coursePromise = fetch("./data/burlov.json", { cache: "no-cache" })
+  coursePromise = fetch("./data/" + SGRound.mobileJson(), { cache: "no-cache" })
     .then(r => r.json())
     .then(data => { const by = {}; for (const h of data.holes) by[GLOBAL_BASE[h.loop] + h.hole] = h; return by; })
     .catch(() => ({}));

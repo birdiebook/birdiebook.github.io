@@ -133,7 +133,7 @@ const MapCore = (() => {
   // Sätter h.global + byggd byGlobal via SGRound.GLOBAL_BASE. Kastar om bandatan
   // inte kan hämtas (anroparen fångar → "Kunde ej ladda bandata").
   async function loadCourse() {
-    const data = await (await fetch("./data/burlov.json", { cache: "no-cache" })).json();
+    const data = await (await fetch("./data/" + SGRound.mobileJson(), { cache: "no-cache" })).json();
     const HOLES = data.holes;
     const byGlobal = {};
     const GB = SGRound.GLOBAL_BASE;
