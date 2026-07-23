@@ -121,19 +121,71 @@ const fromPlan = new URLSearchParams(location.search).get('from') === 'plan';
 // punkt på linjen. Avbryts av användarens första pekar-/hjul-interaktion.
 let fly = null; // { pts, cum, total, t0, dur } | null
 
-function flyDistances(pts) {
-  const d = [0];
-  for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + pts[i - 1].distanceTo(pts[i]));
-  return d;
+// Kamera-tunables för fly-through (justeras vid visuell finslip):
+const FLY_HALF_W = 32;                 // m: halva bredden som alltid ska rymmas (fairway + marginal)
+const FLY_PITCH  = 22 * Math.PI / 180; // kameravinkel ned mot marken (högre = brantare uppifrån)
+const FLY_LEAD   = 0.08;               // blicken riktas en aning framför fokuspunkten (0..1 av banan)
+const FLY_MIN_R  = 45;                 // m: minsta kamera-avstånd (aldrig löjligt nära ens på bred skärm)
+const FLY_CLEAR_IN  = 14;              // m: träd närmare än så ger FULL sikt-klarning
+const FLY_CLEAR_OUT = 32;              // m: bortom så ingen inverkan (mjuk toning där emellan)
+const FLY_CLEAR_MARGIN = 8;            // m: kameran läggs så här mycket över kronan den behöver klara
+
+// mjuk 0→1-ramp (Hermite) mellan två kanter — ger klarning utan pop när träd tonas in/ut
+function smoothstep(e0, e1, x) {
+  const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Punkterna i sanna meter med höjd skalad av överdriften (markytan, ingen ögonhöjd).
+function flyGroundPts() { return meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag, z)); }
+
+// Trädkronornas topp i världskoordinater (fot y_mark följer överdriften, höjden är sann)
+// — används för att lyfta kameran över träd som annars skymmer hålet (t.ex. bakom teen).
+function flyTreeTops() {
+  return (meta.trees || []).map(t => ({ x: t[0], z: t[2], top: t[1] * exag + (t[3] || 0) }));
+}
+
+// Kamerapose vid flyktfraktion u (0=tee, 1=green): höjd chase-kamera bakom+över
+// fokuspunkten. Position OCH riktning tas ur en Catmull-Rom-spline (curve) i stället
+// för de grova linjesegmenten → mjuk kamera även i doglegs (inget hack vid svängar).
+// Avståndet räknas ur horisontell FOV så ±FLY_HALF_W i bredd ryms (anpassas till
+// porträtt/liggande via camera.aspect). Kameran lyfts vid behov över närliggande träd.
+function flyPose(curve, u, treeTops) {
+  const L = curve.getPointAt(u);
+  const fwd = curve.getTangentAt(u); fwd.y = 0;
+  if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
+  fwd.normalize();
+  const fovV = camera.fov * Math.PI / 180;
+  const fovH = 2 * Math.atan(camera.aspect * Math.tan(fovV / 2));
+  const R = Math.max(FLY_MIN_R, FLY_HALF_W / Math.tan(fovH / 2));
+  const pos = L.clone().addScaledVector(fwd, -R * Math.cos(FLY_PITCH));
+  const baseY = L.y + R * Math.sin(FLY_PITCH);
+  // sikt-klarning: lyft kameran mjukt över träd nära den — varje träds inverkan
+  // tonas in/ut med avståndet (smoothstep) så höjden inte poppar när träd passeras.
+  let need = baseY;
+  for (const t of treeTops) {
+    const dx = t.x - pos.x, dz = t.z - pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist >= FLY_CLEAR_OUT) continue;
+    const w = 1 - smoothstep(FLY_CLEAR_IN, FLY_CLEAR_OUT, dist);
+    const cand = baseY + w * Math.max(0, (t.top + FLY_CLEAR_MARGIN) - baseY);
+    if (cand > need) need = cand;
+  }
+  pos.y = need;
+  const target = curve.getPointAt(Math.min(1, u + FLY_LEAD));
+  return { pos, target };
 }
 
 function startFly() {
   if (!fromPlan || !meta || !meta.line || meta.line.length < 2) return;
-  const pts = meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag + 6, z));
-  const cum = flyDistances(pts);
-  const total = cum[cum.length - 1] || 1;
+  // centripetal Catmull-Rom: mjuk kurva genom grovpunkterna utan översläng i svängar
+  const curve = new THREE.CatmullRomCurve3(flyGroundPts(), false, 'centripetal');
+  const total = curve.getLength() || 1;
   const dur = Math.min(16000, Math.max(6000, total * 60));
-  fly = { pts, cum, total, t0: performance.now(), dur };
+  const treeTops = flyTreeTops();
+  fly = { curve, treeTops, t0: performance.now(), dur };
+  const p = flyPose(curve, 0, treeTops);   // starta direkt i den höga tee→green-överblicken
+  camera.position.copy(p.pos); camera.lookAt(p.target); controls.target.copy(p.target);
   controls.enabled = false;
   el('flyavbryt').style.display = 'block';
 }
@@ -146,19 +198,13 @@ function stopFly() {
 
 function updateFly() {
   if (!fly) return;
-  const t = Math.min(1, (performance.now() - fly.t0) / fly.dur);
-  const s = t * fly.total;
-  const { pts, cum } = fly;
-  let i = 0;
-  while (i < cum.length - 2 && cum[i + 1] < s) i++;
-  const segLen = cum[i + 1] - cum[i] || 1;
-  const frac = (s - cum[i]) / segLen;
-  camera.position.copy(pts[i]).lerp(pts[i + 1], frac);
-  const lookIdx = Math.min(i + 1, pts.length - 1);
-  const look = pts[Math.min(lookIdx + 1, pts.length - 1)];
-  camera.lookAt(look);
-  controls.target.copy(look);
-  if (t >= 1) { stopFly(); placeCamera(); }
+  const raw = Math.min(1, (performance.now() - fly.t0) / fly.dur);
+  const u = raw * raw * (3 - 2 * raw);   // smoothstep: mjuk start & stopp
+  const p = flyPose(fly.curve, u, fly.treeTops);
+  camera.position.copy(p.pos);
+  camera.lookAt(p.target);
+  controls.target.copy(p.target);
+  if (raw >= 1) { stopFly(); placeCamera(); }
 }
 
 if (fromPlan) {
@@ -291,10 +337,40 @@ function buildTrees() {
   treeParts.push(...parts);
 }
 
+const _lineRay = new THREE.Raycaster();
+const _lineDown = new THREE.Vector3(0, -1, 0);
+const LINE_OFFSET = 0.6;   // m ovanför markytan
+const LINE_STEP = 4;       // m: densifiera linjen så den följer terrängen mellan grovpunkterna
+
+// Markytans y i (x,z) via nedåt-raycast mot den (överdrifts-skalade) glb-marken;
+// fallback till coarse-y om marken inte finns/träffas.
+function surfaceYAt(x, z, fallback) {
+  if (!ground) return fallback;
+  _lineRay.set(new THREE.Vector3(x, 1e4, z), _lineDown);
+  const hit = _lineRay.intersectObject(ground, true);
+  return hit.length ? hit[0].point.y : fallback;
+}
+
 function buildLine() {
   if (lineObj) scene.remove(lineObj);
   markers.forEach(o => scene.remove(o));
-  const pts = meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag + 0.6, z));
+  if (ground) ground.updateMatrixWorld(true);   // färsk world-matris (exag-skala) före raycast
+  // Densifiera linjen horisontellt och lägg varje punkt på den VERKLIGA ytan + offset,
+  // så den aldrig dyker under mark när överdriften buktar terrängen mellan grovpunkterna.
+  const raw = meta.line;
+  const pts = [];
+  for (let i = 0; i < raw.length - 1; i++) {
+    const [ax, ay, az] = raw[i], [bx, by, bz] = raw[i + 1];
+    const segLen = Math.hypot(bx - ax, bz - az);
+    const n = Math.max(1, Math.round(segLen / LINE_STEP));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+      const fallback = (ay + (by - ay) * t) * exag;
+      pts.push(new THREE.Vector3(x, surfaceYAt(x, z, fallback) + LINE_OFFSET, z));
+    }
+  }
+  const [lx, ly, lz] = raw[raw.length - 1];
+  pts.push(new THREE.Vector3(lx, surfaceYAt(lx, lz, ly * exag) + LINE_OFFSET, lz));
   lineObj = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(pts),
     new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
