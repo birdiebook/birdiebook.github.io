@@ -90,6 +90,9 @@ const status = t => { el('status').textContent = t || ''; };
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// Samma ljus-filter som 2D-kartan (CourseMap.MAP_FILTER) på canvasen så
+// ortofoto-marken i 3D matchar 2D:s ljusare/friskare look (rå textur = mörk).
+renderer.domElement.style.filter = "brightness(1.35) saturate(1.20) contrast(0.96)";
 el('scen').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
