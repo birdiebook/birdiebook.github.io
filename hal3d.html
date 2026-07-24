@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
+<script src="./round.js"></script>
 <title>SG Hål i 3D</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
@@ -436,7 +437,7 @@ el('exag').addEventListener('input', ev => {
 (async () => {
   let idx;
   try {
-    idx = await (await fetch('data/holes3d/index.json')).json();
+    idx = await (await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`)).json();
   } catch { status('inga 3D-hål exporterade än (tools/hole_gltf.py)'); return; }
   const sel = el('hal');
   for (const h of idx.holes) {

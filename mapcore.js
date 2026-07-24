@@ -38,13 +38,14 @@ const MapCore = (() => {
     // Cappa native-zoom så URL-zoomen aldrig överstiger z19 (som finns) → annars 404.
     const deepMax = t => t.max_zoom - 1 - (L.Browser.retina ? 1 : 0);
     const esriFallback = () => CourseMap.esriLayer(TILE_OPTS).addTo(map);
-    fetch("tiles/manifest.json", { cache: "no-cache" })
+    const slug = (typeof SGRound !== "undefined" && SGRound.activeSlug()) || "malmo_burlov";
+    fetch(`tiles/${slug}/manifest.json`, { cache: "no-cache" })
       .then(r => r.ok ? r.json() : null)
       .then(t => {
         if (!t) { esriFallback(); return; }
         // esriLayer() aktiverade förr ljus/färg-filtret; nu måste vi kalla det själva (idempotent).
         CourseMap.applyImageFilter();
-        L.tileLayer("tiles/{z}/{x}/{y}.webp", {
+        L.tileLayer(`tiles/${slug}/{z}/{x}/{y}.webp`, {
           bounds: t.bounds, zIndex: 10,
           minNativeZoom: t.min_zoom, maxNativeZoom: deepMax(t),
           minZoom: t.min_zoom, maxZoom: 21,

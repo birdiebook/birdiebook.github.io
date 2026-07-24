@@ -7,7 +7,8 @@
  * map/slopeLayer/arrowLayer/pos på varje anrop. pos får vara null (plan-läge utan
  * GPS) → alla pilar visas (som uppe vid greenen).
  *
- * Datat är green_slope.geojson (byggs av tools/build_green_slope.py --mobile):
+ * Datat är green_slope.<slug>.geojson, en fil per bana (byggs av
+ * tools/build_green_slope.py --course <slug> --mobile):
  * 'fall'-features (korta LineStrings upp→ned, slope_pct + bearing) för pilarna +
  * ett tätt 'grids'-rutnät för heatmapen. Green-book-paletten (0–6 %, vit=platt)
  * speglar src/gis/visualize.py._BOOK_COLORS.
@@ -124,13 +125,15 @@ const SlopeOverlay = (() => {
     return inside;
   }
 
-  // Ladda green_slope.geojson EN gång och indexera fall-features på "loop|hål".
-  // Saknas filen (offline/ej byggd) → tyst av, kartan funkar som förr.
+  // Ladda green_slope.<slug>.geojson (aktiv bana, se SGRound.activeSlug()) EN
+  // gång och indexera fall-features på "loop|hål". Saknas filen (offline/ej
+  // byggd för banan) → tyst av, kartan funkar som förr.
   async function load() {
     if (SLOPE_IDX) return SLOPE_IDX;
     SLOPE_IDX = {};
     try {
-      const fc = await (await fetch("./data/green_slope.geojson", { cache: "no-cache" })).json();
+      const slug = SGRound.activeSlug();
+      const fc = await (await fetch(`./data/green_slope.${slug}.geojson`, { cache: "no-cache" })).json();
       for (const f of fc.features || []) {
         const p = f.properties || {};
         if (p.t !== "fall") continue;

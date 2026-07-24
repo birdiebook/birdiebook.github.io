@@ -29,7 +29,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-07-22a";
+const VERSION = "2026-07-24a";
 
 const SHELL_CACHE = "sg-shell-v" + VERSION;
 const DATA_CACHE  = "sg-data";
@@ -96,15 +96,18 @@ self.addEventListener("activate", (event) => {
 });
 
 // ── hjälpare ───────────────────────────────────────────────────────────────
-const isTile = (url) => /\/tiles\/\d+\/\d+\/\d+\.webp$/.test(url.pathname);
+// tiles/<slug>/{z}/{x}/{y}.webp (V8b — bana-scopad, se tools/build_imagery_tiles.py --mobile)
+const isTile = (url) => /\/tiles\/[^/]+\/\d+\/\d+\/\d+\.webp$/.test(url.pathname);
 // Bandata för VALFRI bana (t.ex. data/burlov.json, data/ven.json) — network-first
 // så senaste versionen alltid vinner online, med cache-fallback offline. Ingen
 // bana hårdkodad här: mönstret matchar "<slug/mobile_json>.json" generellt.
 // courses.json (registryn) räknas som app-shell (precachas, se SHELL_ASSETS ovan).
+// green_slope.<slug>.geojson (V4b — bana-scopad, se tools/build_green_slope.py)
+// matchas generellt likadant, ingen bana hårdkodad.
 const isData = (url) =>
   (/\/data\/[^/]+\.json$/.test(url.pathname) && !/\/data\/courses\.json$/.test(url.pathname)) ||
-  /\/data\/green_slope\.geojson$/.test(url.pathname) ||
-  /\/tiles\/manifest\.json$/.test(url.pathname);
+  /\/data\/green_slope\.[^/]+\.geojson$/.test(url.pathname) ||
+  /\/tiles\/[^/]+\/manifest\.json$/.test(url.pathname);
 
 // cache-first: serva ur cache, annars nät + spara. Används för tiles + shell-assets.
 async function cacheFirst(request, cacheName) {

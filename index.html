@@ -223,7 +223,13 @@
 const KEY = "sg-rundlogg-v1";
 const KEY_LAST = "sg-rundlogg-sist";
 const DEFAULT_COURSE = "Malmö Burlöv Golfklubb";
-const MAX_HOLE = SGRound.HOLES;   // spelarens hål 1–18, oavsett vald runda
+// V11: här fanns tidigare en `const` som frös SGRound.HOLES vid sidladdning
+// (18 hos Burlöv) — bytte man sen aktiv bana till en 9-håls bana (Ven) via
+// banväljaren uppdaterades SGRound.HOLES men inte den frusna konstanten, så
+// navigeringen fortsatte tillåta hål 10–18. maxHole() läser alltid AKTIV
+// banas vy-runda (SGRound.HOLES härleds ur vald runda-seq.length, se
+// round.js) — ingen frysning.
+function maxHole() { return SGRound.HOLES; }
 
 /* ---------- banväljare (B3) ----------
    Registryn (mobile/data/courses.json) hämtas async — synkront state (SGRound)
@@ -264,7 +270,7 @@ function saveCourseHistory(list) {
 let S = load() || freshState();
 // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
 SGRound.migrateSgHole();
-if (S.current > MAX_HOLE) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
+if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
 
 function freshState(player, course) {
   return { view: "setup", player: player || "", course: course || DEFAULT_COURSE,
@@ -1021,7 +1027,7 @@ function nextHole() {
   if (h.shots.length && h.putts > 0 && !h.green &&
       !confirm("Ingen boll-på-green-position — första puttens längd får uppskattas vid import. Gå vidare?")) return;
   livePush();   // pusha hålet man lämnar innan vi byter
-  if (S.current < MAX_HOLE) { S.current++; save(); render(); }
+  if (S.current < maxHole()) { S.current++; save(); render(); }
 }
 
 function renderSummary() {
@@ -1164,7 +1170,7 @@ function livePushPin(p) { Live.pushPin(S.current, p); }
 // så score-sidan och kartan alltid visar samma hål.
 function syncFromMap() {
   const g = parseInt(localStorage.getItem("sg_hole"), 10);
-  if (S.view === "hole" && g >= 1 && g <= MAX_HOLE && g !== S.current) {
+  if (S.view === "hole" && g >= 1 && g <= maxHole() && g !== S.current) {
     S.current = g; save(); render();
   }
 }
