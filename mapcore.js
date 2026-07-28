@@ -110,12 +110,24 @@ const MapCore = (() => {
   // tee-punkt för ett hål = den tee spelaren valde (sg_tee). RIGID mappning via
   // förberäknad punkttabell (tee_points.json, laddas i loadCourse). Fallback när
   // tabellen saknar hålet: fördela numren jämnt bakifrån (floor(rang·boxar/4)).
-  const _TEE_RANK = ["61", "57", "53", "48"];
+  const _TEE_RANK = ["61", "57", "53", "48"];   // BURLÖVS nummer (legacy, se nedan)
   let _TEE_POINTS = {};   // loop -> "hål" -> { teeNr: [lat,lon], _approx:[...] }
+
+  /* Tee-punkt för ett hål = den tee spelaren valde (sg_tee).
+     Ordning: (1) tee-boxens EGEN label i bandatan, (2) legacy-tabellen
+     tee_points.json, (3) rang-gissning.
+
+     (1) tillkom 2026-07-28. Utan den föll varje bana utanför Burlöv igenom till
+     rang-gissningen, där `_TEE_RANK` bara innehåller Burlövs nummer: för
+     Falsterbos tee "59" gav indexOf −1 → index 0 → ALLTID första boxen. Hål 10
+     visade då ~220 m i stället för scorekortets 356. Etiketterna finns i
+     <slug>.json sedan AS0 (`label` per tee) — de ska användas först. */
   function teePoint(h) {
     const tees = h.tees || [];
     if (!tees.length) return (h.line && h.line.length) ? h.line[0] : null;
     const sel = localStorage.getItem("sg_tee") || "";
+    const märkt = tees.find(t => t.label && t.label === sel);
+    if (märkt) return [märkt.lat, märkt.lon];
     const pt = _TEE_POINTS[h.loop] && _TEE_POINTS[h.loop][h.hole] && _TEE_POINTS[h.loop][h.hole][sel];
     if (pt && pt.length === 2) return [pt[0], pt[1]];
     const r = _TEE_RANK.indexOf(sel);                     // fallback: rang·boxar/4
@@ -126,8 +138,14 @@ const MapCore = (() => {
   // true om spelarens valda tee är en syntetisk punkt (OSM saknar boxen) — approx
   function teeIsApprox(h) {
     const sel = localStorage.getItem("sg_tee") || "";
+    const tees = h.tees || [];
+    // Har boxen en egen label som matchar valet är punkten exakt.
+    if (tees.some(t => t.label && t.label === sel)) return false;
     const m = _TEE_POINTS[h.loop] && _TEE_POINTS[h.loop][h.hole];
-    return !!(m && m._approx && m._approx.indexOf(sel) >= 0);
+    if (m && m._approx && m._approx.indexOf(sel) >= 0) return true;
+    // Ingen märkt box för vald tee och ingen legacy-punkt -> vi gissar på rang,
+    // och det ska SYNAS. Banor där OSM saknar de bakre tee-boxarna hamnar här.
+    return !(m && m[sel]);
   }
 
   // Ladda bandata (burlov.json) + förberäknad tee-tabell (tee_points.json, valfri).
