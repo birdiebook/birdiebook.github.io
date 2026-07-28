@@ -62,7 +62,14 @@ const PlayAs = (() => {
   // grad-till-meter räcker inte), profile ger höjden längs hållinjen var 10:e m
   // och tees[].dh ger Δh tee→green per tee. PRIMÄR höjdkälla (offline, 1 m-nät).
   let ELEV3D = {};   // slug -> meta | null (null = laddar/saknas)
-  function holeSlug(h) { return `${h.loop.replace(" Course", "").toLowerCase()}_${h.hole}`; }
+  // MÅSTE matcha tools/hole_gltf.py:_slug (B6d): named-loop = legacy
+  // <loop-token>_<hål> (Burlöv/Ven oförändrat); loop=None-banor = bana-prefix
+  // <bana-slug>_<hål> (annars kolliderar alla loop=None-banors hål i den delade
+  // holes3d-katalogen). Sanera loop-token till a-z0-9 som Python.
+  function holeSlug(h) {
+    if (h.loop) return `${h.loop.replace(" Course", "").toLowerCase().replace(/[^a-z0-9]+/g, "")}_${h.hole}`;
+    return `${SGRound.activeSlug()}_${h.hole}`;
+  }
   function loadElev3d(h, onReady) {
     const slug = holeSlug(h);
     if (ELEV3D[slug] !== undefined) return;

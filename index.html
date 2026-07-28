@@ -582,7 +582,9 @@ const TilePreload = (() => {
     if (holesP) return holesP;
     holesP = Promise.all([
       fetch("data/" + SGRound.mobileJson()).then(r => r.json()).then(d => d.holes),
-      fetch("tiles/manifest.json").then(r => r.ok ? r.json() : null).catch(() => null),
+      // Bana-scopat sedan V8b; saknas manifestet används cfg-defaulten nedan.
+      fetch(`tiles/${SGRound.activeSlug()}/manifest.json`)
+        .then(r => r.ok ? r.json() : null).catch(() => null),
     ]).then(([holes, man]) => {
       if (man) cfg = { min: man.min_zoom, max: man.max_zoom };
       const by = {};

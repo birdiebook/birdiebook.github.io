@@ -23,15 +23,25 @@
     );
   };
 
-  // bounds = [[södraLat, västraLon], [norraLat, östraLon]] (som tiles/manifest.json)
+  // bounds = [[södraLat, västraLon], [norraLat, östraLon]] (som manifestet).
+  // Tiles är BANA-SCOPADE sedan V8b (tiles/<slug>/{z}/{x}/{y}.webp) — den gamla
+  // platta layouten tiles/{z}/... fanns bara för Burlöv och togs bort när
+  // publiceringen speglade om live. Slug hämtas via SGRound, samma källa som
+  // mapcore.js addOrthophoto använder, så nedladdningen alltid gäller den bana
+  // användaren faktiskt valt.
+  function tileSlug() {
+    try { return (typeof SGRound !== "undefined" && SGRound.activeSlug()) || "malmo_burlov"; }
+    catch (_) { return "malmo_burlov"; }
+  }
   function tileUrls(bounds, minZoom, maxZoom) {
+    const slug = tileSlug();
     const [[south, west], [north, east]] = bounds;
     const urls = [];
     for (let z = minZoom; z <= maxZoom; z++) {
       const xMin = lon2x(west, z), xMax = lon2x(east, z);
       const yMin = lat2y(north, z), yMax = lat2y(south, z); // norr = mindre y
       for (let x = xMin; x <= xMax; x++)
-        for (let y = yMin; y <= yMax; y++) urls.push(`./tiles/${z}/${x}/${y}.webp`);
+        for (let y = yMin; y <= yMax; y++) urls.push(`./tiles/${slug}/${z}/${x}/${y}.webp`);
     }
     return urls;
   }
@@ -97,8 +107,16 @@
     const host = document.getElementById(hostId);
     if (!host) return;
     if (!manifest) {
-      try { manifest = await (await fetch("./tiles/manifest.json", { cache: "no-cache" })).json(); }
-      catch (_) { host.innerHTML = '<div class="hint">Kunde inte läsa kartmanifestet.</div>'; return; }
+      try {
+        manifest = await (await fetch(`./tiles/${tileSlug()}/manifest.json`,
+                                      { cache: "no-cache" })).json();
+      } catch (_) {
+        // Banor utan byggda ortofoto-tiles har inget manifest — det är ett
+        // normaltillstånd (bara ett fåtal banor har tiles), inte ett fel.
+        host.innerHTML = '<div class="hint">Den här banan har inga '
+                       + 'kartrutor att ladda ner än.</div>';
+        return;
+      }
     }
     const bounds = manifest.bounds, MIN = manifest.min_zoom, MAX = manifest.max_zoom;
     const liteN = tileUrls(bounds, MIN, MAX - 1).length;

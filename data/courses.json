@@ -1,26 +1,433 @@
 [
-  {
-    "slug": "malmo_burlov",
-    "name": "Malmö Burlöv Golfklubb",
-    "mobile_json": "burlov.json",
-    "loops": [
-      {"name": "Blue Course", "short": "Blå", "holes": 9},
-      {"name": "Yellow Course", "short": "Gul", "holes": 9},
-      {"name": "Black Course", "short": "Svart", "holes": 9}
-    ],
-    "rounds": [
-      {"value": "1-18",  "label": "1–18",  "seq": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]},
-      {"value": "10-27", "label": "10–27", "seq": [10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27]},
-      {"value": "19-9",  "label": "19–9",  "seq": [19,20,21,22,23,24,25,26,27,1,2,3,4,5,6,7,8,9]}
-    ],
-    "tees": ["61","57","53","48"]
-  },
-  {
-    "slug": "ven",
-    "name": "S:t Ibbs GK",
-    "mobile_json": "ven.json",
-    "loops": [{"name": "S:t Ibb", "short": "Ven", "holes": 9}],
-    "rounds": [{"value": "1-9", "label": "1–9", "seq": [1,2,3,4,5,6,7,8,9]}],
-    "tees": ["Tee"]
-  }
+ {
+  "slug": "malmo_burlov",
+  "name": "Malmö Burlöv Golfklubb",
+  "mobile_json": "burlov.json",
+  "loops": [
+   {
+    "name": "Blue Course",
+    "short": "Blå",
+    "holes": 9
+   },
+   {
+    "name": "Yellow Course",
+    "short": "Gul",
+    "holes": 9
+   },
+   {
+    "name": "Black Course",
+    "short": "Svart",
+    "holes": 9
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   },
+   {
+    "value": "10-27",
+    "label": "10–27",
+    "seq": [
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27
+    ]
+   },
+   {
+    "value": "19-9",
+    "label": "19–9",
+    "seq": [
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ]
+   }
+  ],
+  "tees": [
+   "61",
+   "57",
+   "53",
+   "48"
+  ]
+ },
+ {
+  "slug": "ven",
+  "name": "S:t Ibbs GK",
+  "mobile_json": "ven.json",
+  "loops": [
+   {
+    "name": "S:t Ibb",
+    "short": "Ven",
+    "holes": 9
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-9",
+    "label": "1–9",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ]
+   }
+  ],
+  "tees": [
+   "Tee"
+  ]
+ },
+ {
+  "slug": "elisefarm",
+  "name": "Elisefarm Golf Club",
+  "mobile_json": "elisefarm.json",
+  "loops": [
+   {
+    "name": null,
+    "short": "Elisefarm",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   }
+  ],
+  "tees": [
+   "Svart",
+   "Vit",
+   "Gul",
+   "Blå",
+   "Röd"
+  ]
+ },
+ {
+  "slug": "falsterbo",
+  "name": "Falsterbo golfklubb",
+  "mobile_json": "falsterbo.json",
+  "loops": [
+   {
+    "name": null,
+    "short": "Falsterbo",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   }
+  ],
+  "tees": [
+   "62",
+   "59",
+   "54",
+   "50",
+   "40"
+  ]
+ },
+ {
+  "slug": "flommen",
+  "name": "Flommens GK",
+  "mobile_json": "flommen.json",
+  "loops": [
+   {
+    "name": null,
+    "short": "Flommens",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   }
+  ],
+  "tees": [
+   "62",
+   "58",
+   "54",
+   "50",
+   "46"
+  ]
+ },
+ {
+  "slug": "torekov",
+  "name": "Torekov Golfklubb",
+  "mobile_json": "torekov.json",
+  "loops": [
+   {
+    "name": null,
+    "short": "Torekov",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   }
+  ],
+  "tees": [
+   "56",
+   "53",
+   "48",
+   "44"
+  ]
+ },
+ {
+  "slug": "ystad",
+  "name": "Ystads golfklubb",
+  "mobile_json": "ystad.json",
+  "loops": [
+   {
+    "name": null,
+    "short": "Ystads",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   }
+  ],
+  "tees": [
+   "Vit",
+   "Gul",
+   "Blå",
+   "Röd",
+   "Orange"
+  ]
+ },
+ {
+  "slug": "barseback",
+  "name": "Barsebäcks G&CC",
+  "mobile_json": "barseback.json",
+  "loops": [
+   {
+    "name": "Ocean Course",
+    "short": "Ocean",
+    "holes": 18
+   },
+   {
+    "name": "Pine Course",
+    "short": "Pine",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "Ocean Course",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   },
+   {
+    "value": "19-36",
+    "label": "Pine Course",
+    "seq": [
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     32,
+     33,
+     34,
+     35,
+     36
+    ]
+   }
+  ],
+  "tees": [
+   "Vit",
+   "Gul",
+   "Blå",
+   "Röd"
+  ]
+ }
 ]
