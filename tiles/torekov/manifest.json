@@ -1,0 +1,16 @@
+{
+ "min_zoom": 13,
+ "max_zoom": 19,
+ "bounds": [
+  [
+   56.43257236647503,
+   12.631112940370466
+  ],
+  [
+   56.44565793352497,
+   12.658200659629534
+  ]
+ ],
+ "attribution": "Ortofoto © Lantmäteriet (CC BY 4.0)",
+ "source": "orto-a2-2024 (LM-moln, /vsicurl)"
+}
