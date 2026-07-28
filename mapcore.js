@@ -127,7 +127,7 @@ const MapCore = (() => {
     if (!tees.length) return (h.line && h.line.length) ? h.line[0] : null;
     const sel = localStorage.getItem("sg_tee") || "";
     const märkt = tees.find(t => t.label && t.label === sel);
-    if (märkt) return [märkt.lat, märkt.lon];
+    if (märkt) return [märkt.lat, märkt.lon];   // exakt ELLER syntetisk (t.approx)
     const pt = _TEE_POINTS[h.loop] && _TEE_POINTS[h.loop][h.hole] && _TEE_POINTS[h.loop][h.hole][sel];
     if (pt && pt.length === 2) return [pt[0], pt[1]];
     const r = _TEE_RANK.indexOf(sel);                     // fallback: rang·boxar/4
@@ -139,8 +139,11 @@ const MapCore = (() => {
   function teeIsApprox(h) {
     const sel = localStorage.getItem("sg_tee") || "";
     const tees = h.tees || [];
-    // Har boxen en egen label som matchar valet är punkten exakt.
-    if (tees.some(t => t.label && t.label === sel)) return false;
+    // Boxens egen label matchar valet: exakt om det är en fysisk box, approx om
+    // teen är syntetisk (scorekortstee som OSM saknar box för — rätt avstånd,
+    // ungefärlig punkt, se course/synthetic_tees.py).
+    const märkt = tees.find(t => t.label && t.label === sel);
+    if (märkt) return !!märkt.approx;
     const m = _TEE_POINTS[h.loop] && _TEE_POINTS[h.loop][h.hole];
     if (m && m._approx && m._approx.indexOf(sel) >= 0) return true;
     // Ingen märkt box för vald tee och ingen legacy-punkt -> vi gissar på rang,
