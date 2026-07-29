@@ -132,6 +132,7 @@
 <!-- Live-scoring: samma tre script som Logga slag. Ger leaderboard-modellen. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
+<script src="./store.js"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
@@ -144,8 +145,7 @@
    Par per spelarhål slås upp ur burlov.json + SGRound (samma som gamla vyn). */
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
 
-let LIVE = null;
-try { LIVE = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+let LIVE = null;   // matchen bor i Store (APPSTORE_PLAN §9.1); sätts i Store.ready()
 const liveOn = () => !!(LIVE && LIVE.gameId && typeof SGLive !== "undefined");
 
 let LB = null;            // senaste leaderboard-modellen
@@ -304,8 +304,9 @@ async function render() {
 
   startLeaderboard();   // prenumerera en gång när par-listan finns
 }
-render();
-window.addEventListener("pageshow", render);
+const boot = () => Store.ready().then(() => { LIVE = Store.match(); render(); });
+boot();
+window.addEventListener("pageshow", boot);
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar

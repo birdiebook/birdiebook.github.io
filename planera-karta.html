@@ -112,7 +112,7 @@ let ROUND = [], GLOBALS = [], hi = 0, WIND = null, slopeOn = false;
 let legs = [];   // [[lat,lon], …] landningspunkter för valt hål (tee→green-kedjan)
 
 // ---- Slagkedje-persistens: sg-plan-v1, { [globaltHålnr]: { legs: [[lat,lon],…] } }.
-// Egen nyckel, helt skild från rundloggen (sg-rundlogg-v1) — rör ALDRIG den.
+// Egen nyckel, helt skild från den spelade rundan (Store) — rör ALDRIG den.
 const PLAN_KEY = "sg-plan-v1";
 function loadPlanStore() {
   try { return JSON.parse(localStorage.getItem(PLAN_KEY) || "{}") || {}; } catch (e) { return {}; }

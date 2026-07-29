@@ -108,6 +108,7 @@
 <!-- Live-scoring (additivt): samma tre script som Logga slag. Ger leaderboarden. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
+<script src="./store.js"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
@@ -115,15 +116,13 @@
 // state (S.holes, sg_hole) använder spelarens hålnummer 1–18; banans globala
 // nummer syns bara i den lilla beskrivningen ("Gul 1").
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
-const KEY = "sg-rundlogg-v1";
 const SG_LABEL = { off_the_tee: "Utslag", approach: "Inspel", around_green: "Närspel" };
 
 /* ---------- live-leaderboard (LIVE_SCORING_SPEC.md §7, steg 4) ----------
-   Läser samma live-state som Logga slag skriver (sg-live-v1). Är man med i en
+   Läser samma match som Logga slag skriver (Store.match()). Är man med i en
    match prenumererar vi på molnets score och visar allas löpande resultat i
    realtid. Rör inget i den lokala rundvyn — additivt kort överst. */
-let LIVE = null;
-try { LIVE = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+let LIVE = null;   // sätts i Store.ready() nedan
 const liveOn = () => !!(LIVE && LIVE.gameId && typeof SGLive !== "undefined");
 let LB = null;          // senaste leaderboard-modellen från subscriben
 let myUid = null;       // egen uid → markera egen rad
@@ -167,9 +166,9 @@ function startLeaderboard(parByRel) {
 }
 window.addEventListener("pagehide", () => { if (lbUnsub) lbUnsub(); });
 
-function loadState() {
-  try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; }
-}
+// Rundan bor i Store (APPSTORE_PLAN §9.1) — synkron läsning ur minnescachen,
+// sidan bootar i Store.ready().
+const loadState = () => Store.active();
 function loadAnalysis(S) {
   // SG-analysen sparas av index.html vid "Skicka" — visas bara för samma runda
   try {
@@ -178,18 +177,15 @@ function loadAnalysis(S) {
   } catch (e) { return null; }
 }
 function holeScore(S, n) {
-  const h = S && S.holes && S.holes[String(n)];
+  const h = Store.holeIn(S, n);
   if (!h) return null;
   const shots = (h.shots ? h.shots.length : 0) + (h.adj || 0);
   const score = shots + (h.putts || 0) + (h.pen || 0);
   return score > 0 ? { score, shots, putts: h.putts || 0, pen: h.pen || 0, adj: h.adj || 0 } : null;
 }
 function goToHole(n) {
-  try {
-    localStorage.setItem("sg_hole", n);
-    const S = loadState();
-    if (S) { S.current = n; localStorage.setItem(KEY, JSON.stringify(S)); }
-  } catch (e) {}
+  try { localStorage.setItem("sg_hole", n); } catch (e) {}
+  Store.setCurrent(n);
   location.href = "./index.html";
 }
 const fmtDiff = d => d === 0 ? "0" : (d > 0 ? "+" + d : String(d));
@@ -197,32 +193,22 @@ const fmtSg = v => (v > 0 ? "+" : "") + v.toFixed(1);
 
 /* ---------- redigering (samma state som rundloggen) ---------- */
 let editing = null;   // spelarens hålnr (1–18) med öppen editor
-function ensureHole(S, n) {
-  const k = String(n);
-  if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
-                                  putts: 0, pen: 0, holedOut: false, adj: 0 };
-  if (S.holes[k].adj == null) S.holes[k].adj = 0;
-  return S.holes[k];
-}
 // fält: 'adj' (glömda/extra slag, kan bli negativ ned till −loggade), 'putts', 'pen'
 function bump(n, field, delta) {
-  const S = loadState();
-  if (!S) return;
-  const h = ensureHole(S, n);
-  if (field === "adj") {
-    const next = (h.adj || 0) + delta;
-    if (h.shots.length + next < 0) return;   // totala slag kan inte bli negativa
-    h.adj = next;
-  } else {
-    h[field] = Math.max(0, (h[field] || 0) + delta);
-    if (field === "putts" && h[field] > 0) h.holedOut = false;
-  }
-  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+  Store.mutateHole(n, h => {
+    if (field === "adj") {
+      const next = (h.adj || 0) + delta;
+      if (h.shots.length + next < 0) return false;   // totala slag kan inte bli negativa
+      h.adj = next;
+    } else {
+      h[field] = Math.max(0, (h[field] || 0) + delta);
+      if (field === "putts" && h[field] > 0) h.holedOut = false;
+    }
+  });
   render();
 }
 function editorRow(S, g) {
-  const h = (S && S.holes && S.holes[String(g)]) ||
-            { shots: [], putts: 0, pen: 0, adj: 0 };
+  const h = Store.holeIn(S, g) || { shots: [], putts: 0, pen: 0, adj: 0 };
   const shots = h.shots.length + (h.adj || 0);
   const step = (field, val, lbl, minusDis) => `
     <div class="step">
@@ -351,7 +337,8 @@ async function render() {
   // bandata cachas (realtids-leaderboarden triggar render vid varje score → hämta bara en gång)
   const byGlobal = await loadCourse();
 
-  const current = S && S.view === "hole" ? S.current : null;
+  // Före §9.1 låg UI-läget ("view") i rundloggen; nu är rundans status källan.
+  const current = S && S.status === "active" ? S.current : null;
   const t = { totScore: 0, totPar: 0, totPutts: 0, played: 0, nHoles: seq.length,
               dist: { birdie: 0, par: 0, bogey: 0, dbl: 0 },
               byPar: {}, worstHole: null };
@@ -422,9 +409,11 @@ async function render() {
   // starta live-prenumerationen när par-listan finns (en gång)
   startLeaderboard(parByRel);
 }
-render();
+Store.ready().then(() => { LIVE = Store.match(); render(); });
 // uppdatera om man kommer tillbaka hit med ny data
-window.addEventListener("pageshow", render);
+window.addEventListener("pageshow", () => Store.ready().then(() => {
+  LIVE = Store.match(); render();
+}));
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar

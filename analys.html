@@ -119,14 +119,15 @@
   <a href="./analys.html" class="active"><span class="ico">📊</span>Analys</a>
 </nav>
 <script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./store.js"></script>
 <script src="./analys-core.js"></script>
 <script>
 "use strict";
 /* Analys efter rundan — räknas helt i telefonen ur den senast loggade rundan
-   (localStorage sg-rundlogg-v1) + banans burlov.json. Ingen PC/server/tunnel.
+   (Store, se APPSTORE_PLAN §9.1) + banans burlov.json. Ingen PC/server/tunnel.
    Slag-modell och mått: analys-core.js (facit-speglad, se ANALYS_MOBIL_V1_BRIEF). */
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
-const KEY = "sg-rundlogg-v1";
 
 function esc(s) { return String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -134,7 +135,8 @@ const fmtDiff = d => d === 0 ? "E" : (d > 0 ? "+" + d : String(d));
 const pct = v => v == null ? "–" : Math.round(v) + "%";
 const m1 = v => v == null ? "–" : (v < 10 ? v.toFixed(1) : Math.round(v)) + " m";
 
-function loadState() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
+// Rundan bor i Store (APPSTORE_PLAN §9.1); sidan bootar i Store.ready().
+const loadState = () => Store.active();
 let coursePromise = null;
 function loadCourse() {
   if (coursePromise) return coursePromise;
@@ -287,7 +289,7 @@ async function render() {
   seq.forEach((g, i) => {
     const rel = i + 1;
     const band = byGlobal[g];
-    const res = AnalysCore.holeAnalysis(S && S.holes ? S.holes[String(rel)] : null, band);
+    const res = AnalysCore.holeAnalysis(Store.holeIn(S, rel), band);
     results.push(res);
     if (res.played) {
       const par = res.par, d = par != null ? res.score - par : null;
@@ -320,8 +322,8 @@ async function render() {
     ${tableHtml(trows.join(""), A)}
     ${note}`;
 }
-render();
-window.addEventListener("pageshow", render);
+Store.ready().then(render);
+window.addEventListener("pageshow", () => Store.ready().then(render));
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone). */

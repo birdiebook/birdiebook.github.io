@@ -260,6 +260,8 @@
 <script src="./playas.js"></script>
 <script src="./slopeoverlay.js"></script>
 <script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./store.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./live.js"></script>
 <script>
@@ -729,22 +731,22 @@ function evalFollow(lat, lon, acc) {
   applyFrame({ animate: true });
 }
 
-// Reggade slag för aktuellt hål ur rundloggen (sg-rundlogg-v1, skrivs av Logga
-// slag-sidan). S.holes nycklas på spelarens hål 1–18 = hi+1, samma valuta som
+// Reggade slag för aktuellt hål ur rundan (Store, skrivs av Logga slag-sidan
+// och härifrån). Hålen nycklas på spelarens hål 1–18 = hi+1, samma valuta som
 // kartan → ingen översättning. Slagen lagras {lat,lon,acc,ts}; kartan räknar på
 // [lat,lon]. Ritas in i samma layers-grupp som rensas vid varje hålbyte, så
 // plotten uppdateras när man kommer tillbaka från loggen (pageshow → syncHole).
 function drawShots() {
-  let log = null;
-  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-  const rec = log && log.holes && log.holes[String(hi + 1)];
+  const rec = Store.holeIn(Store.active(), hi + 1);
   MapCore.drawShots(shotLayer, rec);   // rensar + ritar slagbana/punkter/green/pin
 }
 
-// Logga ett slag direkt från kartvyn: färsk GPS-fix → pusha till rundloggen
-// (sg-rundlogg-v1) för aktuellt hål (hi+1), samma format/struktur som Logga
+// Logga ett slag direkt från kartvyn: färsk GPS-fix → pusha till rundan (Store,
+// APPSTORE_PLAN §9.1) för aktuellt hål (hi+1), samma format/struktur som Logga
 // slag-sidan skriver ({lat,lon,acc,ts}). Ritar om slag-lagret på plats utan att
 // röra hålvyn. Varnar vid svag GPS precis som index.html:s capture().
+// Saknas aktiv runda skapar Store.addShot en — förr gjorde varje skrivställe här
+// sin egen fallback, som gav en runda helt utan spelare, bana och tee.
 let logBusy = false;
 function logShot() {
   if (logBusy) return;
@@ -759,16 +761,7 @@ function logShot() {
     }
     const shot = { lat: p.coords.latitude, lon: p.coords.longitude,
       acc: Math.round(acc * 10) / 10, ts: new Date().toISOString() };
-    let log = null;
-    try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-    if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
-                      current: hi + 1, holes: {} };
-    if (!log.holes) log.holes = {};
-    const k = String(hi + 1);
-    if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
-                                        putts: 0, pen: 0, adj: 0 };
-    log.holes[k].shots.push(shot);
-    try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+    Store.addShot(hi + 1, shot);
     if (navigator.vibrate) navigator.vibrate(30);
     drawShots();
     renderScore();   // ett loggat slag höjer total-räknaren
@@ -782,7 +775,7 @@ function logShot() {
 }
 
 // Markera boll-på-green ("green") eller pin ("pin") direkt från kartvyn: färsk
-// GPS-fix → skriv positionen i rundloggen (sg-rundlogg-v1) för aktuellt hål,
+// GPS-fix → skriv positionen i rundan (Store) för aktuellt hål,
 // samma format/struktur som Logga slag-sidans capture() ({lat,lon,acc,ts}).
 // Bekräftar innan en redan reggad position ersätts. Delad pin pushas dessutom
 // till ev. live-match (samma som index.html:s livePushPin).
@@ -790,12 +783,9 @@ function markPoint(kind) {
   if (markBusy) return;
   if (!("geolocation" in navigator)) { alert("Ingen GPS i webbläsaren."); return; }
   const fab = document.getElementById(kind === "green" ? "greenfab" : "pinfab");
-  // finns redan? bekräfta ersättning (läs aktuell rundlogg)
-  let existing = null;
-  try {
-    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
-    existing = l && l.holes && l.holes[String(hi + 1)] && l.holes[String(hi + 1)][kind];
-  } catch (e) {}
+  // finns redan? bekräfta ersättning
+  const rec0 = Store.holeIn(Store.active(), hi + 1);
+  const existing = rec0 ? rec0[kind] : null;
   const label = kind === "green" ? "Green-position" : "Pin-position";
   if (existing && existing.lat != null &&
       !confirm(`${label} finns redan — ersätta?`)) return;
@@ -809,16 +799,7 @@ function markPoint(kind) {
     }
     const pt = { lat: p.coords.latitude, lon: p.coords.longitude,
       acc: Math.round(acc * 10) / 10, ts: new Date().toISOString() };
-    let log = null;
-    try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-    if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
-                      current: hi + 1, holes: {} };
-    if (!log.holes) log.holes = {};
-    const k = String(hi + 1);
-    if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
-                                        putts: 0, pen: 0, adj: 0 };
-    log.holes[k][kind] = pt;
-    try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+    Store.mutateHole(hi + 1, h => { h[kind] = pt; });
     if (navigator.vibrate) navigator.vibrate(30);
     // pin delas till matchen (om man är med i ett live-game), som på Logga slag-sidan
     if (kind === "pin") livePushPinFromMap(pt);
@@ -836,11 +817,7 @@ let markBusy = false;
 // Sätt/rensa "on"-läget på green-/pin-knapparna efter vad som är reggat för
 // aktuellt hål i rundloggen (grön/röd tint = position finns).
 function refreshFabs() {
-  let rec = null;
-  try {
-    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
-    rec = l && l.holes && l.holes[String(hi + 1)];
-  } catch (e) {}
+  const rec = Store.holeIn(Store.active(), hi + 1);
   const gf = document.getElementById("greenfab"), pf = document.getElementById("pinfab");
   const hf = document.getElementById("holeoutfab");
   if (gf) gf.classList.toggle("on", !!(rec && rec.green && rec.green.lat != null));
@@ -852,16 +829,7 @@ function refreshFabs() {
 // påverkar inte scoren (chip-in = hål ut med 0 putts). Kan reggas/avreggas.
 // Ett hål-ut kan uppfylla krav 2 för auto-hålbytet → kolla direkt efteråt.
 function toggleHoleOut() {
-  let log = null;
-  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
-                    current: hi + 1, holes: {} };
-  if (!log.holes) log.holes = {};
-  const k = String(hi + 1);
-  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
-                                      putts: 0, pen: 0, adj: 0 };
-  log.holes[k].holedOut = !log.holes[k].holedOut;
-  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  Store.mutateHole(hi + 1, h => { h.holedOut = !h.holedOut; });
   if (navigator.vibrate) navigator.vibrate(15);   // knapptryck (ej auto-bytet)
   refreshFabs();
   maybeAutoAdvance();
@@ -894,10 +862,7 @@ function goToHole(rel) {
   livePushScoreFromMap(hi + 1);   // pusha hålet man LÄMNAR (som index.html vid hålbyte)
   hi = rel - 1;
   try { localStorage.setItem("sg_hole", String(rel)); } catch (e) {}
-  try {
-    const log = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
-    if (log) { log.current = rel; localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); }
-  } catch (e) {}
+  Store.setCurrent(rel);
   drawHole();
 }
 
@@ -912,11 +877,7 @@ function fullScore(rec) {
   return scoreTotal(rec) + (rec && rec.putts ? rec.putts : 0)
                          + (rec && rec.pen ? rec.pen : 0);
 }
-function currentHoleRec() {
-  let l = null;
-  try { l = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-  return l && l.holes ? l.holes[String(hi + 1)] : null;
-}
+function currentHoleRec() { return Store.holeIn(Store.active(), hi + 1); }
 function renderScore() {
   const rec = currentHoleRec();
   const v = document.getElementById("scoreVal");
@@ -931,19 +892,12 @@ function renderScore() {
 // Justera antal puttar för aktuellt hål (samma fält som Logga slag-sidan).
 // steg = +1 / −1. − stoppar vid 0.
 function adjustPutts(step) {
-  let log = null;
-  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
-                    current: hi + 1, holes: {} };
-  if (!log.holes) log.holes = {};
-  const k = String(hi + 1);
-  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
-                                      putts: 0, pen: 0, adj: 0 };
-  const rec = log.holes[k];
-  const next = (rec.putts || 0) + step;
-  if (next < 0) return;   // inte under 0
-  rec.putts = next;
-  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  const ok = Store.mutateHole(hi + 1, rec => {
+    const next = (rec.putts || 0) + step;
+    if (next < 0) return false;   // inte under 0
+    rec.putts = next;
+  });
+  if (!ok) return;
   if (navigator.vibrate) navigator.vibrate(15);
   renderScore();
   livePushScoreFromMap(hi + 1);   // håll live-leaderboarden i synk
@@ -952,28 +906,20 @@ function adjustPutts(step) {
 // Justera scoren via adj (utan GPS-position), så antalet kan sättas rätt även
 // när inte varje slag GPS-taggats. steg = +1 / −1. − stoppar vid 0 slag.
 function adjustScore(step) {
-  let log = null;
-  try { log = JSON.parse(localStorage.getItem("sg-rundlogg-v1")); } catch (e) {}
-  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null,
-                    current: hi + 1, holes: {} };
-  if (!log.holes) log.holes = {};
-  const k = String(hi + 1);
-  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null,
-                                      putts: 0, pen: 0, adj: 0 };
-  const rec = log.holes[k];
-  if (step < 0 && scoreTotal(rec) <= 0) return;   // inte under 0
-  rec.adj = (rec.adj || 0) + step;
-  try { localStorage.setItem("sg-rundlogg-v1", JSON.stringify(log)); } catch (e) {}
+  const ok = Store.mutateHole(hi + 1, rec => {
+    if (step < 0 && scoreTotal(rec) <= 0) return false;   // inte under 0
+    rec.adj = (rec.adj || 0) + step;
+  });
+  if (!ok) return;
   if (navigator.vibrate) navigator.vibrate(15);
   renderScore();
   livePushScoreFromMap(hi + 1);   // håll live-leaderboarden i synk
 }
 
 // Pusha reggad pin till ev. live-match. Kartan har ingen Live-modul → läser
-// gameId ur localStorage (sg-live-v1) och anropar SGLive direkt. Fire-and-forget.
+// matchen ur Store och anropar SGLive direkt. Fire-and-forget.
 function livePushPinFromMap(pt) {
-  let live = null;
-  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  const live = Store.match();
   if (!live || !live.gameId || typeof SGLive === "undefined") return;
   const g = SGRound.relToGlobal(hi + 1);
   if (g == null) return;
@@ -982,20 +928,15 @@ function livePushPinFromMap(pt) {
 }
 
 // Pusha ett håls score till ev. live-match — motsvarigheten till index.html:s
-// Live.push, men kartan har ingen Live-modul: läs gameId ur sg-live-v1 och anropa
+// Live.push, men kartan har ingen Live-modul: läs matchen ur Store och anropa
 // SGLive direkt. Hålnr = spelarens hål (rel 1–18), SAMMA nyckel som index.html
 // (score keyas RELATIVT, till skillnad från pins som är globala). Komponenterna
 // härleds precis som SGScore.components: strokes = shots + adj. Fire-and-forget:
 // fel/offline sväljs, scoren finns kvar lokalt och molnet hinner ikapp senare.
 function livePushScoreFromMap(rel) {
-  let live = null;
-  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  const live = Store.match();
   if (!live || !live.gameId || typeof SGLive === "undefined") return;
-  let rec = null;
-  try {
-    const l = JSON.parse(localStorage.getItem("sg-rundlogg-v1"));
-    rec = l && l.holes && l.holes[String(rel)];
-  } catch (e) {}
+  const rec = Store.holeIn(Store.active(), rel);
   const strokes = (rec && rec.shots ? rec.shots.length : 0) + (rec && rec.adj ? rec.adj : 0);
   const putts = rec && rec.putts ? rec.putts : 0;
   const pen = rec && rec.pen ? rec.pen : 0;
@@ -1016,11 +957,10 @@ function drawPin() {
 }
 
 // Prenumerera på matchens delade pins (om man är med i ett live-game). Kartan har
-// ingen egen Live-modul → läser live-state direkt ur localStorage (sg-live-v1).
+// ingen egen Live-modul → läser matchen ur Store.
 // Realtids-cb ritar bara om pin-lagret (drawPin), inte hela hålvyn. Fire-and-forget.
 async function initSharedPins() {
-  let live = null;
-  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  const live = Store.match();
   if (!live || !live.gameId || typeof SGLive === "undefined") return;
   try {
     await SGLive.initLive();
@@ -1288,7 +1228,7 @@ window.addEventListener("resize", onViewportChange);
 window.addEventListener("orientationchange", onViewportChange);
 
 window.addEventListener("pagehide", () => { if (pinUnsub) { pinUnsub(); pinUnsub = null; } });
-init();
+Store.ready().then(init);   // rundan hydreras ur IndexedDB innan första renderingen
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar

@@ -1,7 +1,7 @@
 "use strict";
 /* Redigera slag — fristående sida (bygger på MapCore, rör inte karta.html).
  *
- * Rättar slag i den osynkade rundan (localStorage sg-rundlogg-v1) INNAN den
+ * Rättar slag i den osynkade rundan (Store, APPSTORE_PLAN §9.1) INNAN den
  * synkas till analysen: flytta, radera (+ omnumrering) och lägg till (infoga +
  * omnumrering) slagpositioner. Interaktionsgrammatik: "välj i remsan, agera på
  * kartan" — kartan är positionsytan (tap-to-place), remsan är sekvens-kontrollern.
@@ -10,7 +10,6 @@
  * ritas den IDENTISKT med ett välloggat GPS-slag (colorForShot: acc:null → grön).
  */
 
-const KEY = "sg-rundlogg-v1";
 let map, layers, shotLayer;
 let HOLES = [], byGlobal = {}, ROUND = [];
 let hi = 0;                 // 0-baserat index i ROUND (spelarens hål = hi+1)
@@ -20,23 +19,13 @@ let sel = null;            // {type:"shot",i} | {type:"gap",i} | {type:"adj"} | 
 // HÅLL I SYNK med PC-sidan (synth_tee_origin) om värdet ändras där.
 const SYNTH_MIN_M = 40;
 
-// ---- localStorage-modell (samma schema som Logga slag/karta skriver) ----
-function loadLog() {
-  try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; }
-}
-function keyN() { return String(hi + 1); }
-function currentRec() { const l = loadLog(); return l && l.holes ? l.holes[keyN()] : null; }
-// Mutera aktuellt håls post; skapar log/hål vid behov. fn kan returnera false → avbryt.
+// ---- rundmodellen (Store, APPSTORE_PLAN §9.1) ----
+function currentRec() { return Store.holeIn(Store.active(), hi + 1); }
+// Mutera aktuellt håls post; skapar runda/hål vid behov. fn kan returnera false → avbryt.
 function mutate(fn) {
-  let log = loadLog();
-  if (!log) log = { startedAt: new Date().toISOString(), endedAt: null, current: hi + 1, holes: {} };
-  if (!log.holes) log.holes = {};
-  const k = keyN();
-  if (!log.holes[k]) log.holes[k] = { shots: [], green: null, pin: null, putts: 0, pen: 0, adj: 0 };
-  if (fn(log.holes[k], log) === false) return false;
-  try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {}
-  if (navigator.vibrate) navigator.vibrate(15);
-  return true;
+  const ok = Store.mutateHole(hi + 1, fn);
+  if (ok && navigator.vibrate) navigator.vibrate(15);
+  return ok;
 }
 
 // ---- rendering ----
@@ -156,12 +145,11 @@ function renderHint() {
 // mobile_source.py ~221-225). Skannar HELA rundan; per-hål-notiser är tryckbara →
 // hoppar till hålet. Trösklarna hålls i synk med PC (SYNTH_MIN_M ovan).
 function computeNotices() {
-  const log = loadLog();
-  const holes = (log && log.holes) ? log.holes : {};
+  const log = Store.active();
   const out = [];
   let totalPresses = 0, finishedAny = false;
   for (let r = 1; r <= ROUND.length; r++) {
-    const rec = holes[String(r)];
+    const rec = Store.holeIn(log, r);
     if (!rec) continue;
     const shots = (rec.shots || []).filter(s => s && s.lat != null && s.lon != null);
     totalPresses += shots.length;
@@ -294,13 +282,12 @@ function deleteShot(i) {
 // ---- live-push ----
 // Pusha aktuellt håls score till ev. live-match — identiskt med karta.html:s
 // livePushScoreFromMap så en redigering håller leaderboarden i synk (add/radera/
-// adj-konvertering ändrar strokes = shots + adj). Läser gameId ur sg-live-v1 och
+// adj-konvertering ändrar strokes = shots + adj). Läser gameId ur Store.match() och
 // anropar SGLive direkt (pushHoleScore self-init:ar via initLive). Hålnr = spelarens
 // hål (rel 1–18), samma nyckel som index/karta. Fire-and-forget: fel/offline sväljs,
 // scoren finns kvar lokalt och molnet hinner ikapp. SGLive saknas → tyst no-op.
 function livePushScore(rel) {
-  let live = null;
-  try { live = JSON.parse(localStorage.getItem("sg-live-v1")); } catch (e) {}
+  const live = Store.match();
   if (!live || !live.gameId || typeof SGLive === "undefined") return;
   const rec = currentRecFor(rel);
   const strokes = (rec && rec.shots ? rec.shots.length : 0) + (rec && rec.adj ? rec.adj : 0);
@@ -309,10 +296,7 @@ function livePushScore(rel) {
   try { SGLive.pushHoleScore(live.gameId, rel, { strokes, putts, pen }).catch(e => SGLive.liveWarn && SGLive.liveWarn("score", e)); }
   catch (e) {}
 }
-function currentRecFor(rel) {
-  const l = loadLog();
-  return l && l.holes ? l.holes[String(rel)] : null;
-}
+function currentRecFor(rel) { return Store.holeIn(Store.active(), rel); }
 
 // ---- hål-navigering ----
 function goHole(rel) {
@@ -320,8 +304,7 @@ function goHole(rel) {
   livePushScore(hi + 1);   // pusha hålet man LÄMNAR (som karta.html goToHole)
   hi = rel - 1; sel = null;
   try { localStorage.setItem("sg_hole", String(rel)); } catch (e) {}
-  const log = loadLog();
-  if (log) { log.current = rel; try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} }
+  Store.setCurrent(rel);
   drawHole();
 }
 
@@ -354,4 +337,4 @@ async function init() {
   hi = rel - 1;
   drawHole();
 }
-init();
+Store.ready().then(init);

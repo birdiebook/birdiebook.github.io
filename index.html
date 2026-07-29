@@ -216,12 +216,11 @@
      Faller tyst tillbaka till "ingen live" om CDN inte nås (t.ex. offline). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
+<script src="./store.js"></script>
 <script src="./live.js"></script>
 <script src="./offline-download.js"></script>
 <script>
 "use strict";
-const KEY = "sg-rundlogg-v1";
-const KEY_LAST = "sg-rundlogg-sist";
 const DEFAULT_COURSE = "Malmö Burlöv Golfklubb";
 // V11: här fanns tidigare en `const` som frös SGRound.HOLES vid sidladdning
 // (18 hos Burlöv) — bytte man sen aktiv bana till en 9-håls bana (Ven) via
@@ -266,32 +265,37 @@ function saveCourseHistory(list) {
   try { localStorage.setItem(KEY_COURSE_HIST, JSON.stringify(list)); } catch (e) {}
 }
 
-/* ---------- state ---------- */
-let S = load() || freshState();
-// äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
-SGRound.migrateSgHole();
-if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
+/* ---------- state ----------
+   Rundan bor i Store (APPSTORE_PLAN §9.1). S ÄR det aktiva runddokumentet:
+   Store.active() returnerar det LEVANDE objektet, så koden nedan kan fortsätta
+   mutera S rakt av och save() blir bara en flush ner i IndexedDB.
 
-function freshState(player, course) {
-  return { view: "setup", player: player || "", course: course || DEFAULT_COURSE,
+   Före rundstart finns ingen runda — då är S ett UTKAST som inte lagras. Först
+   "Starta runda" skapar dokumentet (Store.startRound), precis som freshState +
+   första save() gjorde förr.
+
+   `view` är UI-läge och ligger numera i localStorage, inte i rundan (§9.1
+   beslut G: localStorage = inställningar, IndexedDB = användardata). */
+let S = null;
+let lastFinishedDoc = null;    // senast avslutade rundan, för "hämta igen"-knappen
+const VIEW_KEY = "sg_view";
+function draftState() {
+  return { player: localStorage.getItem("sg_player") || "",
+           courseName: SGRound.courseName() || DEFAULT_COURSE,
            tee: localStorage.getItem("sg_tee") || "",
-           startedAt: null, endedAt: null, current: 1, holes: {} };
+           startedAt: null, endedAt: null, current: 1, holes: [] };
 }
-function load() {
-  try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; }
+function currentView() {
+  if (!Store.active()) return "setup";
+  const v = localStorage.getItem(VIEW_KEY);
+  return v === "summary" ? "summary" : "hole";
 }
+function setView(v) { try { localStorage.setItem(VIEW_KEY, v); } catch (e) {} }
 function save() {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(S));
-    localStorage.setItem("sg_hole", S.current);   // delas med hålkartan
-  } catch (e) {}
+  Store.touch();
+  try { localStorage.setItem("sg_hole", S.current); } catch (e) {}   // delas med hålkartan
 }
-function hole(n) {
-  const k = String(n);
-  if (!S.holes[k]) S.holes[k] = { shots: [], green: null, pin: null,
-                                  putts: 0, pen: 0, adj: 0 };
-  return S.holes[k];
-}
+function hole(n) { return Store.hole(n); }
 
 /* ---------- GPS ---------- */
 let lastFix = null, watching = false, busy = false, wakeLock = null;
@@ -451,24 +455,11 @@ function hav(a, b) {
 const fmtM = m => `${Math.round(m)} m`;
 const fmtT = iso => new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
 
-/* ---------- export ---------- */
-function exportData() {
-  const holes = Object.keys(S.holes).map(Number).sort((a, b) => a - b)
-    .map(n => ({ n, h: S.holes[String(n)] }))
-    .filter(x => x.h.shots.length + x.h.putts + x.h.pen + (x.h.adj || 0) > 0)
-    // internt är hålen nycklade på spelarens nummer (1–18); analysen vill ha
-    // banans globala hålnummer, så översätt via vald runda vid export
-    .map(x => ({ hole: SGRound.relToGlobal(x.n) || x.n, shots: x.h.shots,
-                 green: x.h.green, pin: x.h.pin,
-                 putts: x.h.putts, penalties: x.h.pen,
-                 holed_out: x.h.putts === 0 && x.h.shots.length > 0,
-                 score_adjust: x.h.adj || 0 }));
-  return { format: "golf-sg-mobil", version: 1, player: S.player.trim(),
-           course: S.course.trim(), round: SGRound.roundName(),
-           tee: S.tee || null,
-           started_at: S.startedAt,
-           ended_at: S.endedAt || new Date().toISOString(), holes };
-}
+/* ---------- export ----------
+   Projektionen dokument → wire-format bor i Store.export (§9.1 beslut A). Den
+   är låst av golden-testet i tests/js/test_store.mjs: formatet mot
+   /api/rounds/upload får inte röra sig en byte. */
+function exportData() { return Store.export(S); }
 function exportFilename() {
   const d = (S.startedAt || new Date().toISOString()).slice(0, 10);
   const p = S.player.trim().replace(/[^\wåäöÅÄÖ]+/g, "_") || "runda";
@@ -509,10 +500,9 @@ async function enrichSharedPins() {
   try { shared = await SGLive.fetchPins(Live.state().gameId); }
   catch (e) { SGLive.liveWarn("hämta pins", e); return; }
   let changed = false;
-  for (const k of Object.keys(S.holes)) {
-    const h = S.holes[k];
+  for (const h of S.holes) {
     if (!h || (h.pin && h.pin.lat != null)) continue;         // egen pin vinner
-    const g = SGRound.relToGlobal(Number(k));
+    const g = h.global;
     const sp = g != null ? shared[g] : null;
     if (sp && sp.lat != null) {
       h.pin = { lat: sp.lat, lon: sp.lon, acc: sp.acc, ts: new Date().toISOString() };
@@ -650,11 +640,14 @@ const TilePreload = (() => {
 })();
 
 function render() {
-  if (S.view === "setup") renderSetup();
-  else if (S.view === "hole") renderHole();
+  const view = currentView();
+  // S följer alltid Store: aktivt dokument när en runda pågår, annars utkastet
+  S = Store.active() || (S && !S.id ? S : draftState());
+  if (view === "setup") renderSetup();
+  else if (view === "hole") renderHole();
   else renderSummary();
   // värm hålkartans rutor för aktuellt hål (+ nästa) medan man loggar
-  if (S.view === "hole") TilePreload.forHole(S.current);
+  if (view === "hole") TilePreload.forHole(S.current);
 }
 
 /* Live-kort på setup-vyn: skapa match / gå med (spelkod + namn) eller visa
@@ -718,7 +711,10 @@ function wireLiveCard() {
 
 function renderSetup() {
   const insecure = !window.isSecureContext;
-  const last = localStorage.getItem(KEY_LAST);
+  // Förr låg "senaste avslutade rundan" i en egen localStorage-nyckel som skrevs
+  // över varje gång. Nu ligger ALLA rundor i Store; den senast avslutade hämtas
+  // vid boot (lastFinishedDoc) och exporteras på begäran.
+  const last = lastFinishedDoc ? JSON.stringify(Store.export(lastFinishedDoc), null, 1) : null;
   app.innerHTML = `
     <h1>⛳ SG Rundlogg</h1>
     <p class="sub">Registrera slag med mobilens GPS — för Strokes Gained-analys.</p>
@@ -835,7 +831,7 @@ function renderSetup() {
       selectedSlug = meta.slug;
       SGRound.setActiveCourse(meta);
       localStorage.removeItem("sg_round"); // nollställ till banans första runda
-      S.course = meta.name;
+      S.courseName = meta.name;
       courseSearch.value = meta.name;
       fillRoundAndTee(meta);
       closeList();            // val gjort → fäll ihop
@@ -865,15 +861,24 @@ function renderSetup() {
   document.getElementById("start").onclick = () => {
     const p = document.getElementById("player").value.trim();
     if (!p) { alert("Fyll i ditt namn."); return; }
-    S.player = p;
     const meta = courseMetaBySlug(coursesRegistry, selectedSlug) || SGRound.meta;
-    S.course = (meta && meta.name) || DEFAULT_COURSE;
-    S.tee = teeSel.value;
     localStorage.setItem("sg_tee", teeSel.value);
     localStorage.setItem("sg_round", roundSel.value);
+    localStorage.setItem("sg_player", p);
     saveCourseHistory(pushCourseHistory((meta && meta.slug) || SGRound.activeSlug(), loadCourseHistory()));
-    if (!S.startedAt) S.startedAt = new Date().toISOString();
-    S.view = "hole";
+    // Här skapas runddokumentet. Finns redan en aktiv runda (man backade ut till
+    // setup) återanvänds den i stället för att en ny startas.
+    S = Store.active() || Store.startRound({
+      player: p, courseSlug: (meta && meta.slug) || SGRound.activeSlug(),
+      courseName: (meta && meta.name) || DEFAULT_COURSE,
+      roundSeq: roundSel.value, tee: teeSel.value, loggingLevel: 3,
+    });
+    S.player = p;
+    S.courseName = (meta && meta.name) || DEFAULT_COURSE;
+    S.tee = teeSel.value;
+    setView("hole");
+    // Beständig lagring begärs vid en användargest, aldrig i onboardingen (§9.1.11)
+    Store.requestPersist();
     startWatch(); save(); render();
   };
   const rl = document.getElementById("relast");
@@ -1003,7 +1008,7 @@ function renderHole() {
   document.getElementById("next").onclick = () => nextHole();
   document.getElementById("finish").onclick = () => {
     livePush();   // pusha sista hålets score innan sammanfattningen
-    S.endedAt = new Date().toISOString(); S.view = "summary"; save(); render();
+    S.endedAt = new Date().toISOString(); setView("summary"); save(); render();
   };
   // Auto-zoom-kill-switch: flyttad hit från karta.html. Skriver bara sg_autozoom;
   // hålkartan läser värdet vid nästa laddning (flikbyte = full sidladdning).
@@ -1033,22 +1038,17 @@ function nextHole() {
 }
 
 function renderSummary() {
-  const played = Object.keys(S.holes).map(Number).sort((a, b) => a - b)
-    .filter(n => { const h = S.holes[String(n)];
-                   return h.shots.length + h.putts + h.pen + (h.adj || 0) > 0; });
-  const rows = played.map(n => {
-    const h = S.holes[String(n)];
-    return `<tr><td>Hål ${n}</td><td>${h.shots.length}${h.adj ? `<span style="color:var(--warn)">${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)}</span>` : ""}</td><td>${h.putts}</td>
-            <td>${h.pen || ""}</td><td><b>${h.shots.length + h.putts + h.pen + (h.adj || 0)}</b></td></tr>`;
-  }).join("");
-  const tot = played.reduce((s, n) => {
-    const h = S.holes[String(n)]; return s + h.shots.length + h.putts + h.pen + (h.adj || 0); }, 0);
-  const shots = played.reduce((s, n) => s + S.holes[String(n)].shots.length, 0);
-  const noGreen = played.filter(n => {
-    const h = S.holes[String(n)]; return h.putts > 0 && !h.green; });
+  // hålen är en array sorterad på spelarens hålnummer (§9.1 beslut A)
+  const played = S.holes.filter(h => SGScore.components(h).played);
+  const rows = played.map(h =>
+    `<tr><td>Hål ${h.n}</td><td>${h.shots.length}${h.adj ? `<span style="color:var(--warn)">${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)}</span>` : ""}</td><td>${h.putts}</td>
+            <td>${h.pen || ""}</td><td><b>${SGScore.components(h).total}</b></td></tr>`).join("");
+  const tot = played.reduce((s, h) => s + SGScore.components(h).total, 0);
+  const shots = played.reduce((s, h) => s + h.shots.length, 0);
+  const noGreen = played.filter(h => h.putts > 0 && !h.green).map(h => h.n);
   app.innerHTML = `
     <h1>Runda klar 🏌️</h1>
-    <p class="sub">${esc(S.player)} · ${esc(S.course)} · ${(S.startedAt || "").slice(0, 10)}</p>
+    <p class="sub">${esc(S.player)} · ${esc(S.courseName)} · ${(S.startedAt || "").slice(0, 10)}</p>
     <div class="card">
       <table>
         <tr><th>Hål</th><th>Slag</th><th>Putt</th><th>Plikt</th><th>Score</th></tr>
@@ -1084,11 +1084,13 @@ function renderSummary() {
       </details>
     </div>
     <button class="big" id="back" style="background:#1a4c38;color:var(--ink)">◀ Fortsätt runda</button>
-    <div style="text-align:center"><button class="link" id="new">Ny runda (rensar allt)</button></div>`;
-  document.getElementById("send").onclick = e => { stashLast(); doSend(e.currentTarget); };
-  document.getElementById("share").onclick = () => { stashLast(); doShare(); };
-  document.getElementById("dl").onclick = () => { stashLast(); doDownload(); };
-  document.getElementById("copy").onclick = e => { stashLast(); doCopy(e.target); };
+    <div style="text-align:center"><button class="link" id="new">Ny runda</button></div>`;
+  // stashLast() är borta: varje runda ligger kvar i Store, så den behöver inte
+  // längre kopieras undan till en "sist spelad"-nyckel innan den skickas.
+  document.getElementById("send").onclick = e => doSend(e.currentTarget);
+  document.getElementById("share").onclick = () => doShare();
+  document.getElementById("dl").onclick = () => doDownload();
+  document.getElementById("copy").onclick = e => doCopy(e.target);
   document.getElementById("cfgSave").onclick = () => {
     const b = document.getElementById("cfgBase").value.trim().replace(/\/+$/, "");
     const t = document.getElementById("cfgToken").value.trim();
@@ -1096,58 +1098,57 @@ function renderSummary() {
     const vl = document.getElementById("viewLink"); if (vl) vl.href = b || "#";
     alert("Kopplingen sparad.");
   };
-  document.getElementById("back").onclick = () => { S.view = "hole"; S.endedAt = null; save(); render(); };
+  document.getElementById("back").onclick = () => { setView("hole"); S.endedAt = null; save(); render(); };
   document.getElementById("new").onclick = () => {
-    if (!confirm("Rensa rundan och börja om? Se till att filen är delad/nedladdad först.")) return;
-    stashLast();
-    S = freshState(S.player, S.course); save(); render();
+    // Rundan raderas inte längre — den avslutas och ligger kvar i historiken.
+    if (!confirm("Avsluta rundan och börja en ny? Rundan sparas i historiken.")) return;
+    const player = S.player, courseName = S.courseName;
+    Store.finishRound().then(() => {
+      S = draftState();
+      S.player = player; S.courseName = courseName;
+      setView("setup");
+      render();
+    });
   };
-}
-function stashLast() {
-  try { localStorage.setItem(KEY_LAST, JSON.stringify(exportData())); } catch (e) {}
 }
 
 /* ---------- live-scoring (additivt, LIVE_SCORING_SPEC.md §6–7) ----------
-   Egen state-nyckel, helt skild från rundan. Rör aldrig S/save() eller
-   GPS-/slag-loggningen — läser bara S.holes för att härleda score via den
+   Matchen är ett EGET objekt i Store och refererar rundan enkelriktat
+   (APPSTORE_PLAN §1 beslut 2 / §9.1 beslut B): att lämna eller radera matchen
+   rör aldrig rundan. Modulen läser bara S.holes för att härleda score via den
    delade SGScore.components och skickar komponenterna till molnet.
    Allt är fire-and-forget: fel/offline sväljs, score finns kvar lokalt. */
 const Live = (() => {
-  const LKEY = "sg-live-v1";
-  let L = null;
-  try { L = JSON.parse(localStorage.getItem(LKEY)); } catch (e) {}
   const has = () => typeof SGLive !== "undefined";           // CDN kan saknas offline
-  const state = () => L;
-  const inGame = () => !!(L && L.gameId);
-  function persist() {
-    try { L ? localStorage.setItem(LKEY, JSON.stringify(L))
-            : localStorage.removeItem(LKEY); } catch (e) {}
-  }
+  const state = () => Store.match();
+  const inGame = () => { const L = Store.match(); return !!(L && L.gameId); };
   async function create() {
     if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
     const name = (S.player || "").trim();
     if (!name) throw new Error("Fyll i ditt namn först.");
     const { gameId, code } = await SGLive.createGame({
-      course: S.course, roundSeq: SGRound.roundName(), displayName: name });
-    L = { gameId, code, displayName: name }; persist();
-    return L;
+      course: S.courseName, roundSeq: SGRound.roundName(), displayName: name });
+    await Store.setMatch({ gameId, code, displayName: name });
+    return Store.match();
   }
   async function join(code) {
     if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
     const name = (S.player || "").trim();
     if (!name) throw new Error("Fyll i ditt namn först.");
     const { gameId } = await SGLive.joinGame(code, name);
-    L = { gameId, code: String(code).toUpperCase().trim(), displayName: name };
-    persist();
-    return L;
+    await Store.setMatch({ gameId, code: String(code).toUpperCase().trim(),
+                           displayName: name });
+    return Store.match();
   }
-  function leave() { L = null; persist(); }        // rör bara live-state, ej rundan
+  function leave() { Store.removeMatch(); }        // rör bara matchen, ej rundan
   async function finish() {
-    if (has() && inGame()) { try { await SGLive.finishGame(L.gameId); } catch (e) {} }
+    const L = Store.match();
+    if (has() && L && L.gameId) { try { await SGLive.finishGame(L.gameId); } catch (e) {} }
     leave();
   }
   // Skicka ett håls score till molnet. Tyst no-op om man inte är med i match.
   function push(n) {
+    const L = Store.match();
     if (!has() || !inGame()) return;
     const c = SGScore.components(hole(n));
     SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
@@ -1155,6 +1156,7 @@ const Live = (() => {
   }
   // Dela markerad pin till matchen (globalt hålnr). Tyst no-op om ej i match.
   function pushPin(rel, p) {
+    const L = Store.match();
     if (!has() || !inGame() || !p) return;
     const g = SGRound.relToGlobal(rel);
     if (g == null) return;
@@ -1172,7 +1174,7 @@ function livePushPin(p) { Live.pushPin(S.current, p); }
 // så score-sidan och kartan alltid visar samma hål.
 function syncFromMap() {
   const g = parseInt(localStorage.getItem("sg_hole"), 10);
-  if (S.view === "hole" && g >= 1 && g <= maxHole() && g !== S.current) {
+  if (currentView() === "hole" && g >= 1 && g <= maxHole() && g !== S.current) {
     S.current = g; save(); render();
   }
 }
@@ -1180,12 +1182,29 @@ window.addEventListener("pageshow", syncFromMap);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) syncFromMap(); });
 window.addEventListener("storage", e => { if (e.key === "sg_hole") syncFromMap(); });
 
-/* ---------- init ---------- */
+/* ---------- init ----------
+   Rundan hydreras ur IndexedDB innan första renderingen; därefter är
+   Store.active() synkront läsbar precis som localStorage var (§9.1 beslut F). */
 window.addEventListener("beforeunload", e => {
-  if (S.view === "hole") { e.preventDefault(); e.returnValue = ""; }
+  if (currentView() === "hole") { e.preventDefault(); e.returnValue = ""; }
 });
-if (S.view !== "setup") startWatch();
-render();
+Store.ready().then(() => {
+  S = Store.active() || draftState();
+  // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
+  SGRound.migrateSgHole();
+  if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
+  if (currentView() !== "setup") startWatch();
+  render();
+  // senast avslutade rundan i bakgrunden → "hämta igen"-knappen på setup-vyn
+  Store.list({ limit: 20 }).then(rows => {
+    const r = rows.find(x => x.status === "finished");
+    if (!r) return;
+    return Store.get(r.id).then(d => {
+      lastFinishedDoc = d;
+      if (currentView() === "setup") render();
+    });
+  }).catch(() => {});
+});
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar

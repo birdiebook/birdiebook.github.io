@@ -18,3 +18,4 @@ const SGScore = (() => {
   return { components };
 })();
 if (typeof window !== "undefined") window.SGScore = SGScore;
+else if (typeof globalThis !== "undefined") globalThis.SGScore = SGScore;
