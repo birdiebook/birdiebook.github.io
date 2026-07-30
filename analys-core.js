@@ -126,7 +126,8 @@ globalThis.AnalysCore = (() => {
     const played = score > 0;
 
     const out = { par, played, score, shots: n + adj, putts, pen, adj,
-      girKnown: false, gir: false, scrambleElig: false, scramble: false,
+      girKnown: false, gir: false, girObserved: false, firObserved: false,
+      scrambleElig: false, scramble: false,
       precClean: pen === 0 && adj === 0,
       approach: null, teeLateral: null, teeFairwayHit: null };
     if (!played || par == null) return out;
@@ -149,6 +150,13 @@ globalThis.AnalysCore = (() => {
       else if (n > reg) { out.girKnown = true; out.gir = false; }
       // annars (ingen green-markör, n ≤ reg): kan ej avgöras → okänt
     }
+    // ---- Observerad greenträff (nivå 2, APPSTORE_PLAN §9.2.1) ----
+    // Härlett ur positioner vinner ALLTID. Observationen används bara där
+    // källan saknas, dvs. på hål som loggats på nivå 1-2.
+    if (!out.girKnown && hole && hole.gir != null) {
+      out.girKnown = true; out.gir = !!hole.gir; out.girObserved = true;
+    }
+
     // ---- Scrambling: bara när GIR missades ----
     if (out.girKnown && !out.gir) { out.scrambleElig = true; out.scramble = score <= par; }
 
@@ -177,6 +185,15 @@ globalThis.AnalysCore = (() => {
       }
       if (band && band.fairways && band.fairways.length)   // A0-data (kan saknas → null)
         out.teeFairwayHit = band.fairways.some(r => pointInPoly(teeLanding, r, teeLanding));
+    }
+    // Observerad fairwayträff — samma regel som för green: bara när den inte
+    // gick att härleda. Par 3 har ingen fairway och lämnas utanför.
+    // Notera att precClean INTE krävs här: på nivå 1-2 matas hela scoren in via
+    // adj, så precClean är alltid falskt där och villkoret hade tyst dödat
+    // observationen. Spelaren rapporterar träffen direkt — den behöver ingen
+    // renhetskontroll.
+    if (out.teeFairwayHit == null && par >= 4 && hole && hole.fir != null) {
+      out.teeFairwayHit = !!hole.fir; out.firObserved = true;
     }
     return out;
   }

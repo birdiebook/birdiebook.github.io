@@ -12,5 +12,15 @@
   ]
  ],
  "attribution": "Ortofoto © Lantmäteriet (CC BY 4.0)",
- "source": "orto-a2-2024 (LM-moln, /vsicurl)"
+ "source": "orto-a2-2024 (LM-moln, /vsicurl)",
+ "tone_calibration": {
+  "ref": "malmo_burlov",
+  "green": 12.0,
+  "chroma": 1.0,
+  "damp": 1.0,
+  "mode": "gamma",
+  "strength": 0.0,
+  "identity": true,
+  "tool": "tools/ortofoto_color.py apply"
+ }
 }

@@ -13,6 +13,12 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
 <script src="./round.js"></script>
+<!-- U6: höjdprofil/"spelar som" (MapCore rad/hav/bearing + PlayAs). Vanliga
+     scripts (inte moduler) FÖRE modulen nedan — samma mönster som
+     karta.html/planera-karta.html. mapcore.js rör Leaflets `L` bara INNE i
+     funktioner som aldrig anropas här, så den går att ladda utan Leaflet. -->
+<script src="./mapcore.js"></script>
+<script src="./playas.js"></script>
 <title>SG Hål i 3D</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
@@ -44,6 +50,41 @@
     text-align:center; padding:0 30px; pointer-events:none; }
   #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:#9fc4ae88;
     bottom:calc(env(safe-area-inset-bottom) + 58px); }
+  /* U4 verktygsrad. Hojs av #botten-hojden sa den aldrig hamnar under
+     overdrifts-reglaget pa nagon skarm (UPPGRADERING_3D 3.4). */
+  #verktyg { position:fixed; right:10px; z-index:6;
+    bottom:calc(env(safe-area-inset-bottom) + 76px);
+    display:flex; flex-direction:column; gap:8px; }
+  #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+    background:#0e2b3ad2; color:var(--ink); border:1px solid #ffffff26;
+    border-radius:14px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; font:600 9px/1 inherit;
+    letter-spacing:.06em; text-transform:uppercase;
+    transition:background .15s ease, border-color .15s ease, transform .12s ease; }
+  #verktyg button:active:not(:disabled) { transform:scale(.97); }
+  #verktyg button[aria-pressed="true"] { border-color:#4eab79cc; color:#7fe0aa; }
+  #verktyg button:disabled { opacity:.38; cursor:default; }
+  #verktyg svg { width:19px; height:19px; fill:none; stroke:currentColor;
+    stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  @media (prefers-reduced-motion: reduce) {
+    #verktyg button { transition:none; } }
+  /* U6 höjdprofil-panel. Dockad under #topp — bottenzonen är redan upptagen av
+     overdrifts-reglaget och verktygsraden (UPPGRADERING_3D §5 U6). */
+  #hojdpanel { position:fixed; left:10px; right:10px; z-index:5;
+    top:calc(env(safe-area-inset-top) + 54px);
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    padding:10px 12px 8px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; }
+  #hojdpanel.dold { display:none; }
+  #hojdrad { display:flex; justify-content:space-between; align-items:baseline;
+    font-size:13px; color:var(--dim); margin-bottom:4px; gap:8px; }
+  #hojdrad b { color:var(--ink); font-size:15px; font-weight:700; }
+  #hojdsvg { width:100%; height:74px; display:block; touch-action:none; }
+  #hojdlive { font-size:12.5px; color:var(--dim); margin-top:4px; }
+  #hojdlive b { color:var(--accent); font-weight:700; }
 </style>
 </head>
 <body>
@@ -65,9 +106,20 @@
 </script>
 <div id="status">laddar…</div>
 <div id="kalla">Foto & höjddata © Lantmäteriet (CC BY 4.0)</div>
+<div id="hojdpanel" class="dold">
+  <div id="hojdrad"><b id="hojdDelta"></b><span id="hojdLangd"></span></div>
+  <svg id="hojdsvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
+  <div id="hojdlive"></div>
+</div>
 <div id="botten">
   <label>överdrift <span id="exagv">3×</span></label>
   <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
+</div>
+<div id="verktyg" role="group" aria-label="Verktyg">
+  <button id="vFlyover" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
+  <button id="vTeevy" type="button" title="Vyn fran teen, blicken mot green"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M12 3l7 2.5L12 8"/><ellipse cx="12" cy="18" rx="6" ry="2.2"/></svg><span>Tee-vy</span></button>
+  <button id="vHojd" type="button" title="Hojdprofil och spelar som"><svg viewBox="0 0 24 24"><path d="M3 18h18"/><path d="M3 14l6-7 5 5 3-3 4 5"/></svg><span>Hojd</span></button>
+  <button id="vSlaget" type="button" disabled title="Sikte och spridning - byggs i GP2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
 </div>
 <button id="flyavbryt" style="display:none; position:fixed; z-index:6;
   left:50%; transform:translateX(-50%);
@@ -81,7 +133,8 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { OrbitControls } from './vendor/OrbitControls.js';
+import { CameraController, screenOf } from './camctl.js';
+import * as HP from './hojdprofil.js';
 
 const el = id => document.getElementById(id);
 const status = t => { el('status').textContent = t || ''; };
@@ -105,9 +158,36 @@ sol.position.set(-0.5, 0.8, -0.6);
 scene.add(sol);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 4000);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.maxPolarAngle = Math.PI / 2 - 0.02;             // aldrig under marken
+// U1: kartgester i stället för orbit — ett finger panorerar, nyp zoomar, två
+// fingrar roterar/tiltar. Tillstånd och klampning bor i camctl.js.
+const controls = new CameraController(camera, renderer.domElement, {
+  onUserInput: () => { if (fly) stopFly(); },
+});
+
+// ?dbg=1 — mätinstrumentet för UPPGRADERING_3D §2.4 (eftersläpning) och för
+// scengraf-verifiering. Detta är INTE en sådan tillfällig felsökningskrok som
+// CLAUDE.md säger ska bort före commit: den är gated på flaggan och är själva
+// sättet vi mäter att overlays inte släpar. Den ska ligga kvar.
+if (new URLSearchParams(location.search).get('dbg') === '1') {
+  window.__hal3d = {
+    ctl: controls, camera, scene, renderer,
+    // Var SKA en världspunkt hamna på skärmen denna bildruta? Jämförs med var
+    // en DOM-etikett faktiskt står; skillnaden är eftersläpningen i px.
+    screenOf: w => screenOf(controls.state, w, camera.fov,
+                            innerWidth / innerHeight, innerWidth, innerHeight),
+    // U6: höjdprofilens tillstånd + möjligheten att driva EN tick för hand.
+    // rAF tickar INTE i en dold browser-panel (läxa i §10), så utan detta går
+    // kopplingen profil ↔ 3D-markör inte att verifiera automatiskt: att vänta
+    // på requestAnimationFrame hänger panelen i 30 s i stället för att ge en
+    // bildruta. `tick` gör exakt vad rAF-ticken gör med markören, inget mer.
+    hojd: {
+      get s() { return hojdS; },
+      set: s => setHojdS(s),
+      tick: () => updateHojdMarker(),
+      marker: () => hojdMarker,
+    },
+  };
+}
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -124,6 +204,9 @@ const fromPlan = new URLSearchParams(location.search).get('from') === 'plan';
 // Kameran glider längs meta.line (samma georef som scenen), blicken mot nästa
 // punkt på linjen. Avbryts av användarens första pekar-/hjul-interaktion.
 let fly = null; // { pts, cum, total, t0, dur } | null
+// Blickpunkten flygningen just nu använder. Kontrollern tar över DEN när
+// flygningen avbryts — annars hoppar scenen tillbaka till sitt gamla tillstånd.
+const flyTarget = new THREE.Vector3();
 
 // Kamera-tunables för fly-through (justeras vid visuell finslip):
 const FLY_HALF_W = 32;                 // m: halva bredden som alltid ska rymmas (fairway + marginal)
@@ -180,8 +263,11 @@ function flyPose(curve, u, treeTops) {
   return { pos, target };
 }
 
-function startFly() {
-  if (!fromPlan || !meta || !meta.line || meta.line.length < 2) return;
+function startFly(opt = {}) {
+  // Automatstarten vid hålbyte är fortfarande grindad på ?from=plan (PR4:s
+  // invariant). Verktygsradens knapp tvingar fram den — det är ett medvetet
+  // val av användaren, inte ett automatiskt beteende.
+  if ((!fromPlan && !opt.force) || !meta || !meta.line || meta.line.length < 2) return;
   // centripetal Catmull-Rom: mjuk kurva genom grovpunkterna utan översläng i svängar
   const curve = new THREE.CatmullRomCurve3(flyGroundPts(), false, 'centripetal');
   const total = curve.getLength() || 1;
@@ -189,14 +275,17 @@ function startFly() {
   const treeTops = flyTreeTops();
   fly = { curve, treeTops, t0: performance.now(), dur };
   const p = flyPose(curve, 0, treeTops);   // starta direkt i den höga tee→green-överblicken
-  camera.position.copy(p.pos); camera.lookAt(p.target); controls.target.copy(p.target);
-  controls.enabled = false;
+  camera.position.copy(p.pos); camera.lookAt(p.target); flyTarget.copy(p.target);
   el('flyavbryt').style.display = 'block';
 }
 
 function stopFly() {
+  if (!fly) return;
   fly = null;
-  controls.enabled = true;
+  if (lage === 'flyover') setLage(null);
+  // Ta över exakt där flygningen stod. Utan detta ritar nasta bildruta
+  // kontrollerns gamla tillstand och bilden hoppar.
+  controls.setFromEye(camera.position, flyTarget);
   el('flyavbryt').style.display = 'none';
 }
 
@@ -207,40 +296,65 @@ function updateFly() {
   const p = flyPose(fly.curve, u, fly.treeTops);
   camera.position.copy(p.pos);
   camera.lookAt(p.target);
-  controls.target.copy(p.target);
+  flyTarget.copy(p.target);
   if (raw >= 1) { stopFly(); placeCamera(); }
 }
 
-if (fromPlan) {
-  el('flyavbryt').addEventListener('click', stopFly);
-  // Första användarinteraktionen med scenen avbryter flygningen och lämnar
-  // fri orbit (OrbitControls är avstängd under flygningen, så vi lyssnar
-  // direkt på canvasen i stället för på 'start'-eventet).
-  const cancelOnInput = () => { if (fly) stopFly(); };
-  ['pointerdown', 'wheel', 'touchstart'].forEach(ev =>
-    renderer.domElement.addEventListener(ev, cancelOnInput, { passive: true }));
-}
+// Avbryt med knappen. Första pekar-/hjulinteraktionen avbryter också, via
+// kontrollerns onUserInput — kontrollern lämnas PÅ under flygningen just för
+// att den ska kunna ta emot det greppet och överta posen sömlöst.
+if (fromPlan) el('flyavbryt').addEventListener('click', stopFly);
 
-renderer.setAnimationLoop(() => { updateFly(); controls.update(); renderer.render(scene, camera); });
+// U4: verktygsraden. Flyover och Tee-vy lever; Höjd och Slaget är avstängda
+// tills U6 respektive GP2 finns — en knapp som ser klickbar ut men inte gör
+// något är sämre än en som ärligt visar att den inte är byggd än.
+el('vFlyover').addEventListener('click', () => {
+  if (lage === 'flyover') { stopFly(); setLage(null); return; }
+  setLage('flyover');
+  startFly({ force: true });
+});
+el('vTeevy').addEventListener('click', () => {
+  if (lage === 'teevy') { setLage(null); placeCamera(); return; }
+  teeView();
+});
+// U6: Höjd visar profilpanelen + 3D-markören (se buildHojdMarker/
+// updateHojdMarker nedan). Flyger till översiktsposen så hela hållinjen
+// ryms i bild — precis den vy meta.line/profile beskriver.
+el('vHojd').addEventListener('click', () => {
+  if (lage === 'hojd') { setLage(null); return; }
+  stopFly();
+  const p = overviewPose();
+  if (p) controls.flyToEye(p.eye, p.target, 700);
+  setLage('hojd');
+});
+
+// EN tick: flygning → kameratillstånd → render. Allt som hör till marken ska
+// skrivas här, före render, aldrig i en händelselyssnare (UPPGRADERING_3D §2).
+renderer.setAnimationLoop(() => {
+  updateFly();
+  if (!fly) controls.update();     // flygningen äger kameran medan den pågår
+  updateHojdMarker();              // U6: markören härleds ur hojdS varje tick — aldrig i en lyssnare
+  renderer.render(scene, camera);
+});
 
 // ------------------------------------------------------- hål-innehållet ---
 // Marken (glb) ligger i sanna meter och y-skalas med överdriften. Träden är
 // SANN höjd oavsett överdrift (samma grepp som PC-vyn): deras instans-
 // matriser räknas om — bara markfoten (groundY) följer skalan.
 const loader = new GLTFLoader();
-let ground = null, treeParts = [], lineObj = null, markers = [];
+let ground = null, treeParts = [], lineObj = null, markers = [], hojdMarker = null;
 let meta = null;
 let exag = 3;
 
 const CROWN_GREENS = [0x4a6741, 0x587644, 0x405c3a, 0x62804e];
 
 function clearHole() {
-  for (const o of [ground, lineObj, ...treeParts, ...markers]) {
+  for (const o of [ground, lineObj, hojdMarker, ...treeParts, ...markers]) {
     if (!o) continue;
     scene.remove(o);
     o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
   }
-  ground = null; lineObj = null; treeParts = []; markers = [];
+  ground = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
 }
 
 // Träd byggs ur meta-JSON:ens kompakta format (per hole_gltf.py):
@@ -388,23 +502,259 @@ function buildLine() {
   });
 }
 
-function applyExag() {
+function applyExag(forra) {
   if (!meta) return;
   if (ground) ground.scale.y = exag;
   buildTrees();
   buildLine();
+  if (!forra || forra === exag) return;
+  // Marken flyttar sig lodrätt när överdriften ändras. Gör inte kameran samma
+  // resa hamnar den under terrängen (eller svävande högt över den) utan att
+  // användaren rört kameran. Höjderna i scenen är tee-relativa, så teen står
+  // still — men allt annat rör sig, och ju längre från teen desto mer.
+  //
+  // TVÅ FALL, och de kräver olika svar:
+  //
+  // Tee-vyn är NITAD vid en plats: ögat står på teen, blicken på green. Den
+  // måste räknas om ur den nya marken. Att i stället translatera hela riggen
+  // stelt flyttar ögat med GREENS höjdändring — och eftersom teen ligger på 0
+  // oavsett överdrift hamnar kameran då under marken (uppmätt: −0,5 m vid
+  // överdrift 1).
+  //
+  // Den fria vyn är inte nitad någonstans. Där är stel translation rätt: ser
+  // man på en punkt och marken under den stiger, ska kameran stiga lika mycket
+  // och behålla samma vy av punkten.
+  if (lage === 'teevy') {
+    const p = teeViewPose();
+    if (p) controls.setFromEye(p.eye, p.target);   // direkt, inte animerat: användaren drar i reglaget
+  } else {
+    controls.scaleHeights(exag / forra);
+  }
+  // En pågående flygning bär sin bana och sina trädtoppar från STARTEN. De
+  // måste byggas om mot den nya marken, annars flyger kameran längs den gamla
+  // terrängen. Framdriften (t0/dur) behålls så flygningen inte hoppar.
+  if (fly) {
+    fly.curve = new THREE.CatmullRomCurve3(flyGroundPts(), false, 'centripetal');
+    fly.treeTops = flyTreeTops();
+  }
 }
 
-function placeCamera() {
-  // lågt bakom teen, blick mot hålets mitt (som PC-vyn)
+// ----------------------------------------------------------- U5 tee-vy ---
+// Kameran star PA teen i ogonhojd och tittar langs hallinjen. Marken ar
+// y-skalad med overdriften, sa ogat maste folja den skalan for att sta pa
+// gruset och inte sväva - men 1,7 m ar en riktig kroppslangd och skalas inte.
+const EYE_H = 1.7;
+
+function teeViewPose() {
+  if (!meta || !meta.line || meta.line.length < 2) return null;
+  const a = meta.line[0], b = meta.line[meta.line.length - 1];
+  return {
+    eye: { x: a[0], y: a[1] * exag + EYE_H, z: a[2] },
+    target: { x: b[0], y: b[1] * exag, z: b[2] },
+  };
+}
+
+// Aktivt lage: 'flyover' | 'teevy' | 'hojd' | null. Andra trycket pa en aktiv
+// knapp gar tillbaka till fri vy (U4).
+let lage = null;
+
+function setLage(nytt) {
+  lage = nytt;
+  for (const [id, namn] of [['vFlyover', 'flyover'], ['vTeevy', 'teevy'], ['vHojd', 'hojd']])
+    el(id).setAttribute('aria-pressed', String(lage === namn));
+  // U6: panelen och 3D-markören visas bara i höjd-läget — enda stället som
+  // styr synligheten, så de två aldrig kan hamna ur synk med knappen.
+  const visarHojd = lage === 'hojd';
+  el('hojdpanel').classList.toggle('dold', !visarHojd);
+  if (hojdMarker) hojdMarker.visible = visarHojd;
+}
+
+function teeView() {
+  const p = teeViewPose();
+  if (!p) return;
+  stopFly();
+  controls.flyToEye(p.eye, p.target, 800);
+  setLage('teevy');
+}
+
+// Overblicksposen: lågt bakom teen, blick mot hålets mitt (som PC-vyn).
+// Utbruten ur placeCamera() så samma pose kan användas ANIMERAT när U6:s
+// Höjd-läge slås på (hela hållinjen + profilens markör ska rymmas i bild).
+function overviewPose() {
+  if (!meta || !meta.line || meta.line.length < 2) return null;
   const a = meta.line[0], b = meta.line[meta.line.length - 1];
   const dx = b[0] - a[0], dz = b[2] - a[2];
   const L = Math.hypot(dx, dz) || 1;
   const ux = dx / L, uz = dz / L;
-  camera.position.set(a[0] - ux * 0.45 * L, a[1] * exag + 4 + 0.18 * L,
-                      a[2] - uz * 0.45 * L);
-  controls.target.set((a[0] + b[0]) / 2, ((a[1] + b[1]) / 2) * exag, (a[2] + b[2]) / 2);
-  controls.update();
+  const eye = { x: a[0] - ux * 0.45 * L, y: a[1] * exag + 4 + 0.18 * L,
+                z: a[2] - uz * 0.45 * L };
+  const target = { x: (a[0] + b[0]) / 2, y: ((a[1] + b[1]) / 2) * exag,
+                   z: (a[2] + b[2]) / 2 };
+  return { eye, target };
+}
+
+function placeCamera() {
+  const p = overviewPose();
+  if (!p) return;
+  // Samma pose som förut, men uttryckt i kontrollerns fyra tal — så att en
+  // efterföljande gest utgår från den och inte från något annat.
+  controls.setFromEye(p.eye, p.target);
+}
+
+// ------------------------------------------------- U6 höjdprofil / markör ---
+// Ritregeln (UPPGRADERING_3D §2): markören är ETT OBJEKT I SCENGRAFEN med
+// världskoordinater, härlett ur skalären `hojdS` (meter längs meta.line från
+// tee) i SAMMA rAF-tick som renderar (se renderer.setAnimationLoop ovan) —
+// aldrig satt direkt av en pekar-/draghändelse. Kopplingen mellan profilen
+// och 3D går båda vägarna: dra i #hojdsvg sätter hojdS (renderHojd), och ett
+// tryck på hållinjen i 3D projicerar tillbaka till hojdS (se pekarlyssnaren
+// på renderer.domElement nedan) — "profilen och hålet är samma sak sedd
+// från två håll" (FORSLAG F4).
+const HOJD_MARK_COLOR = 0xffcf4d;
+let hojdS = 0;
+// Offline (§1 princip 3): ingen vindkälla i hal3d.html. "Spelar som" bär då
+// bara höjden (HP.playsAsAt faller tillbaka på geometriskt avstånd +
+// PlayAs.slopeEffect) — null här, aldrig en påhittad vind.
+const hojdWind = null;
+let hojdYNorm = null;   // {sTot, yMin, padY, span} — satt av buildHojdPanel per hål
+
+function buildHojdMarker() {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.16, 5, 8),
+    new THREE.MeshBasicMaterial({ color: HOJD_MARK_COLOR }));
+  pole.position.y = 2.5;
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.85, 12, 8),
+    new THREE.MeshBasicMaterial({ color: HOJD_MARK_COLOR }));
+  ball.position.y = 5.3;
+  g.add(pole, ball);
+  g.visible = lage === 'hojd';
+  scene.add(g);
+  hojdMarker = g;
+}
+
+// Anropas EN gång per bildruta, före render (aldrig av en lyssnare) — se
+// UPPGRADERING_3D §2.2. exag rör bara scen-y (g.position.y); den VISADE
+// höjden i panelen kommer separat ur HP.yAtS (sann, oskalad).
+function updateHojdMarker() {
+  if (!hojdMarker || !meta) return;
+  const { x, z } = HP.sToXZ(meta.line, hojdS);
+  const yTrue = HP.yAtS(meta.profile, hojdS);
+  if (ground) ground.updateMatrixWorld();
+  hojdMarker.position.set(x, surfaceYAt(x, z, yTrue * exag) + LINE_OFFSET, z);
+}
+
+const fmtDh = dh => `${dh >= 0 ? '+' : '−'}${Math.abs(dh).toFixed(1)} m`;
+const hojdTeeId = () => (localStorage.getItem('sg_tee') || '').trim();
+
+// s → SVG-koordinat (viewBox 0..300 x 0..100), ur den normalisering
+// buildHojdPanel räknade fram för aktuellt hål.
+function hojdSvgXY(s, y) {
+  const { sTot, yMin, padY, span } = hojdYNorm;
+  return [sTot ? (s / sTot) * 300 : 0,
+          100 - ((y - (yMin - padY)) / (span + padY * 2)) * 100];
+}
+
+function buildHojdPanel() {
+  if (!meta || !meta.profile || meta.profile.length < 2 || !meta.line) return;
+  hojdS = 0;
+  const p = meta.profile;
+  const sTot = HP.sMax(p);
+  const ys = p.map(pt => pt[1]);
+  const yMin = Math.min(...ys, 0), yMax = Math.max(...ys, 0);
+  const span = Math.max(yMax - yMin, 1);   // undvik div/0 på ett helt platt hål
+  hojdYNorm = { sTot, yMin, padY: span * 0.15, span };
+
+  const poly = p.map(([s, y]) => hojdSvgXY(s, y).join(',')).join(' ');
+  el('hojdsvg').innerHTML =
+    `<polyline points="0,100 ${poly} 300,100" fill="#37b06b26" stroke="none"></polyline>` +
+    `<polyline points="${poly}" fill="none" stroke="var(--accent)" stroke-width="2"></polyline>` +
+    `<line id="hojdMarkLine" x1="0" y1="0" x2="0" y2="100" stroke="${'#' + HOJD_MARK_COLOR.toString(16)}" stroke-width="1.4" stroke-dasharray="2,2"></line>` +
+    `<circle id="hojdMarkDot" r="3.6" fill="${'#' + HOJD_MARK_COLOR.toString(16)}" stroke="#0c2e22" stroke-width="1"></circle>`;
+
+  const net = HP.netHeight(meta, hojdTeeId());
+  el('hojdDelta').textContent = fmtDh(net.dh);
+  el('hojdLangd').textContent = net.tee
+    ? `vald tee ${net.tee} · ${net.len ?? meta.length_m} m`
+    : `${meta.length_m} m`;
+
+  renderHojd();
+}
+
+// Uppdaterar panelens (DOM/SVG) markör + livetext. Ren DOM-uppdatering — inte
+// scengrafen (den härleds separat i updateHojdMarker, se ritregeln ovan) —
+// så det är säkert att köra direkt i pekarhanterare.
+function renderHojd() {
+  if (!meta || !hojdYNorm) return;
+  const yHere = HP.yAtS(meta.profile, hojdS);
+  const [mx, my] = hojdSvgXY(hojdS, yHere);
+  const svg = el('hojdsvg');
+  svg.querySelector('#hojdMarkLine')?.setAttribute('x1', mx);
+  svg.querySelector('#hojdMarkLine')?.setAttribute('x2', mx);
+  const dot = svg.querySelector('#hojdMarkDot');
+  if (dot) { dot.setAttribute('cx', mx); dot.setAttribute('cy', my); }
+
+  const pa = HP.playsAsAt(MapCore, PlayAs, meta, hojdS, hojdWind);
+  el('hojdlive').innerHTML =
+    `${Math.round(hojdS)} m från tee · höjd ${fmtDh(yHere)} · till green ` +
+    `<b>${pa.mean} m</b>${pa.windless ? ' (vind ej inräknad)' : ''}`;
+}
+
+function setHojdS(s) {
+  if (!meta || !meta.profile) return;
+  hojdS = HP.clampS(s, meta.profile);
+  renderHojd();
+}
+
+// Dra i profilen (pekare, samma element hanterar mus + touch via Pointer
+// Events) — sätter hojdS; scengrafens markör hämtar den nästa bildruta.
+{
+  const svg = el('hojdsvg');
+  let dragging = false;
+  const fracFromEvent = e => {
+    const r = svg.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / (r.width || 1)));
+  };
+  svg.addEventListener('pointerdown', e => {
+    dragging = true;
+    try { svg.setPointerCapture(e.pointerId); } catch { /* ofarligt */ }
+    if (meta) setHojdS(fracFromEvent(e) * HP.sMax(meta.profile));
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!dragging || !meta) return;
+    setHojdS(fracFromEvent(e) * HP.sMax(meta.profile));
+  });
+  const slut = e => {
+    dragging = false;
+    try { svg.releasePointerCapture(e.pointerId); } catch { /* ofarligt */ }
+  };
+  svg.addEventListener('pointerup', slut);
+  svg.addEventListener('pointercancel', slut);
+}
+
+// Tryck (tap, inte drag) på hållinjen i 3D — motsatt riktning: 3D → hojdS.
+// Egen, ADDITIV pekarlyssnare på canvasen (stör inte CameraControllers egna
+// lyssnare på samma element — DOM tillåter flera lyssnare per händelse).
+// Bara aktiv i höjd-läget, så en vanlig panorering aldrig av misstag flyttar
+// markören.
+{
+  const _tapRay = new THREE.Raycaster();
+  let down = null;
+  renderer.domElement.addEventListener('pointerdown', e => {
+    down = { x: e.clientX, y: e.clientY, t: performance.now() };
+  });
+  renderer.domElement.addEventListener('pointerup', e => {
+    const d0 = down; down = null;
+    if (lage !== 'hojd' || !d0 || !meta || !ground) return;
+    const moved = Math.hypot(e.clientX - d0.x, e.clientY - d0.y);
+    if (moved > 6 || performance.now() - d0.t > 600) return;   // det var en gest, inte ett tryck
+    const ndc = new THREE.Vector2(
+      (e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    _tapRay.setFromCamera(ndc, camera);
+    const hit = _tapRay.intersectObject(ground, true);
+    if (hit.length) setHojdS(HP.xzToS(meta.line, hit[0].point.x, hit[0].point.z));
+  });
 }
 
 async function loadHole(slug) {
@@ -421,9 +771,9 @@ async function loadHole(slug) {
     placeCamera();
     stopFly();
     startFly();
-    const dh = meta.delta_h;
-    el('fakta').textContent =
-      `${dh >= 0 ? '+' : '−'}${Math.abs(dh).toFixed(1)} m · ${meta.length_m} m`;
+    buildHojdMarker();   // U6: ny grupp per hål (clearHole tog bort förra)
+    buildHojdPanel();    // bygger om profil-SVG:n och nollställer hojdS
+    el('fakta').textContent = `${fmtDh(meta.delta_h)} · ${meta.length_m} m`;
     status('');
   } catch (e) {
     status('kunde inte ladda hålet — är det exporterat? (' + e.message + ')');
@@ -432,9 +782,10 @@ async function loadHole(slug) {
 
 // ---------------------------------------------------------------- UI-yta ---
 el('exag').addEventListener('input', ev => {
+  const forra = exag;
   exag = parseFloat(ev.target.value);
   el('exagv').textContent = exag.toFixed(1).replace('.0', '') + '×';
-  applyExag();
+  applyExag(forra);
 });
 
 (async () => {

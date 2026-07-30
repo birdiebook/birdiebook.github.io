@@ -88,6 +88,36 @@
   .empty .txt { color:var(--dim); font-size:14px; line-height:1.45; margin:0 0 16px; }
   .empty a.btn { display:inline-block; text-decoration:none; background:var(--accent);
     color:var(--accent-ink); font-weight:700; font-size:15px; padding:11px 22px; border-radius:12px; }
+  /* ---------- rundlistan (§2.6) ---------- */
+  .rrow { display:flex; align-items:center; gap:12px; text-decoration:none; color:var(--ink);
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px; margin:10px 0; }
+  .rrow:active { background:#164434; }
+  .rrow .rmain { flex:1; min-width:0; }
+  .rrow .rtop { display:flex; align-items:baseline; gap:8px; }
+  .rrow .rdate { font-size:15px; font-weight:700; }
+  .rrow .rcourse { color:var(--dim); font-size:13px; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .rrow .rmeta { color:var(--dim); font-size:12px; margin-top:3px; line-height:1.35; }
+  .rrow .rnum { text-align:right; flex:none; }
+  .rrow .rscore { font-size:23px; font-weight:700; font-variant-numeric:tabular-nums;
+    line-height:1.1; }
+  .rrow .rpar { font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .rrow .rholes { color:var(--dim); font-size:11px; font-variant-numeric:tabular-nums; }
+  .rrow.dimmed .rdate, .rrow.dimmed .rscore { color:var(--dim); }
+  .badge { display:inline-block; font-size:10px; font-weight:700; letter-spacing:.5px;
+    text-transform:uppercase; padding:2px 6px; border-radius:6px;
+    background:#1a4c38; color:var(--dim); }
+  .badge.lvl3 { background:#1d5c40; color:var(--good); }
+  .badge.live { background:var(--accent); color:var(--accent-ink); }
+  .lgroup { color:var(--dim); font-size:12px; text-transform:uppercase;
+    letter-spacing:.6px; margin:18px 2px 2px; }
+  .back { display:inline-block; color:var(--dim); text-decoration:none; font-size:14px;
+    padding:6px 0; margin:0 0 2px; }
+  .danger-btn { display:block; width:100%; background:none; color:var(--danger);
+    border:1px solid var(--line); border-radius:12px; padding:11px 14px;
+    font-size:14px; font-weight:600; font-family:inherit; margin-top:4px; }
+  .storage { color:var(--dim); font-size:12px; line-height:1.5; margin:16px 2px 0; }
   /* flik-rad (ren text, samma på alla sidor) */
   .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex;
     background:var(--card); border-top:1px solid var(--line);
@@ -122,12 +152,26 @@
 <script src="./score.js"></script>
 <script src="./store.js"></script>
 <script src="./analys-core.js"></script>
+<script src="./analys-lista.js"></script>
 <script>
 "use strict";
-/* Analys efter rundan — räknas helt i telefonen ur den senast loggade rundan
-   (Store, se APPSTORE_PLAN §9.1) + banans burlov.json. Ingen PC/server/tunnel.
-   Slag-modell och mått: analys-core.js (facit-speglad, se ANALYS_MOBIL_V1_BRIEF). */
-const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
+/* Analys efter rundan — räknas helt i telefonen ur rundorna i Store
+   (APPSTORE_PLAN §9.1) + banans <slug>.json. Ingen PC/server/tunnel.
+   Slag-modell och mått: analys-core.js (facit-speglad, se ANALYS_MOBIL_V1_BRIEF).
+   Listmodellen: analys-lista.js (ren, node-testad).
+
+   TVÅ VYER (§2.6, §9.3):
+     analys.html              → rundlistan, en rad per runda ur Store.list()
+     analys.html?round=<id>   → analysen av EN runda
+
+   Vyval via query-param, inte internt state: bakåtknappen och flik-länken
+   fungerar då av sig själva, och en runda går att länka till.
+
+   VIKTIGT — en historisk runda läses med SIN EGEN banas tabeller. Före §9.3
+   läste sidan `SGRound.seq()`/`mobileJson()`/`GLOBAL_BASE`, dvs. den bana som
+   råkade vara AKTIV. Analysen av en gammal Burlöv-runda blev då fel så fort man
+   bytt till en annan bana. Rundan bär `courseSlug` + `roundSeq` (§9.1.3) och
+   hålen bär sitt frysta `global` — det är de som gäller här. */
 
 function esc(s) { return String(s).replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -135,16 +179,57 @@ const fmtDiff = d => d === 0 ? "E" : (d > 0 ? "+" + d : String(d));
 const pct = v => v == null ? "–" : Math.round(v) + "%";
 const m1 = v => v == null ? "–" : (v < 10 ? v.toFixed(1) : Math.round(v)) + " m";
 
-// Rundan bor i Store (APPSTORE_PLAN §9.1); sidan bootar i Store.ready().
-const loadState = () => Store.active();
-let coursePromise = null;
-function loadCourse() {
-  if (coursePromise) return coursePromise;
-  coursePromise = fetch("./data/" + SGRound.mobileJson(), { cache: "no-cache" })
+const roundIdFromUrl = () => {
+  try { return new URLSearchParams(location.search).get("round"); } catch (e) { return null; }
+};
+
+/* ---------- banregistret (per slug, inte "aktiv bana") ----------
+   Aktiv banas meta finns synkront i SGRound (och cachad i localStorage → funkar
+   offline). Andra banors meta hämtas ur data/courses.json, som service workern
+   precachar som app-shell — också offline. */
+let registryP = null;
+function loadRegistry() {
+  if (registryP) return registryP;
+  registryP = fetch("./data/courses.json", { cache: "no-cache" })
     .then(r => r.json())
-    .then(data => { const by = {}; for (const h of data.holes) by[GLOBAL_BASE[h.loop] + h.hole] = h; return by; })
-    .catch(() => ({}));
-  return coursePromise;
+    .then(l => (Array.isArray(l) ? l : []))
+    .catch(() => []);
+  return registryP;
+}
+async function courseMetaFor(slug) {
+  if (!slug || slug === SGRound.activeSlug()) return SGRound.meta;
+  const list = await loadRegistry();
+  return list.find(c => c.slug === slug) || null;
+}
+
+const courseDataCache = {};                 // mobile_json → Promise<{holes:[…]}>
+function loadCourseData(file) {
+  if (!file) return Promise.resolve(null);
+  if (!courseDataCache[file]) {
+    courseDataCache[file] = fetch("./data/" + file, { cache: "no-cache" })
+      .then(r => r.json()).catch(() => null);
+  }
+  return courseDataCache[file];
+}
+
+/* Allt en vy behöver om EN rundas bana: slingtabeller, hål-tabell och
+   par-summan för hela sekvensen. Cachas per (slug, roundSeq). */
+const bandCache = {};
+function bandsFor(slug, roundSeq) {
+  const key = slug + "|" + roundSeq;
+  if (bandCache[key]) return bandCache[key];
+  bandCache[key] = (async () => {
+    const meta = await courseMetaFor(slug);
+    const tables = SGRound.tablesFor(meta || {});
+    const seq = tables.ROUND_SEQ[roundSeq] || null;
+    const data = meta ? await loadCourseData(meta.mobile_json) : null;
+    const byGlobal = AnalysLista.byGlobalFrom(data, tables);
+    return { meta, tables, seq, byGlobal,
+             seqLength: seq ? seq.length : 0,
+             par: AnalysLista.parForSeq(byGlobal, seq),
+             hasData: !!(data && data.holes && data.holes.length) };
+  })();
+  return bandCache[key];
 }
 
 /* ---------- kort ---------- */
@@ -279,40 +364,188 @@ function emptyView() {
     <a class="btn" href="./index.html">Gå till Logga slag</a></div>`;
 }
 
-async function render() {
-  const S = loadState();
-  const seq = SGRound.seq();
-  const byGlobal = await loadCourse();
+/* ================= vy 1: rundlistan (§2.6) =================
+   Läser BARA indexrader — aldrig runddokumenten (§9.1.5). ±par kräver banans
+   par-summa och fylls därför i EFTERÅT, när bandatan hämtats; listan renderas
+   direkt så den aldrig väntar på nät. */
 
+function rowHtml(m) {
+  const badge = m.active
+    ? `<span class="badge live">pågår</span>`
+    : `<span class="badge ${m.level === 3 ? "lvl3" : ""}" title="Loggning: ${esc(m.levelLong)}">${esc(m.levelShort)}</span>`;
+  const meta = [
+    m.holesPlayed ? `${m.holesPlayed} hål` : "inga hål loggade",
+    m.tee ? `tee ${esc(m.tee)}` : null,
+    !m.active && m.level !== 3 ? `loggning: ${esc(m.levelLong)}` : null,
+    m.coverage,
+  ].filter(Boolean).join(" · ");
+  const toPar = AnalysLista.fmtToPar(m.toPar);
+  const parCls = m.toPar == null ? "" : m.toPar < 0 ? "pos" : m.toPar > 0 ? "neg" : "";
+  return `<a class="rrow${m.empty ? " dimmed" : ""}" href="./analys.html?round=${encodeURIComponent(m.id)}">
+    <span class="rmain">
+      <span class="rtop"><span class="rdate">${esc(m.dateLabel)}</span>${badge}</span>
+      <span class="rcourse">${esc(m.courseName)}${m.roundSeq ? " · " + esc(m.roundSeq) : ""}</span>
+      <span class="rmeta">${meta}</span>
+    </span>
+    <span class="rnum">
+      <span class="rscore">${m.strokes || "–"}</span>
+      ${toPar ? `<span class="rpar ${parCls}">${toPar}</span>` : `<span class="rholes">slag</span>`}
+    </span>
+  </a>`;
+}
+
+/* Lagringsläget, ärligt (§9.1.11). Detta är enda stället i appen som visar om
+   iOS lovat att INTE vräka rundorna — och det som gör beständighetsprovet
+   läsbart på telefonen, utan devtools. */
+async function storageHtml() {
+  let info = null;
+  try { info = await Store.storageInfo(); } catch (e) {}
+  if (!info) return "";
+  const mb = v => (v == null ? null : (v / 1048576).toFixed(v < 10485760 ? 1 : 0) + " MB");
+  const anv = mb(info.usage), kvot = mb(info.quota);
+  const bits = [];
+  // Vilken publicerad version telefonen FAKTISKT kör. Service workerns
+  // cache-namn bär sw.js:s VERSION, så detta kräver ingen byggstämpel — och
+  // det är enda sättet att på telefonen se om en publicering slagit igenom
+  // eller om PWA-cachen ligger kvar (se mobile/CLAUDE.md).
+  try {
+    const v = (await caches.keys()).filter(k => k.startsWith("sg-shell-v"))
+      .map(k => k.replace("sg-shell-v", ""));
+    if (v.length) bits.push("App-version: " + v.join(" + "));
+  } catch (e) {}
+  if (anv) bits.push(`Lagring: ${anv}${kvot ? " av " + kvot : ""}`);
+  bits.push(info.persisted === true ? "beständig lagring: JA"
+          : info.persisted === false ? "beständig lagring: NEJ (iOS kan rensa rundorna om appen inte används på länge)"
+          : "beständig lagring: okänt (webbläsaren svarar inte på frågan)");
+  if (info.backend && info.backend !== "idb")
+    bits.push("⚠ rundorna ligger bara i minnet — IndexedDB nekades, de försvinner när appen stängs");
+  return `<p class="storage">${bits.map(esc).join(" · ")}</p>`;
+}
+
+async function renderList() {
+  const app = document.getElementById("app");
+  const rows = AnalysLista.sortRows(await Store.list({ limit: 100 }));
+  if (!rows.length) {
+    app.innerHTML = `<h1>Analys</h1><p class="sub">Efter rundan</p>${emptyView()}`;
+    return;
+  }
+  // Aktiva rundans LEVANDE dokument kan ha nyare siffror än indexraden hunnit
+  // få (flush är async). Räkna om just den raden ur minnet.
+  const live = Store.active();
+  const merged = rows.map(r => (live && r.id === live.id ? Store.summary(live) : r));
+
+  const paint = info => {
+    const models = merged.map(r => AnalysLista.rowModel(r, {
+      now: new Date().toISOString(),
+      par: info ? (info[r.courseSlug + "|" + r.roundSeq] || {}).par : null,
+      seqLength: info ? (info[r.courseSlug + "|" + r.roundSeq] || {}).seqLength : 0,
+    }));
+    const spelade = models.filter(m => !m.empty).length;
+    app.innerHTML = `<h1>Analys</h1>
+      <p class="sub">${spelade} ${spelade === 1 ? "runda" : "rundor"} i telefonen · tryck för analys</p>
+      ${models.map(rowHtml).join("")}
+      <p class="note">Rundrapport och trend över tid kommer när analysen på datorn
+        kopplas in — listan här räknas helt i telefonen.</p>
+      <div id="storage"></div>`;
+    storageHtml().then(h => {
+      const el = document.getElementById("storage");
+      if (el) el.innerHTML = h;
+    });
+  };
+  paint(null);
+
+  // …och fyll i ±par när banornas par-summor finns (SW-cachade, oftast direkt).
+  const keys = {};
+  for (const r of merged) keys[r.courseSlug + "|" + r.roundSeq] = r;
+  const info = {};
+  await Promise.all(Object.keys(keys).map(async k => {
+    try {
+      const b = await bandsFor(keys[k].courseSlug, keys[k].roundSeq);
+      info[k] = { par: b.par, seqLength: b.seqLength };
+    } catch (e) { info[k] = { par: null, seqLength: 0 }; }
+  }));
+  if (roundIdFromUrl()) return;                 // användaren hann navigera bort
+  if (Object.values(info).some(v => v.par != null)) paint(info);
+}
+
+/* ================= vy 2: analysen av EN runda ================= */
+
+async function renderDetail(id) {
+  const app = document.getElementById("app");
+  // Den aktiva rundan läses ur minnet (färskast); övriga ur IndexedDB.
+  const live = Store.active();
+  const S = live && live.id === id ? live : await Store.get(id);
+  if (!S) {
+    app.innerHTML = `<a class="back" href="./analys.html">← Rundor</a>
+      <div class="card empty"><p class="big">Rundan finns inte</p>
+      <p class="txt">Den kan ha raderats på den här telefonen.</p>
+      <a class="btn" href="./analys.html">Till rundlistan</a></div>`;
+    return;
+  }
+
+  const B = await bandsFor(S.courseSlug, S.roundSeq);
+  const LOOP_SHORT = B.tables.LOOP_SHORT;
+
+  // Iterera rundans EGNA hål — de bär sitt frysta globala hålnummer (§9.1.3).
+  // Att gå via en runda-sekvens vore att läsa rundan med appens nuvarande
+  // inställning i stället för med rundans egen.
   const results = [];
   const trows = [];
-  seq.forEach((g, i) => {
-    const rel = i + 1;
-    const band = byGlobal[g];
-    const res = AnalysCore.holeAnalysis(Store.holeIn(S, rel), band);
+  for (const h of (S.holes || []).slice().sort((a, b) => a.n - b.n)) {
+    const band = B.byGlobal[h.global];
+    const res = AnalysCore.holeAnalysis(h, band);
     results.push(res);
-    if (res.played) {
-      const par = res.par, d = par != null ? res.score - par : null;
-      const diffCell = d == null ? `<td class="dimc">–</td>`
-        : d === 0 ? `<td>E</td>` : `<td class="${d < 0 ? "under" : "over"}">${fmtDiff(d)}</td>`;
-      const gir = res.girKnown ? (res.gir ? `<span class="gy">●</span>` : `<span class="gn">○</span>`) : "–";
-      trows.push(`<tr><td>${rel}${band ? ` <span style="color:var(--dim);font-size:12px">${LOOP_SHORT[band.loop] || ""} ${band.hole}</span>` : ""}</td>
-        <td>${par != null ? par : "–"}</td><td>${res.score}</td>
-        <td${res.putts ? "" : ' class="dimc"'}>${res.putts || "–"}</td>
-        <td>${gir}</td>${diffCell}</tr>`);
-    }
-  });
+    if (!res.played) continue;
+    const par = res.par, d = par != null ? res.score - par : null;
+    const diffCell = d == null ? `<td class="dimc">–</td>`
+      : d === 0 ? `<td>E</td>` : `<td class="${d < 0 ? "under" : "over"}">${fmtDiff(d)}</td>`;
+    const gir = res.girKnown ? (res.gir ? `<span class="gy">●</span>` : `<span class="gn">○</span>`) : "–";
+    trows.push(`<tr><td>${h.n}${band ? ` <span style="color:var(--dim);font-size:12px">${esc(LOOP_SHORT[band.loop] || "")} ${band.hole}</span>` : ""}</td>
+      <td>${par != null ? par : "–"}</td><td>${res.score}</td>
+      <td${res.putts ? "" : ' class="dimc"'}>${res.putts || "–"}</td>
+      <td>${gir}</td>${diffCell}</tr>`);
+  }
   const A = AnalysCore.aggregate(results);
+  const rad = Store.summary(S);
+  const lvl = AnalysLista.levelInfo(rad.loggingLevel);
 
-  const app = document.getElementById("app");
-  if (!A.nPlayed) { app.innerHTML = `<h1>Analys</h1><p class="sub">Efter rundan</p>${emptyView()}`; return; }
+  const head = `<a class="back" href="./analys.html">← Rundor</a>
+    <h1>${esc(AnalysLista.dateLabel(S.startedAt, new Date().toISOString()))}${S.status === "active" ? " · pågår" : ""}</h1>`;
+  const sub = [S.player ? esc(S.player) : null, esc(S.courseName || ""),
+               S.roundSeq ? "runda " + esc(S.roundSeq) : null,
+               S.tee ? "tee " + esc(S.tee) : null].filter(Boolean).join(" · ");
 
-  const sub = S && S.player ? `${esc(S.player)} · runda ${SGRound.roundName()}` : `Runda ${SGRound.roundName()}`;
+  if (!A.nPlayed) {
+    app.innerHTML = `${head}<p class="sub">${sub}</p>
+      <div class="card empty"><p class="big">Inget loggat på den här rundan</p>
+      <p class="txt">Rundan startades men inget hål har score än.</p></div>
+      ${deleteHtml(S)}`;
+    wireDelete(S);
+    return;
+  }
+
   const note = A.precExcluded
     ? `<p class="note">Green- och utslagsprecision räknas på hål utan plikt eller manuell justering — ${A.precExcluded} hål uteslutna.</p>`
     : "";
-  app.innerHTML = `<h1>Analys</h1>
+  // Ärlig täckning (APPSTORE_PLAN §5 regel 2, §9.2.3): säg rakt ut hur många av
+  // de spelade hålen som har fullt underlag, i stället för att låta måtten se
+  // heltäckande ut. Räknas ur samma indexrad som listvyn använder.
+  const täckning = !rad.holesPlayed ? "" :
+    `<p class="note">Loggning: ${esc(lvl.long)}` +
+    (rad.holesLevel3 < rad.holesPlayed
+      ? ` — fullt underlag på ${rad.holesLevel3} av ${rad.holesPlayed} spelade hål. Måtten nedan räknas bara på hålen som har data.`
+      : ` — fullt underlag på alla ${rad.holesPlayed} spelade hål.`) + `</p>`;
+  // Bandatan kan saknas offline för en bana man inte har nedladdad — säg det
+  // i stället för att visa par-lösa mått utan förklaring.
+  const banvarning = B.hasData ? "" :
+    `<p class="note">Bandatan för ${esc(S.courseName || "banan")} kunde inte läsas, så par,
+      GIR och greenprecision saknas här. Öppna banan en gång med nät, sedan
+      finns den offline.</p>`;
+
+  app.innerHTML = `${head}
     <p class="sub">${sub} · ${A.nPlayed} hål</p>
+    ${banvarning}
+    ${täckning}
     ${heroHtml(A)}
     ${greenMapHtml(A)}
     ${fairwayHtml(A)}
@@ -320,7 +553,31 @@ async function render() {
     ${distHtml(A)}
     ${parHtml(A)}
     ${tableHtml(trows.join(""), A)}
-    ${note}`;
+    ${note}
+    ${deleteHtml(S)}`;
+  wireDelete(S);
+}
+
+/* Radera EN runda. Bara avslutade rundor — den pågående ägs av logg-vyn och
+   ska avslutas där först (annars rycks den undan mitt i ett hål). */
+function deleteHtml(S) {
+  if (S.status === "active") return "";
+  return `<div class="card"><button class="danger-btn" id="del">Radera den här rundan</button>
+    <p class="foot">Går inte att ångra. Rundan finns bara i den här telefonen.</p></div>`;
+}
+function wireDelete(S) {
+  const b = document.getElementById("del");
+  if (!b) return;
+  b.onclick = () => {
+    const när = AnalysLista.dateLabel(S.startedAt, new Date().toISOString());
+    if (!confirm(`Radera rundan ${när} på ${S.courseName || "banan"}? Det går inte att ångra.`)) return;
+    Store.remove(S.id).then(() => { location.href = "./analys.html"; });
+  };
+}
+
+function render() {
+  const id = roundIdFromUrl();
+  return id ? renderDetail(id) : renderList();
 }
 Store.ready().then(render);
 window.addEventListener("pageshow", () => Store.ready().then(render));

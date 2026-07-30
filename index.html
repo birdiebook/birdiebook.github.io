@@ -178,6 +178,9 @@
   .stat .stat-ctl .val { font-size: 23px; font-weight: 800; min-width: 20px; }
   .stat .stat-sub { color: var(--dim); font-size: 11px; margin-top: 4px; height: 14px; }
 
+  /* loggningsnivå i hålvyn — diskret, det är en kontroll och ingen uppmaning */
+  .lvlpick { background: transparent; color: var(--dim); border: 0; font: inherit;
+             font-size: 12px; padding: 6px; text-align: center; }
   /* toggles green / pin */
   .togglerow { display: flex; gap: 10px; margin: 12px 0 4px; }
   .toggle { flex: 1; display: flex; align-items: center; gap: 10px; text-align: left;
@@ -278,6 +281,41 @@ function saveCourseHistory(list) {
    beslut G: localStorage = inställningar, IndexedDB = användardata). */
 let S = null;
 let lastFinishedDoc = null;    // senast avslutade rundan, för "hämta igen"-knappen
+
+/* ---------- nivå 2 är PAUSAD (beslut 2026-07-29) ----------
+   Hela nivå 2 finns byggd och testad (APPSTORE_PLAN §9.2) men är inte valbar:
+   inmatningen — särskilt fairway/green träff-miss — behöver mer eftertanke kring
+   användarupplevelsen innan den möter en riktig runda. Datamodellen (`fir`/`gir`),
+   regeln att härlett vinner över observerat, och testerna ligger kvar orörda.
+
+   ÅTERAKTIVERA: sätt NIVA2_PAUSAD = false. Inget annat behöver ändras.
+
+   En runda som REDAN står på nivå 2 får fortsatt visa och behålla sin nivå —
+   annars hade väljaren tappat spelarens eget val mitt i en runda. */
+const NIVA2_PAUSAD = true;
+function niva2Valbar() {
+  if (!NIVA2_PAUSAD) return true;
+  const d = Store.active();
+  return !!(d && d.loggingLevel === 2);
+}
+
+/* Par per spelarhål — behövs bara för att INTE visa en fairway-kontroll på par 3
+   (nivå 2). Laddas i bakgrunden; tills den är klar är kartan tom och kontrollen
+   visas, vilket är ofarligt (analys-core ignorerar fir på par 3 ändå). */
+let PAR_BY_REL = {};
+function loadPar() {
+  return fetch("data/" + SGRound.mobileJson(), { cache: "force-cache" })
+    .then(r => r.json())
+    .then(d => {
+      const byGlobal = {};
+      for (const hh of d.holes || []) byGlobal[SGRound.GLOBAL_BASE[hh.loop] + hh.hole] = hh.par;
+      const seq = SGRound.seq() || [];
+      const out = {};
+      seq.forEach((g, i) => { if (byGlobal[g] != null) out[i + 1] = byGlobal[g]; });
+      PAR_BY_REL = out;
+    })
+    .catch(() => {});
+}
 const VIEW_KEY = "sg_view";
 function draftState() {
   return { player: localStorage.getItem("sg_player") || "",
@@ -731,6 +769,12 @@ function renderSetup() {
       <select class="field" id="round"></select>
       <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
       <select class="field" id="tee"></select>
+      <label>Hur mycket vill du logga? <span style="color:var(--dim)">(går att ändra under rundan)</span></label>
+      <select class="field" id="lvl">
+        <option value="3">Full — GPS-position per slag (ger Strokes Gained)</option>
+        ${niva2Valbar() ? `<option value="2">Score + statistik — puttar, fairway, green</option>` : ""}
+        <option value="1">Bara score</option>
+      </select>
       <button class="big" id="start">Starta runda</button>
       <a class="big" href="./planera.html" style="display:block;text-align:center;text-decoration:none;margin-top:10px;background:#1a4c38;color:var(--ink)">🗓 Planera runda</a>
     </div>
@@ -753,6 +797,15 @@ function renderSetup() {
   // exporten översätter spelarens hål 1–18 till banans globala hålnummer.
   const roundSel = document.getElementById("round");
   const teeSel = document.getElementById("tee");
+  // Loggningsnivån minns valet från förra rundan (default full loggning).
+  // Har spelaren nivå 2 sparad medan den är pausad faller vi tillbaka på full
+  // loggning i stället för att låta <select> tyst välja första alternativet.
+  const lvlSel = document.getElementById("lvl");
+  if (lvlSel) {
+    let sparad = localStorage.getItem("sg_level");
+    if (sparad === "2" && !niva2Valbar()) sparad = "3";
+    lvlSel.value = (sparad === "1" || sparad === "2") ? sparad : "3";
+  }
   function fillRoundAndTee(meta) {
     const rounds = (meta && meta.rounds) || SGRound.BURLOV_DEFAULT.rounds;
     const tees = (meta && meta.tees) || SGRound.BURLOV_DEFAULT.tees;
@@ -862,20 +915,24 @@ function renderSetup() {
     const p = document.getElementById("player").value.trim();
     if (!p) { alert("Fyll i ditt namn."); return; }
     const meta = courseMetaBySlug(coursesRegistry, selectedSlug) || SGRound.meta;
+    const lvlSel = document.getElementById("lvl");
+    const nivå = lvlSel ? +lvlSel.value : 3;
     localStorage.setItem("sg_tee", teeSel.value);
     localStorage.setItem("sg_round", roundSel.value);
     localStorage.setItem("sg_player", p);
+    localStorage.setItem("sg_level", String(nivå));   // kom ihåg till nästa runda
     saveCourseHistory(pushCourseHistory((meta && meta.slug) || SGRound.activeSlug(), loadCourseHistory()));
     // Här skapas runddokumentet. Finns redan en aktiv runda (man backade ut till
     // setup) återanvänds den i stället för att en ny startas.
     S = Store.active() || Store.startRound({
       player: p, courseSlug: (meta && meta.slug) || SGRound.activeSlug(),
       courseName: (meta && meta.name) || DEFAULT_COURSE,
-      roundSeq: roundSel.value, tee: teeSel.value, loggingLevel: 3,
+      roundSeq: roundSel.value, tee: teeSel.value, loggingLevel: nivå,
     });
     S.player = p;
     S.courseName = (meta && meta.name) || DEFAULT_COURSE;
     S.tee = teeSel.value;
+    Store.setLevel(nivå);   // även när en pausad runda återupptas med nytt val
     setView("hole");
     // Beständig lagring begärs vid en användargest, aldrig i onboardingen (§9.1.11)
     Store.requestPersist();
@@ -893,6 +950,13 @@ function renderSetup() {
 function renderHole() {
   const h = hole(S.current);
   const pts = h.shots;
+  // Loggningsnivå (APPSTORE_PLAN §5, §9.2): 1 = bara score, 2 = + putts/plikt +
+  // fairway/green träff-miss, 3 = full GPS-loggning. RUNDANS nivå styr vad som
+  // går att mata in; hålets egen nivå är en efterhandsnotering om vad som
+  // faktiskt loggades. Redan loggade slag visas alltid, även om nivån sänkts,
+  // så att data aldrig blir osynlig eller oredigerbar.
+  const lvl = S.loggingLevel || 3;
+  const parNu = PAR_BY_REL[S.current] || null;
   // Avstånds-slinga: horisontell, en rad. Visar bara avståndet mellan slagen
   // (±precision/tid finns kvar i sparad runda/översikt). ✕ tar bort sista slaget.
   const trail = pts.map((p, i) => {
@@ -924,14 +988,14 @@ function renderHole() {
       <button id="next2">›</button>
     </div>
 
-    <div class="logwrap ${pts.length ? "compact" : ""}">
-      <button class="logcard" id="shot" ${busy ? "disabled" : ""}>
+    ${lvl >= 3 || pts.length ? `<div class="logwrap ${pts.length ? "compact" : ""}">
+      ${lvl >= 3 ? `<button class="logcard" id="shot" ${busy ? "disabled" : ""}>
         <div class="logtitle">${busy ? "HÄMTAR GPS …" : "LOGGA SLAG"}</div>
         ${ICO_FLAG}
         <div class="loghint">Tryck vid bollen innan du slår.</div>
-      </button>
+      </button>` : ""}
       ${pts.length ? `<div class="trail">${trail}</div>` : ""}
-    </div>
+    </div>` : ""}
 
     <div class="statgrid">
       <div class="stat">
@@ -939,11 +1003,11 @@ function renderHole() {
         <div class="stat-ctl"><button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button></div>
         <div class="stat-sub"></div>
       </div>
-      <div class="stat">
+      ${lvl >= 2 ? `<div class="stat">
         <div class="stat-lbl">Pliktslag</div>${ICO_PEN}
         <div class="stat-ctl"><button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button></div>
         <div class="stat-sub"></div>
-      </div>
+      </div>` : ""}
       <div class="stat">
         <div class="stat-lbl">Score</div>${ICO_SCORE}
         <div class="stat-ctl"><button id="sm" ${shotsN <= 0 ? "disabled" : ""}>−</button><span class="val">${score}</span><button id="sp">+</button></div>
@@ -951,13 +1015,21 @@ function renderHole() {
       </div>
     </div>
 
-    <div class="togglerow">
+    ${lvl >= 3 ? `<div class="togglerow">
       <button class="toggle green ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
         <span class="knob"></span><span>BOLL PÅ GREEN</span></button>
       <button class="toggle pin ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
         <span class="knob"></span><span>MARKERA PINN</span></button>
     </div>
-    <div class="tstatus">${tstatus}</div>
+    <div class="tstatus">${tstatus}</div>` : ""}
+
+    ${lvl === 2 ? `<div class="togglerow">
+      ${parNu !== 3 ? `<button class="toggle ${h.fir === true ? "on" : ""}" id="firT">
+        <span class="knob"></span><span>FAIRWAY${h.fir === false ? " ✕" : ""}</span></button>` : ""}
+      <button class="toggle green ${h.gir === true ? "on" : ""}" id="girT">
+        <span class="knob"></span><span>GREEN${h.gir === false ? " ✕" : ""}</span></button>
+    </div>
+    <div class="tstatus">Tryck en gång = träff, två = miss, tre = inte angivet.</div>` : ""}
 
     <div class="togglerow">
       <button class="toggle az ${localStorage.getItem("sg_autozoom") !== "off" ? "on" : ""}"
@@ -969,32 +1041,49 @@ function renderHole() {
     </div>
 
     <button class="big" id="next">Nästa hål ›</button>
+    <div style="text-align:center;margin-top:2px">
+      <select class="lvlpick" id="lvlSel" aria-label="Loggningsnivå">
+        <option value="1"${lvl === 1 ? " selected" : ""}>Loggning: bara score</option>
+        ${niva2Valbar() ? `<option value="2"${lvl === 2 ? " selected" : ""}>Loggning: score + statistik</option>` : ""}
+        <option value="3"${lvl === 3 ? " selected" : ""}>Loggning: full (GPS per slag)</option>
+      </select>
+    </div>
     <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
 
-  document.getElementById("shot").onclick = async () => {
+  // Nivåberoende kontroller kan saknas → alla handlare guardas.
+  const bind = (id, fn, ev) => { const el = document.getElementById(id); if (el) el[ev || "onclick"] = fn; };
+
+  bind("shot", async () => {
     const p = await capture("slaget", true);   // samla 5 s (kall mottagare ur fickan)
     if (p) { hole(S.current).shots.push(p); save(); livePush(); }
     render();
-  };
-  document.getElementById("green").onclick = async () => {
+  });
+  bind("green", async () => {
     if (h.green && !confirm("Green-position finns redan — ersätta?")) return;
     const p = await capture("green-läget");
     if (p) { h.green = p; save(); }
     render();
-  };
-  document.getElementById("pin").onclick = async () => {
+  });
+  bind("pin", async () => {
     if (h.pin && !confirm("Pin-position finns redan — ersätta?")) return;
     const p = await capture("pin-positionen");
     if (p) { h.pin = p; save(); livePushPin(p); }
     render();
-  };
+  });
+  // Observerad träff/miss (nivå 2): true → false → null, så en feltryckning
+  // går att ta tillbaka hela vägen till "inte angivet".
+  const cycle = v => (v === true ? false : v === false ? null : true);
+  bind("firT", () => { h.fir = cycle(h.fir); save(); render(); });
+  bind("girT", () => { h.gir = cycle(h.gir); save(); render(); });
+  bind("lvlSel", e => { Store.setLevel(+e.target.value); render(); }, "onchange");
+
   app.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
     if (confirm("Ta bort senaste slaget?")) { pts.splice(+b.dataset.del, 1); save(); livePush(); render(); }
   });
-  document.getElementById("pm").onclick = () => { h.putts = Math.max(0, h.putts - 1); save(); livePush(); render(); };
-  document.getElementById("pp").onclick = () => { h.putts++; save(); livePush(); render(); };
-  document.getElementById("fm").onclick = () => { h.pen = Math.max(0, h.pen - 1); save(); livePush(); render(); };
-  document.getElementById("fp").onclick = () => { h.pen++; save(); livePush(); render(); };
+  bind("pm", () => { h.putts = Math.max(0, h.putts - 1); save(); livePush(); render(); });
+  bind("pp", () => { h.putts++; save(); livePush(); render(); });
+  bind("fm", () => { h.pen = Math.max(0, h.pen - 1); save(); livePush(); render(); });
+  bind("fp", () => { h.pen++; save(); livePush(); render(); });
   // score +/−: justerar antalet slag vid bollen via adj (utan GPS-position), så
   // score kan sättas rätt även när alla slag inte loggats. − stoppar vid 0 slag.
   document.getElementById("sp").onclick = () => { h.adj = (h.adj || 0) + 1; save(); livePush(); render(); };
@@ -1031,7 +1120,9 @@ function renderHole() {
 
 function nextHole() {
   const h = hole(S.current);
-  if (h.shots.length && h.putts > 0 && !h.green &&
+  // Green-varningen gäller bara full loggning: på nivå 1-2 finns ingen
+  // green-markering att sakna, och varningen hade kommit på vartenda hål.
+  if ((S.loggingLevel || 3) >= 3 && h.shots.length && h.putts > 0 && !h.green &&
       !confirm("Ingen boll-på-green-position — första puttens längd får uppskattas vid import. Gå vidare?")) return;
   livePush();   // pusha hålet man lämnar innan vi byter
   if (S.current < maxHole()) { S.current++; save(); render(); }
@@ -1195,6 +1286,8 @@ Store.ready().then(() => {
   if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
   if (currentView() !== "setup") startWatch();
   render();
+  // par per hål (för att dölja fairway-kontrollen på par 3) — bakgrunden räcker
+  loadPar().then(() => { if (currentView() === "hole") render(); });
   // senast avslutade rundan i bakgrunden → "hämta igen"-knappen på setup-vyn
   Store.list({ limit: 20 }).then(rows => {
     const r = rows.find(x => x.status === "finished");

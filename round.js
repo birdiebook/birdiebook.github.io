@@ -48,19 +48,34 @@ const SGRound = (() => {
     return null;
   }
 
-  function build(m) {
-    meta = m;
-    GLOBAL_BASE = {};
+  /* Rena tabeller ur EN banas meta — utan att röra aktiv bana.
+     Behövs för att läsa en HISTORISK runda: den bär sin egen `courseSlug` och
+     `roundSeq` (APPSTORE_PLAN §9.1.3), och måste översättas med SIN banas
+     slingoffset — inte den bana som råkar vara aktiv i appen nu. Samma sorts fel
+     som frysningen av `global` i dokumentet stängde för exporten.
+
+     Obs: `loop.name` är `null` för enslingebanor (Elisefarm, Falsterbo, …).
+     Det är avsiktligt och funkar: JS stringifierar nyckeln, så `base[null]`
+     skrivs och läses konsekvent, och bandatans hål bär samma `loop: null`. */
+  function tablesFor(m) {
+    const GB = {}, LS = {}, RS = {};
     let acc = 0;
-    for (const loop of m.loops) {
-      GLOBAL_BASE[loop.name] = acc;
+    for (const loop of (m && m.loops) || []) {
+      GB[loop.name] = acc;
+      LS[loop.name] = loop.short;
       acc += loop.holes;
     }
-    LOOP_SHORT = {};
-    for (const loop of m.loops) LOOP_SHORT[loop.name] = loop.short;
-    ROUND_SEQ = {};
-    for (const r of m.rounds) ROUND_SEQ[r.value] = r.seq;
-    HOLES = (m.rounds[0] && m.rounds[0].seq.length) || acc;
+    for (const r of (m && m.rounds) || []) RS[r.value] = r.seq;
+    return { GLOBAL_BASE: GB, LOOP_SHORT: LS, ROUND_SEQ: RS, courseHoles: acc };
+  }
+
+  function build(m) {
+    meta = m;
+    const t = tablesFor(m);
+    GLOBAL_BASE = t.GLOBAL_BASE;
+    LOOP_SHORT = t.LOOP_SHORT;
+    ROUND_SEQ = t.ROUND_SEQ;
+    HOLES = (m.rounds[0] && m.rounds[0].seq.length) || t.courseHoles;
   }
 
   build(readCachedMeta() || BURLOV_META);
@@ -112,7 +127,7 @@ const SGRound = (() => {
     get ROUND_SEQ() { return ROUND_SEQ; },
     get HOLES() { return HOLES; },
     roundName, seq, relToGlobal, globalToRel, migrateSgHole,
-    mobileJson, activeSlug, setActiveCourse, courseName,
+    mobileJson, activeSlug, setActiveCourse, courseName, tablesFor,
     BURLOV_DEFAULT: BURLOV_META,
   };
 })();

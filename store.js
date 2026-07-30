@@ -133,11 +133,24 @@ const Store = (() => {
   function newHole(n, level) {
     let g = null;
     try { g = SGRound.relToGlobal(n); } catch (e) {}
+    // fir/gir = OBSERVERAD fairway-/greenträff (nivå 2, §9.2.1). null = inte
+    // angivet, INTE "miss". På nivå 3 härleds de ur positionerna i stället.
     return { n, global: g || n, level: level || 3, shots: [], green: null,
-             pin: null, putts: 0, pen: 0, adj: 0, holedOut: false, events: [] };
+             pin: null, putts: 0, pen: 0, adj: 0, holedOut: false,
+             fir: null, gir: null, events: [] };
   }
 
   const hasPosition = h => !!(h && h.shots && h.shots.some(s => s && s.lat != null));
+
+  /* Har hålet POSITIONSDATA — det SG faktiskt kräver?
+     Skilj detta från `h.level`: ett hål kan bära nivå 3 (rundans deklarerade
+     nivå) utan en enda position, nämligen när spelaren bara knappade in scoren
+     på just det hålet. Räknas nivån i stället för datan säger täckningen "fullt
+     underlag på 18 av 18" när bara 13 hål har det — samma sorts osanning som
+     §9.1.13 stängde för TOMMA hål, men för spelade.
+     Green-/pinmarkering räknas med: den är positionsdata och bär GIR även utan
+     loggade slag. */
+  const hasLevel3Data = h => hasPosition(h) || !!(h && (h.green || h.pin));
 
   /* Invarianter på ETT ställe, körs före varje skrivning:
      - hålen sorterade på spelarens hålnummer
@@ -154,6 +167,8 @@ const Store = (() => {
       h.pen = h.pen || 0;
       h.adj = h.adj || 0;
       h.holedOut = !!h.holedOut;
+      if (h.fir === undefined) h.fir = null;    // observerad träff (nivå 2)
+      if (h.gir === undefined) h.gir = null;
       if (h.global == null) {
         let g = null;
         try { g = SGRound.relToGlobal(h.n); } catch (e) {}
@@ -173,9 +188,11 @@ const Store = (() => {
       const c = SGScore.components(h);
       strokes += c.total;
       if (c.played) played++;
-      // Täckningen räknar bara SPELADE hål: ett tomt hål ärver rundans
-      // deklarerade nivå och skulle annars blåsa upp "SG för N av 18 hål".
-      if (c.played && h.level === 3) sg3++;
+      // Täckningen räknar SPELADE hål SOM HAR POSITIONSDATA. Två fällor, båda
+      // funna i webbläsaren och inte av testerna: ett tomt hål ärver rundans
+      // deklarerade nivå, och ett spelat hål som bara fick en inknappad score
+      // gör det också. Båda skulle blåsa upp "SG för N av 18 hål".
+      if (c.played && hasLevel3Data(h)) sg3++;
     }
     return {
       id: d.id, courseSlug: d.courseSlug, courseName: d.courseName,
@@ -415,6 +432,23 @@ const Store = (() => {
   // aldrig behöva veta att holes är en array.
   const holeIn = (d, n) => ((d && d.holes) || []).find(h => h.n === n) || null;
 
+  // Har hålet något loggat alls? Avgör om ett nivåbyte får röra dess nivå.
+  const hasData = h => !!(h && (h.shots.length || h.putts || h.pen || h.adj ||
+                                h.fir != null || h.gir != null || h.events.length));
+
+  /* Byt rundans loggningsnivå, även mitt i rundan (§9.2.2).
+     Hål som redan har data BEHÅLLER sin nivå — den beskriver vad som faktiskt
+     loggades där. Tomma hål får den nya nivån, annars skulle ett hål som
+     skapades på nivå 3 och sedan fylldes med bara en score räknas som
+     SG-underlag. */
+  function setLevel(n) {
+    if (!doc || !(n >= 1 && n <= 3)) return false;
+    doc.loggingLevel = n;
+    for (const h of doc.holes) if (!hasData(h)) h.level = n;
+    flush();
+    return true;
+  }
+
   // Muterar ett håls post. fn(hålet, dokumentet); returnera false för att avbryta
   // utan skrivning (samma konvention som redigera.js hade).
   function mutateHole(n, fn) {
@@ -487,21 +521,34 @@ const Store = (() => {
     } catch (e) {}
     return Promise.resolve(false);
   }
+  /* Lagringsläget, för att kunna redovisas ÄRLIGT i UI:t (§9.1.11).
+     `persisted` är den viktiga: false betyder att iOS får vräka rundorna om
+     appen inte används på länge. null = webbläsaren svarar inte på frågan —
+     det får inte presenteras som ett nej. */
   function storageInfo() {
-    try {
-      if (navigator.storage && navigator.storage.estimate) {
-        return navigator.storage.estimate().then(est => ({
-          usage: est.usage, quota: est.quota, backend: be ? be.kind : null,
-        }));
-      }
-    } catch (e) {}
-    return Promise.resolve({ usage: null, quota: null, backend: be ? be.kind : null });
+    const out = { usage: null, quota: null, persisted: null,
+                  backend: be ? be.kind : null };
+    const st = (typeof navigator !== "undefined" && navigator.storage) || null;
+    const jobs = [];
+    if (st && st.estimate) {
+      jobs.push(st.estimate().then(est => { out.usage = est.usage; out.quota = est.quota; },
+                                   () => {}));
+    }
+    if (st && st.persisted) {
+      jobs.push(Promise.resolve().then(() => st.persisted())
+        .then(v => { out.persisted = !!v; }, () => {}));
+    }
+    return Promise.all(jobs).then(() => out, () => out);
   }
 
   return {
     ready, active, activeId, startRound, ensureRound, finishRound, newRound,
-    mutate, touch, hole, holeIn, mutateHole, setCurrent, addShot, addEvent,
+    mutate, touch, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
+    addShot, addEvent,
     list, get, remove, export: toWire,
+    // Sammanfattning av ETT dokument (samma form som indexraden) — det vyerna
+    // använder för ärlig täckningsredovisning.
+    summary: indexRow,
     match: currentMatch, setMatch, removeMatch,
     requestPersist, storageInfo,
     // interna, för tester (tests/js/test_store.mjs)

@@ -29,7 +29,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-07-28-store";
+const VERSION = "2026-07-30-rundlista";
 
 const SHELL_CACHE = "sg-shell-v" + VERSION;
 const DATA_CACHE  = "sg-data";
@@ -50,6 +50,8 @@ const SHELL_ASSETS = [
   "boot.js",
   "round.js",
   "analys-core.js",
+  "analys-lista.js",
+  "spelformer.js",
   "coursemap.js",
   "mapcore.js",
   "playas.js",
@@ -103,6 +105,12 @@ const isTile = (url) => /\/tiles\/[^/]+\/\d+\/\d+\/\d+\.webp$/.test(url.pathname
 // så senaste versionen alltid vinner online, med cache-fallback offline. Ingen
 // bana hårdkodad här: mönstret matchar "<slug/mobile_json>.json" generellt.
 // courses.json (registryn) räknas som app-shell (precachas, se SHELL_ASSETS ovan).
+// FÖLJDEN, värd att veta: registryn serveras därför CACHE-FIRST och uppdateras
+// bara när VERSION byts. Ändrar du mobile/data/courses.json (t.ex. via
+// tools/publish_mobile_ratings.py) måste du bumpa VERSION ovan, annars kör
+// telefonerna kvar på den gamla registryn — inklusive gamla CR/slope, vilket
+// tyst ger fel netto. Bandata per bana (<slug>.json) är network-first och har
+// inte det problemet.
 // green_slope.<slug>.geojson (V4b — bana-scopad, se tools/build_green_slope.py)
 // matchas generellt likadant, ingen bana hårdkodad.
 const isData = (url) =>
