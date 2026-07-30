@@ -17,7 +17,7 @@
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; --water:#4aa6e0;
-          --danger:#e23b3b; --holeout:#d99a2b;
+          --danger:#e23b3b;
           /* halvgenomskinlig svart bakom text i inramningarna (hål, avstånd, mät) —
              syns tydligare mot kartan än den gröna varianten */
           --framebg: rgba(0,0,0,.55);
@@ -92,7 +92,10 @@
   #measure .play { font-size:18px; }
   #measure .play b { font-size:22px; color:var(--ink); }
   #measure .sub { display:block; color:var(--ink); font-size:15px; margin-top:2px; }
-  #measure.hidden { display:none; }
+  /* visibility (inte display:none) → rutan behåller sin box även osynlig, så
+     "Logga slag" under den (layoutOverlays) kan mäta var den slutar och alltså
+     ligger still oavsett om ett mått visas eller inte. */
+  #measure.hidden { visibility:hidden; }
   /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Ligger i
      toppraden längst till vänster (kompakt så den ryms bredvid hål-rutan). */
   #modeToggle { flex:0 0 auto; display:flex; gap:3px;
@@ -116,13 +119,15 @@
   .gpsdot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#e26a5a; }
   .gpsdot.ok { background:var(--accent); }
   .hint { color:var(--dim); font-size:12px; text-align:center; margin-top:6px; }
-  /* rund "Logga slag"-knapp nere till vänster — samma inramning som mått-rutorna:
-     tunn mörkgrön ring, halvgenomskinlig svart bakgrund, grön text (--accent,
-     samma gröna som GPS-prickens ok-läge). */
+  /* rund "Logga slag"-knapp uppe till höger, DIREKT UNDER måttet till vald punkt
+     (#measure) — top sätts av layoutOverlays(); värdet här är bara en rimlig
+     startposition innan det första måttet räknats fram. Samma inramning som
+     mått-rutorna: tunn mörkgrön ring, halvgenomskinlig svart bakgrund, grön text
+     (--accent, samma gröna som GPS-prickens ok-läge). */
   #logfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
     right:calc(env(safe-area-inset-right) + 14px);
-    bottom:calc(env(safe-area-inset-bottom) + 285px + var(--reclaim));   /* överst; ovankant i höjd med putt-plusset */
+    top:calc(env(safe-area-inset-top) + 158px);
     width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     color:var(--accent); font-weight:800; font-size:13px; line-height:1.15; text-align:center;
@@ -130,37 +135,40 @@
     background:rgba(0,0,0,.72); }   /* samma svart/grön-stil som "Boll på green" oreggad */
   #logfab:active { transform:scale(.94); }
   #logfab.busy { opacity:.5; pointer-events:none; }
-  /* runda "Boll på green"- och "Pin"-knappar, staplade ovanför Logga slag.
-     Samma inramning/halvgenomskinliga stil som logfab men mindre diameter och
-     färgsatta som respektive toggle på Logga slag-sidan (green=accent, pin=danger).
-     Centrerade i samma kolumn som logfab (logfab: left 14 + bredd 66 → centrum 47;
-     dessa: bredd 54 → left 20 ger samma centrum). */
-  #greenfab, #pinfab, #holeoutfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
+  /* För dålig GPS för att logga (LOG_ACC_MAX_M): dämpad knapp. Den går fortfarande
+     att trycka på — då förklarar logShot varför slaget inte loggades, i stället för
+     att en död knapp lämnar spelaren utan svar. */
+  #logfab.weak { opacity:.4; }
+  /* runda "Boll på green"- och "Pin"-knappar nere till höger, SAMMA diameter som
+     Logga slag (66px). Samma inramning/halvgenomskinliga stil, färgsatta som
+     respektive toggle på Logga slag-sidan (green=accent, pin=danger). Visas bara
+     i green-fasen (atGreenPhase → refreshGreenControls). */
+  #greenfab, #pinfab { position:fixed; z-index:1300; -webkit-appearance:none; appearance:none;
     cursor:pointer; font-family:inherit;
-    right:calc(env(safe-area-inset-right) + 20px);
-    width:54px; height:54px; border-radius:50%;
+    right:calc(env(safe-area-inset-right) + 14px);
+    width:66px; height:66px; border-radius:50%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
-    font-weight:800; font-size:10px; line-height:1.1; text-align:center;
+    font-weight:800; font-size:12px; line-height:1.1; text-align:center;
     border:1px solid; box-shadow:0 2px 8px #0007;
     background:rgba(0,0,0,.72); }   /* oreggad: svart botten, färgad text/ring */
-  /* "Hål ut" nederst i högerkolumnen (under pin), samma 64px-steg som green→pin.
-     Dov orange/gul (--holeout). Ren klar-flagga — påverkar inte scoren. */
-  #holeoutfab { bottom:calc(env(safe-area-inset-bottom) + 93px + var(--reclaim)); color:var(--holeout); border-color:var(--holeout); }
-  #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 157px + var(--reclaim)); color:var(--danger); border-color:var(--danger); }
-  #greenfab { bottom:calc(env(safe-area-inset-bottom) + 221px + var(--reclaim)); color:var(--accent); border-color:var(--accent); }
-  #greenfab:active, #pinfab:active, #holeoutfab:active { transform:scale(.94); }
+  #pinfab   { bottom:calc(env(safe-area-inset-bottom) + 93px + var(--reclaim)); color:var(--danger); border-color:var(--danger); }
+  #greenfab { bottom:calc(env(safe-area-inset-bottom) + 169px + var(--reclaim)); color:var(--accent); border-color:var(--accent); }
+  #greenfab:active, #pinfab:active { transform:scale(.94); }
   #greenfab.busy, #pinfab.busy { opacity:.5; pointer-events:none; }
   /* reggad: fylld färg (lätt genomskinlig) med svart text */
   #greenfab.on { background:rgba(55,176,107,.85); color:var(--accent-ink); border-color:var(--accent); }
   #pinfab.on   { background:rgba(226,59,59,.85); color:#1a0606; border-color:var(--danger); }
-  #holeoutfab.on { background:rgba(217,154,43,.85); color:#1a1204; border-color:var(--holeout); }
-  /* score-räknare nere till höger: total slag för aktuellt hål i en rund ruta
-     (grön ring, halvgenomskinlig svart, vit text — som green-måtten), med +
-     ovanför och − under för att justera scoren. */
+  #greenfab.hidden, #pinfab.hidden, #puttbox.hidden { display:none; }
+  /* score-räknaren uppe till vänster, DIREKT UNDER green-avstånden (#wind) — top
+     sätts av layoutOverlays() eftersom vindrutans höjd varierar med innehållet.
+     Under scoren sitter putt-räknaren (+ över, − under), som bara visas i
+     green-fasen. Rund ruta med grön ring, halvgenomskinlig svart, vit text —
+     samma stil som green-måtten. */
   #scorefab { position:fixed; z-index:1300;
     left:calc(env(safe-area-inset-left) + 14px);
-    bottom:calc(env(safe-area-inset-bottom) + 107px + var(--reclaim));
+    top:calc(env(safe-area-inset-top) + 190px);
     display:flex; flex-direction:column; align-items:center; gap:8px; }
+  #puttbox { display:flex; flex-direction:column; align-items:center; gap:8px; }
   #scorefab .sc-btn { -webkit-appearance:none; appearance:none; cursor:pointer;
     font-family:inherit; width:44px; height:44px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
@@ -234,16 +242,17 @@
     · tryck på kartan för att mäta</div>
 </div>
 
-<button type="button" id="greenfab">Boll på<br>green</button>
-<button type="button" id="pinfab">Markera<br>pin</button>
-<button type="button" id="holeoutfab">Hål<br>ut</button>
+<button type="button" id="greenfab" class="hidden">Boll på<br>green</button>
+<button type="button" id="pinfab" class="hidden">Markera<br>pin</button>
 <button type="button" id="logfab">Logga<br>slag</button>
 
 <div id="scorefab">
-  <button type="button" class="sc-btn" id="puttUp" aria-label="Öka puttar">+</button>
-  <div class="sc-count"><span class="val" id="puttVal">0</span><span class="lbl">putt</span></div>
-  <button type="button" class="sc-btn" id="puttDn" aria-label="Minska puttar">−</button>
   <div class="sc-count"><span class="val" id="scoreVal">0</span><span class="lbl">score</span></div>
+  <div id="puttbox" class="hidden">
+    <button type="button" class="sc-btn" id="puttUp" aria-label="Öka puttar">+</button>
+    <div class="sc-count"><span class="val" id="puttVal">0</span><span class="lbl">putt</span></div>
+    <button type="button" class="sc-btn" id="puttDn" aria-label="Minska puttar">−</button>
+  </div>
 </div>
 
 <nav class="tabs">
@@ -343,8 +352,10 @@ async function fetchPlayerElev() {
 // bakre tee startar på rätt avstånd även utan digitaliserad box) — listas i _approx.
 // Appen gör bara en O(1)-uppslagning. Fallback när tabellen saknas: fördela numren
 // jämnt bakifrån (floor(rang·boxar/4)).
-// teePoint/teeIsApprox + tee-tabellen bor i mapcore.js (laddas av loadCourse).
-const teePoint = MapCore.teePoint, teeIsApprox = MapCore.teeIsApprox;
+// teePoint + tee-tabellen bor i mapcore.js (laddas av loadCourse). Att en tee är
+// SYNTETISERAD (MapCore.teeIsApprox) visas inte längre i toppraden — måttet är
+// ändå det bästa vi har, och "~approx" gjorde mest hål-etiketten svårläst.
+const teePoint = MapCore.teePoint;
 // utgångspunkt för alla mått: spelarens GPS-position, men står man >1000 m
 // från green (t.ex. hemma/på klubbhuset) mäts från tee istället.
 const FAR_FROM_HOLE_M = 1000;
@@ -404,6 +415,11 @@ function greenDistHtml(origin, h, distFn) {
 
 function updateWind() {
   updateRose();
+  renderWindBox();
+  layoutOverlays();   // rutans höjd kan ha ändrats → flytta score-kolumnen under den
+}
+
+function renderWindBox() {
   const el = document.getElementById("windTxt");
   const o = measureOrigin();
   // GPS-läge: råa avstånd till green (bakkant/centrum/framkant), oberoende av vind
@@ -432,10 +448,9 @@ function updateWind() {
     const pa = PlayAs.playAsRange(o.pt, t, WIND, slope);
     return pa ? pa.mean : Math.round(hav(o.pt, t) + slope);
   };
-  // diskret Δh-rad under måtten när höjden faktiskt påverkar (≥1 m)
-  const dhTxt = (dh != null && Math.abs(dh) >= 1)
-    ? `<div class="sub">${dh > 0 ? "&#8599;" : "&#8600;"} Δh ${dh > 0 ? "+" : "−"}${Math.abs(dh).toFixed(0)} m</div>` : "";
-  el.innerHTML = greenDistHtml(o.pt, h, distFn) + dhTxt;
+  // Höjden räknas in i "spelar som"-måtten (slope ovan) men visas INTE som egen
+  // Δh-rad — avstånden ska stå ensamma under vinden.
+  el.innerHTML = greenDistHtml(o.pt, h, distFn);
 }
 
 // riktning tee→green för hålet (grader 0=N), null om data saknas
@@ -502,6 +517,23 @@ function playBand() {
   return { topY, botY, width: mapRect.width, height: mapRect.height };
 }
 
+// Stapla de fasta overlay-kolumnerna under sina respektive mått-rutor:
+// score/putt (vänster) under green-avstånden (#wind), Logga slag (höger) under
+// måttet till vald punkt (#measure). Båda rutorna byter höjd med innehållet
+// (1 vs 3 green-avstånd, vind saknas, …) → räknas i JS i stället för att gissas
+// i CSS. #measure döljs med visibility, inte display:none, så dess box finns
+// kvar att mäta även när inget mått visas → Logga slag ligger still.
+function layoutOverlays() {
+  const place = (id, underId, gap) => {
+    const el = document.getElementById(id), ref = document.getElementById(underId);
+    if (!el || !ref) return;
+    const r = ref.getBoundingClientRect();
+    if (r.height) el.style.top = Math.round(r.bottom + gap) + "px";
+  };
+  place("scorefab", "wind", 10);
+  place("logfab", "measure", 10);
+}
+
 // Grönpunkten längst från origin (bortre greenkant) — övre ankaret i båda lägen.
 function farGreen(origin, h) {
   let farPt = h.green[0], farD = -1;
@@ -563,8 +595,7 @@ function fitGreenView() {
   const band = playBand();
   const availPx = Math.min(band.width, band.botY - band.topY);
   if (availPx < 50) return false;
-  let r = 0;   // radie: green-centrum → bortersta greenpunkt
-  for (const gp of h.green) { const d = hav(h.green_center, gp); if (d > r) r = d; }
+  const r = greenRadius(h);   // green-centrum → bortersta greenpunkt
   const span = Math.max(2 * r * (1 + 2 * GREEN_VIEW_PAD_FR), MIN_FRAME_M);  // diameter + luft, golv
   // Zooma så hela greenen (+ luft) ryms, men ALDRIG bortom skarp-bild-taket
   // (ortofotots 0.16 m/px · devicePixelRatio) → ingen upp-skalning/pixelering. Taket
@@ -747,6 +778,10 @@ function drawShots() {
 // röra hålvyn. Varnar vid svag GPS precis som index.html:s capture().
 // Saknas aktiv runda skapar Store.addShot en — förr gjorde varje skrivställe här
 // sin egen fallback, som gav en runda helt utan spelare, bana och tee.
+// GPS-trösklar för slagloggen: över LOG_ACC_WARN_M frågar vi, över LOG_ACC_MAX_M
+// loggar vi INTE alls. En fix på ±50 m säger inget om var bollen låg — den skulle
+// bara lägga in skräp i rundan som ser ut som data (och förgifta SG-analysen).
+const LOG_ACC_WARN_M = 25, LOG_ACC_MAX_M = 40;
 let logBusy = false;
 function logShot() {
   if (logBusy) return;
@@ -756,7 +791,12 @@ function logShot() {
   const done = () => { logBusy = false; if (fab) fab.classList.remove("busy"); };
   navigator.geolocation.getCurrentPosition(p => {
     const acc = p.coords.accuracy;
-    if (acc > 25 && !confirm(`Svag GPS just nu (±${Math.round(acc)} m). Logga slag ändå?`)) {
+    if (acc > LOG_ACC_MAX_M) {
+      alert(`GPS-precisionen är för dålig just nu (±${Math.round(acc)} m) — slaget loggades INTE.\n\n`
+        + `Vänta några sekunder med telefonen uppe och försök igen.`);
+      done(); return;
+    }
+    if (acc > LOG_ACC_WARN_M && !confirm(`Svag GPS just nu (±${Math.round(acc)} m). Logga slag ändå?`)) {
       done(); return;
     }
     const shot = { lat: p.coords.latitude, lon: p.coords.longitude,
@@ -819,36 +859,71 @@ let markBusy = false;
 function refreshFabs() {
   const rec = Store.holeIn(Store.active(), hi + 1);
   const gf = document.getElementById("greenfab"), pf = document.getElementById("pinfab");
-  const hf = document.getElementById("holeoutfab");
   if (gf) gf.classList.toggle("on", !!(rec && rec.green && rec.green.lat != null));
   if (pf) pf.classList.toggle("on", !!(rec && rec.pin && rec.pin.lat != null));
-  if (hf) hf.classList.toggle("on", !!(rec && rec.holedOut));
 }
 
-// Toggla "hål ut" (klar-flagga) för aktuellt hål i rundloggen. REN flagga —
-// påverkar inte scoren (chip-in = hål ut med 0 putts). Kan reggas/avreggas.
-// Ett hål-ut kan uppfylla krav 2 för auto-hålbytet → kolla direkt efteråt.
-function toggleHoleOut() {
-  Store.mutateHole(hi + 1, h => { h.holedOut = !h.holedOut; });
-  if (navigator.vibrate) navigator.vibrate(15);   // knapptryck (ej auto-bytet)
-  refreshFabs();
-  maybeAutoAdvance();
+// --- Green-fasen -------------------------------------------------------------
+// "Green-fasen" = spelaren är framme vid greenen på hålet. Den styr TVÅ saker:
+// vilka kontroller som visas (Boll på green · Markera pin · putt-räknaren) och
+// när det sömlösa hålbytet får slå till. Latchad per hål och SPARAD i rundan
+// (h.visitedGreen) så en omladdning mitt på greenen inte glömmer bort den.
+const NEAR_GREEN_M = 15;   // så här nära greenens ytterkant → green-fasen börjar
+
+// Greenens radie (centrum → bortersta polygonpunkt), cachad per hål. Ger ett
+// "på/vid green"-mått som funkar även på stora greener, där green-CENTRUM kan
+// vara 20+ m bort fast man står på framkanten.
+function greenRadius(h) {
+  if (h._gr == null) {
+    let r = 0;
+    for (const gp of (h.green || [])) { const d = hav(h.green_center, gp); if (d > r) r = d; }
+    h._gr = r;
+  }
+  return h._gr;
+}
+
+// Är hålet i green-fasen? GPS-latchen ELLER något som bara sker vid greenen
+// (green-position markerad, puttar räknade, hål ut från Logga slag-sidan).
+function atGreenPhase(rec) {
+  return !!(rec && (rec.visitedGreen || rec.putts > 0 || rec.holedOut
+    || (rec.green && rec.green.lat != null)));
+}
+
+// Visa/dölj green-kontrollerna efter green-fasen.
+function refreshGreenControls() {
+  const on = atGreenPhase(currentHoleRec());
+  for (const id of ["greenfab", "pinfab", "puttbox"]) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("hidden", !on);
+  }
+}
+
+// Latcha green-fasen när GPS säger att vi är på/vid greenen. Kräver hyfsad fix
+// (samma tröskel som inramningen) så en skräpfix inte öppnar fasen för tidigt,
+// och skriver bara EN gång per hål.
+function evalGreenPhase(lat, lon, acc) {
+  const h = ROUND[hi];
+  if (!h || !h.green_center) return;
+  if (acc != null && acc > REFIT_ACC_M) return;
+  if (atGreenPhase(currentHoleRec())) return;              // redan i fasen
+  if (hav([lat, lon], h.green_center) > greenRadius(h) + NEAR_GREEN_M) return;
+  Store.mutateHole(hi + 1, rec => { rec.visitedGreen = true; });
+  refreshGreenControls();
 }
 
 // Sömlöst auto-hålbyte (medan man är på kartan): byt till nästa hål när BÅDA
-// kraven är uppfyllda — (1) ≤10 m från nästa håls valda tee, och (2) putt reggad
-// ELLER hål ut reggat på nuvarande hål. Bara vid hyfsad GPS (acc ≤15 m) så
-// skräpfixar inte byter för tidigt. Körs vid varje GPS-fix OCH direkt när man
-// reggar putt/hål-ut (fångar båda ordningarna: gå-sen-avsluta / avsluta-sen-gå).
-// Tyst — ingen avisering. Inget kedjebyte: nya hålet uppfyller inte krav 2.
+// kraven är uppfyllda — (1) ≤10 m från nästa håls valda tee, och (2) nuvarande
+// hål är i green-fasen (varit på greenen). Krav 2 kräver alltså INGEN inmatning:
+// har man gått över greenen och sedan står på nästa tee är hålet spelat.
+// Bara vid hyfsad GPS (acc ≤15 m) så skräpfixar inte byter för tidigt. Körs vid
+// varje GPS-fix OCH direkt när man reggar putt/green (fångar båda ordningarna).
+// Tyst — ingen avisering. Inget kedjebyte: nya hålet är inte i green-fasen.
 const AUTO_TEE_M = 10, AUTO_ACC_M = 15;
 function maybeAutoAdvance(acc) {
   if (acc == null) acc = lastAcc;
   if (!pos || acc == null || acc > AUTO_ACC_M) return;
   if (hi >= ROUND.length - 1) return;            // sista hålet → inget nästa tee
-  const rec = currentHoleRec();
-  const finished = !!(rec && ((rec.putts > 0) || rec.holedOut));
-  if (!finished) return;
+  if (!atGreenPhase(currentHoleRec())) return;
   const nextTee = teePoint(ROUND[hi + 1]);
   if (!nextTee) return;
   if (hav(pos, nextTee) <= AUTO_TEE_M) goToHole(hi + 2);   // hi 0-baserat → nästa rel = hi+2
@@ -973,19 +1048,17 @@ function drawHole() {
   const h = ROUND[hi];
   if (!h) return;
   PlayAs.loadElev3d(h, updateWind);   // höjddata (C1) — async, updateWind körs om när den landat
-  const teeSel = localStorage.getItem("sg_tee") || "";
-  const approx = teeIsApprox(h)
-    ? ` <small style="color:#e2a45a">tee ${teeSel} ~approx</small>` : "";
   document.getElementById("holeName").innerHTML =
-    `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>${approx}`;
+    `Hål ${hi + 1} <small>Par ${h.par ?? "–"}</small>`;
 
   // Hål-linje (vit, start på vald tee) + pin — geometrin inkl. dogleg-fixen bor i mapcore.js.
   MapCore.drawHoleGeometry(layers, h);
 
   // reggade slag ur rundloggen (om några loggats för hålet)
   drawShots();
-  refreshFabs();   // grön/röd tint på green-/pin-knapparna efter vad som är reggat
-  renderScore();   // total slag för hålet i score-räknaren
+  refreshFabs();            // grön/röd tint på green-/pin-knapparna efter vad som är reggat
+  refreshGreenControls();   // green-/pin-knappar + putt-räknare bara i green-fasen
+  renderScore();            // total slag för hålet i score-räknaren
   // delad pin från matchen (om satt för hålet)
   drawPin();
 
@@ -1018,11 +1091,15 @@ function setPos(lat, lon, acc) {
   const g = document.getElementById("gdot"), t = document.getElementById("gtxt");
   g.className = "gpsdot" + (acc <= 15 ? " ok" : "");
   t.textContent = `GPS ±${Math.round(acc)} m`;
+  // för dålig fix för att logga slag → dämpa knappen (logShot vägrar också)
+  const lf = document.getElementById("logfab");
+  if (lf) lf.classList.toggle("weak", acc > LOG_ACC_MAX_M);
   if (!meMarker) meMarker = L.circleMarker(pos, { radius: 7, color: "#fff", weight: 2, fillColor: "#3b82f6", fillOpacity: 1 }).addTo(map);
   else meMarker.setLatLng(pos);
   updateWind();
   fetchPlayerElev();
   if (tapMarker) updateTap(tapMarker.getLatLng());
+  evalGreenPhase(lat, lon, acc);   // green-kontrollerna upp när man är vid greenen
   maybeAutoAdvance(acc);   // sömlöst hålbyte om kraven slår in
   evalFollow(lat, lon, acc);   // auto-zoom: trigga/följ vyn mot green
   evalSlopeView(lat, lon);     // green-lutning: visa när man är inom 160 m
@@ -1071,6 +1148,7 @@ function updateTap(latlng) {
   }
   if (tapLine) map.removeLayer(tapLine);
   if (o.pt) tapLine = L.polyline([o.pt, target], { color: "#fff", weight: 2, dashArray: "3,5" }).addTo(map);
+  layoutOverlays();   // mätrutans höjd kan ha ändrats → flytta Logga slag under den
 }
 // Egen mät-pin: vendor-mappen saknar Leaflets marker-PNG:er, så standard-L.marker
 // blir osynlig. Inbyggd SVG-pin (ingen extern fil, funkar offline).
@@ -1113,8 +1191,6 @@ async function init() {
   if (gf) gf.onclick = () => markPoint("green");
   const pf = document.getElementById("pinfab");
   if (pf) pf.onclick = () => markPoint("pin");
-  const hf = document.getElementById("holeoutfab");
-  if (hf) hf.onclick = toggleHoleOut;
   const pu = document.getElementById("puttUp");
   if (pu) pu.onclick = () => adjustPutts(1);
   const pdn = document.getElementById("puttDn");
@@ -1137,6 +1213,8 @@ async function init() {
   for (const b of document.querySelectorAll("#modeToggle button"))
     b.onclick = () => setMode(b.dataset.mode);
   setMode(mode);   // sätter aktiv knapp + första renderingen
+  // Första staplingen när layouten satt sig (safe-area/typsnitt inräknade).
+  requestAnimationFrame(layoutOverlays);
   const rs = document.getElementById("roundSel");
   if (rs) rs.onchange = e => setRound(e.target.value);
 
@@ -1219,6 +1297,7 @@ function onViewportChange() {
   const h = window.innerHeight;
   if (h === _lastVpH) return;
   _lastVpH = h;
+  layoutOverlays();   // safe-area/verktygsfält ändrat → stapla om overlay-kolumnerna
   if (map) {
     map.invalidateSize({ pan: false });
     if (ROUND[hi]) applyFrame();   // re-applicera aktuellt läge (overview/follow)
