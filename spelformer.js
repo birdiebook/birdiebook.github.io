@@ -28,6 +28,9 @@
  *
  * PENGAR: kärnan räknar och visar uträkningen. Den hanterar aldrig betalning
  * (§6.4).
+ *
+ * Beroende: `SGScore` (score.js) — men BARA i adaptern `fromRound()` längst ner.
+ * Axlarna och `run()` är helt fristående.
  */
 globalThis.Spelformer = (() => {
 
@@ -428,10 +431,21 @@ globalThis.Spelformer = (() => {
     const allowance = ctx.allowance != null ? ctx.allowance
                     : (F.allowance ? ALLOWANCE[F.allowance] : 1);
     const strokes = {};                 // playerId → {holeN: slag} | null
-    let nettoOk = F.netto, orsak = null;
-    if (!F.netto) orsak = "formatet spelas brutto";
+    let nettoOk = F.netto;
+    const orsaker = [];                 // ALLA hinder, inte bara det sista
+
+    /* Banans slagindex kontrolleras FÖRE spelarna. Det hindret gäller alla och
+       är den mer grundläggande orsaken; en saknad handicap är per spelare.
+       Förut skrevs `orsak` om i spelar-loopen, så vilket skäl som råkade
+       redovisas berodde på spelarordningen — och en vy som säger "Bo saknar
+       handicap" när banan saknar slagindex skickar dig att felsöka fel sak. */
+    const banGrind = F.netto && strokeRanks(holes) == null
+      ? "banan saknar slagindex — netto går inte att räkna" : null;
+    if (!F.netto) orsaker.push("formatet spelas brutto");
+    if (banGrind) { nettoOk = false; orsaker.push(banGrind); }
+
     for (const p of players) {
-      if (!F.netto) { strokes[p.id] = null; continue; }
+      if (!F.netto || banGrind) { strokes[p.id] = null; continue; }
       let php = p.playingHandicap;
       if (php == null) {
         const ch = p.courseHandicap != null ? p.courseHandicap
@@ -439,10 +453,12 @@ globalThis.Spelformer = (() => {
                                     par: ctx.par });
         php = playingHandicap(ch, allowance);
       }
-      if (php == null) { strokes[p.id] = null; nettoOk = false; orsak = "spelhandicap saknas (course rating/slope eller hcp-index)"; continue; }
-      const a = allocate(php, holes);
-      if (!a) { strokes[p.id] = null; nettoOk = false; orsak = "banan saknar slagindex — netto går inte att räkna"; continue; }
-      strokes[p.id] = a;
+      if (php == null) {
+        strokes[p.id] = null; nettoOk = false;
+        orsaker.push(`${p.name || p.id}: spelhandicap saknas (hcp-index eller course rating/slope)`);
+        continue;
+      }
+      strokes[p.id] = allocate(php, holes);
     }
 
     // --- per hål: brutto → netto → poäng ---
@@ -465,7 +481,8 @@ globalThis.Spelformer = (() => {
     }
 
     const out = { format: F.namn, formatKey, enhet: F.enhet,
-                  netto: { ok: nettoOk, orsak: nettoOk ? null : orsak, allowance },
+                  netto: { ok: nettoOk, orsak: nettoOk ? null : orsaker[0] || null,
+                           orsaker, allowance },
                   spelhandicap: {}, slag: strokes, brutto, nettoPerHal: netto,
                   perHal: per, lagreBast: F.lagre_bast };
     for (const p of players) {
@@ -550,7 +567,101 @@ globalThis.Spelformer = (() => {
     return rows;
   }
 
+  /* ================= ADAPTER: runda + match → körbar kontext =================
+     Kärnan ovan vet ingenting om lagring. Detta är det ENDA stället som känner
+     både runddokumentets form (§9.1.3) och `run()`:s kontrakt, så formen finns
+     på ett ställe i stället för i varje vy.
+
+     Beroende: `SGScore.components` för hålscoren. Det är avsiktligt — score.js
+     är EN sanning för score-härledning (samma skäl som `store.js` använder den
+     i `indexRow`). Att räkna om `shots + adj + putts + pen` här hade skapat en
+     andra definition som glider isär vid nästa regeländring.
+
+     o = { doc,           runddokumentet (Store.active() eller Store.get())
+           match,         matchobjektet (markörspelare + format + wolf-val)
+           seq,           rundans globala hålnummer, i spelordning
+           byGlobal,      globalt hålnummer → bandatans hål (par + index)
+           ratings,       banregistrets ratings-block för banan (kan saknas)
+           me }           { name?, hcpIndex?, kon? } — ditt eget, ur localStorage
+
+     Returnerar { ctx, players, saknar } där `saknar` säger PER SPELARE vad som
+     hindrar netto. Vyn kan då skriva "Bo saknar handicap" i stället för att
+     tysta falla tillbaka på brutto. */
+  function fromRound(o) {
+    const doc = (o && o.doc) || null;
+    const match = (o && o.match) || null;
+    const seq = (o && o.seq) || [];
+    const byGlobal = (o && o.byGlobal) || {};
+    const me = (o && o.me) || {};
+    const ratingsForSeq = ((o && o.ratings) || {})[doc && doc.roundSeq] || null;
+    const banPar = ratingsForSeq ? ratingsForSeq.par : null;
+
+    const holes = seq.map((g, i) => {
+      const b = byGlobal[g] || null;
+      return { n: i + 1, global: g,
+               par: b && b.par != null ? b.par : null,
+               index: b && b.index != null ? b.index : null };
+    });
+
+    const markers = ((match && match.participants) || []).filter(p => p && p.marker);
+    const players = [{ id: "me", name: (me.name || (doc && doc.player) || "Du"),
+                       hcpIndex: me.hcpIndex != null ? me.hcpIndex : null,
+                       tee: (doc && doc.tee) || null, kon: me.kon || null,
+                       jag: true }]
+      .concat(markers.map(p => ({ id: p.id, name: p.name, hcpIndex: p.hcpIndex,
+                                  tee: p.tee, kon: p.kon, jag: false })));
+
+    // Slå upp CR/slope per spelare (kombination × tee × kön) och räkna
+    // course handicap. Saknas något lämnas det tomt — regel A tar hand om det.
+    const saknar = {};
+    for (const p of players) {
+      const brist = [];
+      if (p.hcpIndex == null) brist.push("handicap");
+      if (!p.tee) brist.push("tee");
+      if (!p.kon) brist.push("kön");
+      let r = null;
+      if (ratingsForSeq && p.kon && p.tee)
+        r = (ratingsForSeq[p.kon] || {})[p.tee] || null;
+      if (!r && !brist.length) brist.push("course rating för " + p.tee);
+      if (r) { p.slope = r.slope; p.cr = r.cr; }
+      if (brist.length) saknar[p.id] = brist;
+    }
+
+    // Scores: dina ur runddokumentet, markörernas ur matchen.
+    const scores = {};
+    scores.me = {};
+    for (const h of (doc && doc.holes) || []) {
+      const c = SGScore.components(h);
+      if (c.played) scores.me[h.n] = c.total;
+    }
+    for (const p of markers) {
+      const s = {};
+      for (const k of Object.keys(p.scores || {})) {
+        const v = p.scores[k];
+        if (v != null && v > 0) s[Number(k)] = v;
+      }
+      scores[p.id] = s;
+    }
+
+    return {
+      players, saknar,
+      ctx: { holes, players, scores, par: banPar,
+             val: (match && match.wolf) || {} },
+    };
+  }
+
+  /* Vilka format som går att spela med så här många spelare. `FORMAT[x].spelare`
+     är ett KRAV på antal, inte en övre gräns — Köpenhamnare ÄR ett trespel. */
+  function availableFormats(nPlayers) {
+    return Object.keys(FORMAT).filter(k => {
+      const krav = FORMAT[k].spelare;
+      return krav == null || krav === nPlayers;
+    });
+  }
+
   return {
+    // adapter + katalogfrågor
+    fromRound, availableFormats,
     // axlar
     strokeRanks, strokesOnRank, allocate,
     courseHandicap, playingHandicap, points,

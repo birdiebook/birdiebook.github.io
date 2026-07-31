@@ -511,6 +511,108 @@ const Store = (() => {
     return id ? be.del(MATCHES, id).then(() => true) : Promise.resolve(true);
   }
 
+  /* ---------- markörspelare och spelform (AS4, APPSTORE_PLAN §2.4, §9.4.6) ----------
+
+     §2.4: "Markörspelare är obligatoriskt i v1. Värden måste kunna lägga till
+     medspelare som inte har appen, med bara score." Det är också det som gör
+     Köpenhamnare (3 spelare) och Wolf (4) möjliga innan molnet finns: utan
+     medspelares score går de formaten inte att räkna alls.
+
+     De bor på MATCHEN, inte på rundan. Rundan är ETT dokument för EN spelare
+     (§9.1.3) och ska förbli det — en markörspelares score är inte din runda.
+     De läggs i `participants`, samma lista som molnspelare hamnar i (§9.1.4),
+     med `marker: true` och sin egen `scores`-tabell. EN lista, så frågan "vem
+     är med i det här spelet" aldrig får två svar när AS6 kommer: en markör som
+     senare installerar appen får ett `uid` och en `roundId`, och slutar bära
+     egna scores.
+
+     Matchen kan vara HELT LOKAL: ingen `gameId`, ingen server. `live.js` och
+     `oversikt.html` kollar `gameId` innan de gör något, så en lokal match
+     stör inte live-scoringen. */
+
+  function writeMatch() {
+    return match ? be.put(MATCHES, clone(match)) : Promise.resolve();
+  }
+
+  // Skapa en lokal match om ingen finns. Kräver ingen server och inget nät.
+  function ensureMatch() {
+    if (match) return match;
+    match = { id: uuid(), local: true, gameId: null, code: null, displayName: "",
+              format: null, wolf: {}, myRoundId: doc ? doc.id : null,
+              participants: [], createdAt: nowIso(), endedAt: null };
+    if (doc) { doc.matchId = match.id; flush(); }
+    writeMatch();
+    return match;
+  }
+
+  const markers = () => ((match && match.participants) || []).filter(p => p && p.marker);
+
+  /* Lägg till en markörspelare. `tee` och `kon` behövs för NETTO: course rating
+     och slope slås upp per kombination × tee × kön (§7.1-notan: slå aldrig upp
+     rating utan att veta kön). Saknas de går netto inte att räkna för spelaren,
+     och regelkärnan säger det i stället för att gissa. */
+  function addPlayer(p) {
+    const m = ensureMatch();
+    const spelare = { id: uuid(), marker: true, name: (p && p.name) || "Medspelare",
+                      hcpIndex: p && p.hcpIndex != null ? p.hcpIndex : null,
+                      tee: (p && p.tee) || null, kon: (p && p.kon) || null,
+                      scores: {} };
+    m.participants.push(spelare);
+    writeMatch();
+    return spelare;
+  }
+
+  function updatePlayer(id, fn) {
+    const p = markers().find(x => x.id === id);
+    if (!p) return false;
+    if (fn(p) === false) return false;
+    writeMatch();
+    return true;
+  }
+
+  function removePlayer(id) {
+    if (!match || !match.participants) return false;
+    const i = match.participants.findIndex(p => p && p.id === id);
+    if (i < 0) return false;
+    match.participants.splice(i, 1);
+    // Wolf-val som pekar på en borttagen spelare skulle ge ett lag med en
+    // partner som inte finns — släpp dem i stället för att räkna fel.
+    for (const h of Object.keys(match.wolf || {}))
+      if (match.wolf[h] && match.wolf[h].partner === id) delete match.wolf[h];
+    writeMatch();
+    return true;
+  }
+
+  /* Markörspelarens BRUTTO på ett hål. null/tomt raderar (ospelat hål ska vara
+     frånvaro av värde, inte 0 — en nolla skulle räknas som en spelad hålscore). */
+  function setPlayerScore(id, holeN, brutto) {
+    return updatePlayer(id, p => {
+      if (brutto == null || brutto === "" || !(brutto > 0)) delete p.scores[holeN];
+      else p.scores[holeN] = Math.round(brutto);
+    });
+  }
+
+  function setFormat(key, config) {
+    const m = ensureMatch();
+    m.format = key ? { key, config: config || null } : null;
+    writeMatch();
+    return m.format;
+  }
+  const format = () => (match && match.format) || null;
+
+  /* Wolf: vem vargen valde på ett hål. `null` raderar valet — och ett raderat
+     val betyder "inget val loggat", vilket kärnan hoppar över (den gissar
+     aldrig att vargen spelade ensam). */
+  function setWolfChoice(holeN, val) {
+    const m = ensureMatch();
+    m.wolf = m.wolf || {};
+    if (!val) delete m.wolf[holeN];
+    else m.wolf[holeN] = { partner: val.partner || null, lone: !!val.lone };
+    writeMatch();
+    return m.wolf;
+  }
+  const wolfChoices = () => (match && match.wolf) || {};
+
   /* ---------- beständighet ----------
      Att byta till IndexedDB löser storleken, inte nödvändigtvis vräkningen:
      iOS rensar script-skrivbar lagring för sajter som inte används. Be om
@@ -550,6 +652,9 @@ const Store = (() => {
     // använder för ärlig täckningsredovisning.
     summary: indexRow,
     match: currentMatch, setMatch, removeMatch,
+    // markörspelare + spelform (AS4)
+    ensureMatch, markers, addPlayer, updatePlayer, removePlayer, setPlayerScore,
+    setFormat, format, setWolfChoice, wolfChoices,
     requestPersist, storageInfo,
     // interna, för tester (tests/js/test_store.mjs)
     _indexRow: indexRow, _normalize: normalize, _newDoc: newDoc,

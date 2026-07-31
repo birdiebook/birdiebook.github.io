@@ -153,6 +153,7 @@
 <script src="./store.js"></script>
 <script src="./analys-core.js"></script>
 <script src="./analys-lista.js"></script>
+<script src="./sg.js"></script>
 <script>
 "use strict";
 /* Analys efter rundan — räknas helt i telefonen ur rundorna i Store
@@ -202,6 +203,18 @@ async function courseMetaFor(slug) {
   return list.find(c => c.slug === slug) || null;
 }
 
+/* Baslinjen (expected strokes) för SG. Laddas en gång; misslyckas den visas
+   inget SG alls i stället för en gissad siffra. */
+let baselineP = null;
+function loadBaseline() {
+  if (baselineP) return baselineP;
+  baselineP = fetch("./data/baseline.json", { cache: "no-cache" })
+    .then(r => r.json())
+    .then(j => { SG.load(j); return true; })
+    .catch(() => false);
+  return baselineP;
+}
+
 const courseDataCache = {};                 // mobile_json → Promise<{holes:[…]}>
 function loadCourseData(file) {
   if (!file) return Promise.resolve(null);
@@ -247,6 +260,13 @@ function heroHtml(A) {
   </div></div>`;
 }
 
+/* Landningsytornas färger (A3). Sanden är sandgul, vattnet blått, fairway dovt
+   grönt och ruffen varnande — samma språk som kartan använder. */
+const SURFACE_COL = { green: "var(--good)", bunker: "#d8c07a", water: "#5a9fd4",
+                      fairway: "#4e9e6a", rough: "var(--miss)" };
+const SURFACE_NAMN = { green: "green", bunker: "bunker", water: "vatten",
+                       fairway: "fairway", rough: "ruff" };
+
 // Green-precision: pin i mitten, inspelen placerade kort/lång × vänster/höger.
 function greenMapHtml(A) {
   const m = A.approach;
@@ -265,7 +285,10 @@ function greenMapHtml(A) {
   const dots = m.pts.map(p => {
     let x = p.cross * sc, y = -p.along * sc;
     const r = Math.hypot(x, y); if (r > RMAX) { x *= RMAX / r; y *= RMAX / r; }
-    const col = p.onGreen ? "var(--good)" : "var(--miss)";
+    // A3: färgen är LANDNINGSYTAN, inte bara träff/miss. Att veta att missen
+    // låg i greenbunkern och inte på klippt gräs är hela skillnaden mellan
+    // "kort vänster" och ett verkligt råd.
+    const col = SURFACE_COL[p.surface] || (p.onGreen ? "var(--good)" : "var(--miss)");
     return `<circle cx="${(C + x).toFixed(1)}" cy="${(C + y).toFixed(1)}" r="4"
       fill="${col}" fill-opacity="0.92"/>`;
   }).join("");
@@ -283,11 +306,23 @@ function greenMapHtml(A) {
   const misses = m.n - m.onGreen;
   const edge = misses && m.medEdge != null
     ? `<p class="subline">Missarna hamnade i snitt ${m1(m.medEdge)} utanför green.</p>` : "";
+  // A3: ytfördelningen i ord, med färgprick som knyter raden till kartan.
+  // Bara ytor som FAKTISKT förekom listas — nollor säger ingenting.
+  const S = m.bySurface || {};
+  const ytor = Object.keys(SURFACE_NAMN).filter(k => S[k] > 0)
+    .map(k => `<span style="white-space:nowrap"><span style="display:inline-block;width:8px;
+      height:8px;border-radius:50%;background:${SURFACE_COL[k]};margin-right:4px"></span>${
+      SURFACE_NAMN[k]} ${S[k]}</span>`).join(" · ");
+  const ytrad = ytor ? `<p class="subline">${ytor}</p>` : "";
+  // En insikt värd namnet: greenbunkern kostar dyrt och är åtgärdbar.
+  const bunkerRad = S.bunker >= 2
+    ? `<p class="foot">Inspelen hamnade i en greenbunker ${S.bunker} gånger — det är
+       den miss som kostar mest slag per tillfälle.</p>` : "";
   return `<div class="card"><h2>Greenprecision</h2>
     <div class="greenwrap">${svg}
       <div class="missgrid">${box(m.short, "kort")}${box(m.long, "lång")}${box(m.left, "vänster")}${box(m.right, "höger")}</div>
     </div>
-    <p class="subline">${m.onGreen} av ${m.n} inspel träffade green.</p>${edge}
+    <p class="subline">${m.onGreen} av ${m.n} inspel träffade green.</p>${edge}${ytrad}${bunkerRad}
   </div>`;
 }
 
@@ -295,15 +330,22 @@ function fairwayHtml(A) {
   const t = A.tee;
   if (!t.n) return "";
   const box = (v, l) => `<div class="cell"><div class="cv">${v}</div><div class="cl">${l}</div></div>`;
-  const dots = t.pts.map(v => {
+  // A2: prickens färg är fairwayträffen. `hit == null` = banan saknar ytor →
+  // okänt, och då behåller pricken den neutrala miss-färgen i stället för att
+  // påstå en miss.
+  const dots = t.pts.map(p => {
+    const v = p && typeof p === "object" ? p.lateral : p;
+    const hit = p && typeof p === "object" ? p.hit : null;
     const left = 50 + Math.max(-40, Math.min(40, v)) / 40 * 48;
-    return `<div class="dot" style="left:${left.toFixed(1)}%;background:var(--miss)"></div>`;
+    const col = hit === true ? "var(--good)" : hit === false ? "var(--miss)" : "var(--miss)";
+    return `<div class="dot" style="left:${left.toFixed(1)}%;background:${col}"></div>`;
   }).join("");
-  if (t.known) {                       // fairway-polygoner finns (burlov v2)
+  if (t.known) {                       // fairway-polygoner finns (<slug>.json v2)
     return `<div class="card"><h2>Fairway</h2>
       <div class="corridor"><div class="mid"></div>${dots}</div>
       <div class="cells">${box(t.left, "vänster")}${box(t.hit, "fairway")}${box(t.right, "höger")}</div>
-      <p class="subline">${pct(t.hitPct)} av utslagen på fairway.</p>
+      <p class="subline">${pct(t.hitPct)} av utslagen på fairway${
+        t.known < t.n ? ` (${t.known} av ${t.n} utslag har fairwaydata)` : ""}.</p>
     </div>`;
   }
   return `<div class="card"><h2>Utslagens sidled</h2>
@@ -313,15 +355,48 @@ function fairwayHtml(A) {
   </div>`;
 }
 
-function puttHtml(A) {
+function puttHtml(A, sgPutt) {
   if (!A.nPlayed) return "";
-  const box = (v, l) => `<div class="cell"><div class="cv">${v}</div><div class="cl">${l}</div></div>`;
+  const box = (v, l, cls) => `<div class="cell"><div class="cv ${cls || ""}">${v}</div><div class="cl">${l}</div></div>`;
+  /* SG puttning (AS5). Den enda SG-siffran som går att räkna helt säkert i
+     klienten: läget är `green` per definition, så §9.5:s lie-paritetsgap rör
+     den inte. Täckningen skrivs ut ärligt — den kräver både green-markör och
+     pin, vilket inte alla hål har. */
+  const sgRad = sgPutt && sgPutt.n
+    ? `<p class="subline">Strokes Gained puttning:
+        <b class="${sgPutt.total > 0 ? "pos" : sgPutt.total < 0 ? "neg" : ""}">${
+          sgPutt.total > 0 ? "+" : ""}${sgPutt.total.toFixed(2)}</b>
+        mot ${esc(sgPutt.label)} — räknat på ${sgPutt.n} av ${A.nPlayed} hål
+        (kräver markerad boll på green och pin).</p>`
+    : `<p class="foot">Strokes Gained puttning kräver att du markerar både boll på
+        green och pinnen. Markera dem så räknas puttningen mot en baslinje.</p>`;
   return `<div class="card"><h2>Puttning</h2><div class="cells">
     ${box(A.putts.total || "–", "puttar")}
     ${box(A.putts.three, "trepputt")}
     ${box(A.putts.one, "enpputt")}
     ${box(A.putts.perGir != null ? A.putts.perGir.toFixed(2) : "–", "putt/GIR")}
-  </div></div>`;
+  </div>${sgRad}</div>`;
+}
+
+/* SG puttning per runda. Rena indata: hålen ur dokumentet + bandatan.
+   Hoppar över hål utan green-markör, pin eller puttar — och redovisar hur
+   många som räknades i stället för att tysta bort dem. */
+function puttSGForRound(doc, byGlobal) {
+  if (!SG.loaded()) return null;
+  let total = 0, n = 0;
+  for (const h of (doc.holes || [])) {
+    const band = byGlobal[h.global];
+    const pin = AnalysCore.LL(h.pin) || AnalysCore.LL(band && band.pin);
+    const green = AnalysCore.LL(h.green);
+    if (!pin || !green || !(h.putts > 0)) continue;
+    const d = AnalysCore.hav(green, pin);
+    if (!isFinite(d)) continue;
+    const sg = SG.puttingGained(d, h.putts);
+    if (sg == null) continue;
+    total += sg; n++;
+  }
+  const namn = SG.defaultName();
+  return { total, n, label: (SG.labels()[namn] || namn) };
 }
 
 function distHtml(A) {
@@ -484,6 +559,7 @@ async function renderDetail(id) {
   }
 
   const B = await bandsFor(S.courseSlug, S.roundSeq);
+  await loadBaseline();          // SG-baslinjen; misslyckas den visas inget SG
   const LOOP_SHORT = B.tables.LOOP_SHORT;
 
   // Iterera rundans EGNA hål — de bär sitt frysta globala hålnummer (§9.1.3).
@@ -549,7 +625,7 @@ async function renderDetail(id) {
     ${heroHtml(A)}
     ${greenMapHtml(A)}
     ${fairwayHtml(A)}
-    ${puttHtml(A)}
+    ${puttHtml(A, puttSGForRound(S, B.byGlobal))}
     ${distHtml(A)}
     ${parHtml(A)}
     ${tableHtml(trows.join(""), A)}

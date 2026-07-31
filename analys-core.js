@@ -108,6 +108,40 @@ globalThis.AnalysCore = (() => {
     return best;
   }
 
+  /* Landningsytan för en punkt (A3). Returnerar
+     "green" | "bunker" | "water" | "fairway" | "rough".
+
+     ORDNINGEN ÄR INTE FRI — den speglar PC-sidans `PRIORITY` i
+     `src/course/lie.py`: ["green", "bunker", "water_hazard", "tee", "fairway",
+     "heavy_rough", "ob"] med "rough" som fallback. Mest specifik yta vinner, och
+     det spelar roll: en greenbunker ligger ofta inuti både fairway-korridoren
+     och nära greenen, så fel ordning gör en bunkerträff till "fairway".
+
+     TVÅ SKILLNADER MOT PC:N som är kända och dokumenterade i APPSTORE_PLAN §9.5:
+     mobilbunten kallar vattenhindret `water` (PC: `water_hazard`), och den bär
+     INTE `heavy_rough`/`ob`/`tee` som ytor. Därför är denna funktion INTE
+     tillräcklig för att räkna SG per slag med samma siffra som PC:n — den duger
+     för att visa VAR inspelet hamnade, vilket är vad A3 behöver. */
+  function classifyLandingSurface(landing, band) {
+    const P = LL(landing);
+    if (!P || !band) return null;
+    const c = LL(band.green_center) || LL(band.pin) || P;
+    if (band.green && band.green.length >= 3 && pointInPoly(P, band.green, c))
+      return "green";
+    // Hinder i PC:ns ordning: bunker före vatten.
+    const hz = band.hazards || [];
+    for (const t of ["bunker", "water"]) {
+      for (const z of hz) {
+        if (z && z.type === t && z.poly && z.poly.length >= 3 &&
+            pointInPoly(P, z.poly, c)) return t;
+      }
+    }
+    for (const ring of band.fairways || []) {
+      if (ring && ring.length >= 3 && pointInPoly(P, ring, c)) return "fairway";
+    }
+    return "rough";
+  }
+
   /* Per-hål-analys. Slag-modellen (facit: src/ingest/mobile_source.py):
    *   shots[i] = positionen spelaren STOD PÅ inför slag i+1 (= slag i:s SLUT).
    *   Sista fulla slagets slut = green-markören (hole.green), INTE en shots-post;
@@ -170,8 +204,11 @@ globalThis.AnalysCore = (() => {
         if (cls) {
           const onGreen = greenRing ? pointInPoly(landing, greenRing, greenCenter) : false;
           const edge = greenRing ? distToPolygon(landing, greenRing, greenCenter) : null;
+          // A3: VAR missen hamnade, inte bara hur långt bort. "kort vänster"
+          // säger inget om det var greenbunkern eller klippt fairway.
           out.approach = { along: cls.along, cross: cls.cross, dist: cls.dist,
-                           onGreen, edge };
+                           onGreen, edge,
+                           surface: classifyLandingSurface(landing, band) };
         }
       }
     }
@@ -214,7 +251,11 @@ globalThis.AnalysCore = (() => {
       scramble: { ok: 0, elig: 0, pct: null },
       putts: { total: 0, three: 0, one: 0, girPutts: [], perGir: null },
       approach: { short: 0, long: 0, left: 0, right: 0, onGreen: 0, n: 0,
-                  edges: [], medEdge: null, pts: [] },
+                  edges: [], medEdge: null, pts: [],
+                  // A3: landningsytan räknad. Bara ytor vi FAKTISKT kan se i
+                  // bandatan — heavy_rough och OB finns inte i mobilbunten
+                  // (APPSTORE_PLAN §9.5), så de göms inte här som nollor.
+                  bySurface: { green: 0, bunker: 0, water: 0, fairway: 0, rough: 0 } },
       tee: { left: 0, right: 0, n: 0, hit: 0, known: 0, pts: [] },
       dist: { birdie: 0, par: 0, bogey: 0, dbl: 0 },
       byPar: {}, worstHole: null,
@@ -231,7 +272,10 @@ globalThis.AnalysCore = (() => {
       if (!h.precClean) A.precExcluded++;
       if (h.approach) {
         const a = h.approach; A.approach.n++;
-        A.approach.pts.push({ along: a.along, cross: a.cross, onGreen: a.onGreen, edge: a.edge });
+        A.approach.pts.push({ along: a.along, cross: a.cross, onGreen: a.onGreen,
+                              edge: a.edge, surface: a.surface });
+        if (a.surface && A.approach.bySurface[a.surface] != null)
+          A.approach.bySurface[a.surface]++;
         if (a.onGreen) A.approach.onGreen++;
         else {
           if (a.along < -2) A.approach.short++; else if (a.along > 2) A.approach.long++;
@@ -240,7 +284,10 @@ globalThis.AnalysCore = (() => {
         }
       }
       if (h.teeLateral != null) {
-        A.tee.n++; A.tee.pts.push(h.teeLateral);
+        A.tee.n++;
+        // A2: punkten bär sin träff/miss så korridoren kan färgas. `hit` är
+        // null när banan saknar fairway-ytor — då är det okänt, inte en miss.
+        A.tee.pts.push({ lateral: h.teeLateral, hit: h.teeFairwayHit });
         if (h.teeLateral < -3) A.tee.left++; else if (h.teeLateral > 3) A.tee.right++;
       }
       if (h.teeFairwayHit != null) { A.tee.known++; if (h.teeFairwayHit) A.tee.hit++; }
@@ -263,7 +310,7 @@ globalThis.AnalysCore = (() => {
   }
 
   return { LL, enu, hav, pointInPoly, classifyMiss, lateralToLine,
-           distToPolygon, holeAnalysis, aggregate };
+           distToPolygon, classifyLandingSurface, holeAnalysis, aggregate };
 })();
 
 /* node-testbarhet: exportera även som CommonJS när modulen läses i node. */

@@ -133,6 +133,9 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
 <script src="./store.js"></script>
+<!-- spelformer.js används här BARA för formatets visningsnamn i Sällskap-kortet;
+     all uträkning ligger i sallskap.html. -->
+<script src="./spelformer.js"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
@@ -204,9 +207,11 @@ window.addEventListener("pagehide", () => { if (lbUnsub) lbUnsub(); });
 function emptyView() {
   return `<div class="card empty-cta">
     <span class="ico">📋</span>
-    <p class="big">Ingen aktiv match</p>
+    <p class="big">Ingen live-match</p>
     <p class="txt">Skapa eller gå med i en match under <b>Logga slag</b> så visas
-      ett live-scorekort här — hur det går för dig och de andra i bollen, hål för hål.</p>
+      ett live-scorekort här — hur det går för dig och de andra i bollen, hål för hål.
+      Ett sidospel i <b>Sällskap</b> behöver ingen live-match: där för du
+      medspelarnas score själv.</p>
     <a class="btn" href="./index.html">⛳ Gå till Logga slag</a>
   </div>`;
 }
@@ -281,6 +286,23 @@ function scorecardHtml() {
   </table></div></div>`;
 }
 
+/* Ingång till Sällskap-vyn (spelformer med medspelare, APPSTORE_PLAN §2.5, §9.4.6).
+   Kortet RÄKNAR ingenting — det visar bara vad som är igång och länkar vidare.
+   Uträkningen bor i sallskap.html/spelformer.js, så den finns på ett ställe. */
+function sallskapHtml() {
+  if (!Store.active()) return "";
+  const f = Store.format();
+  const n = 1 + Store.markers().length;
+  const namn = f && Spelformer.FORMAT[f.key] ? Spelformer.FORMAT[f.key].namn : null;
+  const rad = namn
+    ? `<b style="font-size:16px">${esc(namn)}</b> · ${n} spelare`
+    : `Köpenhamnare, Wolf, Skins och fler — lägg till medspelare och välj form.`;
+  return `<div class="card"><h2>👥 Sällskap</h2>
+    <p class="hint left" style="margin:0 0 10px">${rad}</p>
+    <a class="btn" href="./sallskap.html">${namn ? "Visa ställning" : "Starta ett sidospel"}</a>
+  </div>`;
+}
+
 async function render() {
   const roundName = SGRound.roundName();
   seq = SGRound.seq();
@@ -295,11 +317,13 @@ async function render() {
   if (!liveOn()) {
     app.innerHTML = `<h1>Översikt</h1>
       <p class="sub">Live-scorekort under rundan</p>
+      ${sallskapHtml()}
       ${emptyView()}`;
     return;
   }
   app.innerHTML = `<h1>Översikt</h1>
     <p class="sub">runda ${roundName} · live</p>
+    ${sallskapHtml()}
     ${scorecardHtml()}`;
 
   startLeaderboard();   // prenumerera en gång när par-listan finns
