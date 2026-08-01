@@ -146,8 +146,13 @@ export function gridNorthOffset(ll2xz) {
  */
 export function netHeight(meta, teeId) {
   const t = teeId && meta.tees ? meta.tees[teeId] : null;
-  if (t && Number.isFinite(t.dh)) return { dh: t.dh, tee: teeId, len: t.len };
-  return { dh: meta.delta_h, tee: null, len: meta.length_m };
+  if (t && Number.isFinite(t.dh)) {
+    // `approx` (T1): punkten är framräknad bakom ett ankare, inte observerad —
+    // rätt AVSTÅND, ärvt sidoläge. Bärs vidare så vyn kan säga det; en gissad
+    // punkt som ser exakt ut är det farliga fallet.
+    return { dh: t.dh, tee: teeId, len: t.len, approx: !!t.approx };
+  }
+  return { dh: meta.delta_h, tee: null, len: meta.length_m, approx: false };
 }
 
 /**

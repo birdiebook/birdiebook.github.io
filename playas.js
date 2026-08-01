@@ -84,10 +84,31 @@ const PlayAs = (() => {
     return [(lon - lon0) * a + (lat - lat0) * b,
             (lon - lon0) * c + (lat - lat0) * d];
   }
+  // Tee-undantaget (§5b — spegling av TEE_SNAP_M i src/api/elev.py): ligger
+  // punkten PÅ en tee tas teens egen DEM-sampling, inte projektionen. En tee
+  // vid sidan av mittlinjen projiceras annars till fel punkt på den — uppmätt
+  // upp till 2,55 m fel på Burlöv. Python fick undantaget i §5b; mobilen
+  // behövde det inte då, eftersom metans tee-punkt kom ur legacy-filen och
+  // därför låg PÅ hållinjen. T1 flyttade punkten till banmodellen, och då blev
+  // gapet synligt: 0,60 m på blue 1 tee 61 (`tests/js/test_elev3d.mjs`).
+  const TEE_SNAP_M = 1.0;
+  function teeElev3d(m, x, z) {
+    let best = null;
+    for (const t of Object.values(m.tees || {})) {
+      if (!Number.isFinite(t.y)) continue;
+      const d2 = (x - t.x) ** 2 + (z - t.z) ** 2;
+      if (d2 <= TEE_SNAP_M * TEE_SNAP_M && (best == null || d2 < best.d2)) {
+        best = { d2, y: t.y };
+      }
+    }
+    return best ? best.y : null;
+  }
   // lokal höjd (y, meter över tee-marken) för en lat/lon: projicera punkten på
   // hållinjen och interpolera profilen där. Fairway följer linjen — bra approx.
   function elev3dAt(m, lat, lon) {
     const [x, z] = ll2local(m, lat, lon);
+    const vidTee = teeElev3d(m, x, z);
+    if (vidTee != null) return vidTee;
     let best = null, acc = 0;
     for (let i = 0; i < m.line.length - 1; i++) {
       const [x1, , z1] = m.line[i], [x2, , z2] = m.line[i + 1];

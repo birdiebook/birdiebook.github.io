@@ -1,0 +1,145 @@
+/* U3 — VÅRT formspråk, frysta tokens (UPPGRADERING_3D.md §3, mätningar §9.1).
+ *
+ * Reglerna som gav värdena, så att en ändring kan prövas mot samma krav:
+ *
+ * 1. FÄRGERNA ÄR HÄRLEDDA, INTE VALDA. `tools/palett_kontrast.py` samplar
+ *    riktiga ortofoto-pixlar (klassade av banlagrens polygoner, inte av en
+ *    färggissning), kör dem genom `CourseMap.MAP_FILTER` med mobilens egen
+ *    `bildfilter.js`, och mäter WCAG-kontrast på Burlöv OCH Barsebäck.
+ *    Ändrar du en overlayfärg här: kör provet igen.
+ *
+ * 2. INGEN ENSAM FÄRG KAN KLARA KRAVET — det är bevisat, inte tyckt. Efter
+ *    filtret ligger sand på luminans ~0,90 och trädskugga på ~0,01. Kravet
+ *    4,5:1 mot sand ger taket L ≤ 0,165; mot skugga ger det golvet L ≥ 0,220.
+ *    Fönstret är TOMT. Läsbarheten bärs därför av ett PAR: fyllning + kontur.
+ *    Det är samma grepp U8 redan beskriver, nu med tal bakom sig.
+ *
+ * 3. KONTUREN ÄR SÅ LJUS DEN KAN VARA, INTE MÖRKARE. Fem kandidater prövades;
+ *    först ren svart bär alla duor över 4,5:1 (sämsta 4,66 mot Burlövs
+ *    fairway). `#0c2e22`, som var i drift, når bara 3,32.
+ *
+ * 4. CHROMEN ÄR AVMÄTTAD OCH KYLIGARE ÄN GRÄSET. Gräset ligger på nyans 76°
+ *    (ORTOFOTO_FARG.md). Chromen ligger på 158° — den läses som "inte en del
+ *    av banan". Mättnaden sänktes från 54–59 % till 22 %: den gamla ramp:en
+ *    var kylig men INTE avmättad, och §3.3 kräver båda.
+ *
+ * Filen är enda stället färgerna bor. Hårdkoda inte en färg i en vy — då kan
+ * de två glida isär, och det är precis den sortens fel princip 4 finns för.
+ */
+
+:root {
+  /* ---- chrome: avmättad, kyligare än gräset (regel 4) ---- */
+  --bg: #16221e;
+  --card: #1e2f28;
+  --line: #2e483e;
+  --ink: #edf3f0;          /* 14,5:1 mot --bg */
+  --dim: #a8bdb2;          /*  8,3:1 mot --bg */
+  --accent-ink: #06180f;
+
+  /* Genomskinlig chrome-yta: banan ska synas IGENOM panelen, inte bakom en
+     opak platta (§3.3). Avmättningen ligger i ytan, inte i en ny färg. */
+  --framebg: rgba(22, 34, 30, .62);
+  --frameblur: saturate(.72) blur(10px);
+
+  /* Panelernas glasyta. Låg opacitet + avmättning i stället för en opak
+     platta — banan ska synas igenom. Kanten är ljus och svag, inte en linje i
+     en egen färg: den ska avgränsa, inte konkurrera med banan. */
+  --panel: rgba(22, 34, 30, .82);
+  --panelkant: rgba(237, 243, 240, .15);
+  --panelkant-svag: rgba(237, 243, 240, .10);
+  --skugga: 0 10px 32px rgba(0, 0, 0, .42);
+  --skugga-lag: 0 2px 8px rgba(0, 0, 0, .45);
+
+  /* ---- overlay: fyllning + kontur (regel 2 och 3) ---- */
+  --accent: #ffb703;       /* slaglinjen, i drift sedan tidigare (§3.1) */
+  --accent-djup: #e07a00;
+  --overlay-kontur: #000000;
+  --overlay-kontur-bredd: 1.5px;
+  --fara: #ff5a4d;
+  --vatten: #4bb3ff;
+  /* Green-accenten är chromens egen, inte banans — den används på knappar och
+     aktiva lägen, aldrig som overlay ovanpå ortofotot. */
+  --accent-ui: #37b06b;
+  --accent-ui-ljus: #7fe0aa;   /* aktivt läge i verktygsraden */
+  --accent-ui-kant: rgba(78, 171, 121, .8);
+  --accent-ui-yta: #1a4c38;    /* aktiv flik/knapp: fylld yta i chrome-familjen */
+  --info: #8fd6ff;             /* siktrader och andra upplysningar i panel */
+  --varning: #ffcf4d;
+
+  /* Live-rundans markörer. De ligger ovanpå banan och bär därför konturen
+     (regel 2) — `--markor-ring` är den ljusa ringen som gör dem läsbara mot
+     både sand och skugga. */
+  --markor-pin: #e23b3b;
+  --markor-pin-ink: #1a0606;
+  --markor-jag: #3b82f6;
+  --markor-gps: #e26a5a;
+  --markor-ring: #ffffff;
+  --vatten-ui: #4aa6e0;        /* vattenetiketter i chrome, inte på banan */
+
+  /* Nedtonade varianter — samma färger, lägre närvaro. Finns som tokens så att
+     en ändring av grundfärgen följer med hit i stället för att lämna en
+     bortglömd rgba() efter sig. */
+  --dim-svag: rgba(168, 189, 178, .6);
+  --dim-svagare: rgba(168, 189, 178, .53);
+  --varning-svag: rgba(255, 207, 77, .4);
+  --accent-ui-fyll: rgba(55, 176, 107, .85);
+  --accent-ui-tval: rgba(55, 176, 107, .22);
+  --markor-pin-fyll: rgba(226, 59, 59, .85);
+  --panel-svag: rgba(14, 51, 38, .34);
+  /* Oreggad FAB: medvetet nästan opak svart, så en färgad ring/text kan bära
+     betydelsen ensam. Undantaget från glasytan, och det är avsiktligt. */
+  --fab-oreggad: rgba(0, 0, 0, .72);
+
+  /* Varningskort (planera.html): bärnsten i chrome-familjens ljushetstrappa. */
+  --amber-yta: #4a3413;
+  --amber-kant: #7a5a1f;
+  --amber-ink: #f0d48a;
+
+  /* Skuggfärgen är EN färg, inte sex olika kortformer (#0007/#0009/…). */
+  --skuggfarg: rgba(0, 0, 0, .44);
+  --skuggfarg-djup: rgba(0, 0, 0, .6);
+
+  /* ---- typografi: serif enbart till identiteten (§3.4) ---- */
+  --serif: ui-serif, Georgia, "Times New Roman", serif;
+  --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* ---- bottenchromens lyft (§3.4) ----
+     Allt som ligger nere lyfts av den nedre remsans höjd + safe-area, så inget
+     kan hamna under den på någon skärm — det är precis den sortens fel vi gjort
+     med notch och tangentbord. Handräknade offsets (`+56px`, `+58px`, `+66px`)
+     är samma tal skrivet fyra gånger och glider isär vid första ändring; de
+     uttrycks i stället som var(--lyft) plus sin egen lilla luft.
+     Vyer med en nedre remsa sätter --remsa; övriga ärver 0. */
+  --remsa: 0px;
+  --lyft: calc(env(safe-area-inset-bottom) + var(--remsa) + 10px);
+
+  /* ---- rörelse (§3.4) ---- */
+  --tryck: 150ms;
+  --lagesbyte: 420ms;
+  --kurva: cubic-bezier(.22, .61, .36, 1);
+}
+
+/* Serif enbart till identiteten: bannamn, hålkort, tee-väljare. Allt
+   funktionellt är sans — det är greppet som gör att vyn läses som klubbguide
+   och inte som en GPS-app, och det slutar fungera om serifen sprider sig. */
+.identitet, .halkort, .tee-val { font-family: var(--serif); letter-spacing: .01em; }
+
+/* Kvittens på tryck: kort, snabb, med en liten nedskalning. */
+.tryckbar { transition: transform var(--tryck) var(--kurva),
+                        background var(--tryck) var(--kurva); }
+.tryckbar:active { transform: scale(.97); }
+
+/* Siffror och etiketter ovanpå banan bär konturen (regel 2) — utan den är de
+   oläsliga mot ljus sand. Gäller både HTML-etiketter och SVG-text. */
+.pabanan {
+  color: var(--ink);
+  paint-order: stroke fill;
+  -webkit-text-stroke: var(--overlay-kontur-bredd) var(--overlay-kontur);
+  text-shadow: 0 1px 2px var(--overlay-kontur);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --tryck: 0ms; --lagesbyte: 0ms; }
+  .tryckbar:active { transform: none; }
+  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}

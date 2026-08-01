@@ -49,13 +49,116 @@ renderer.domElement.style.filter = FILTER_3D_CANVAS;
 el('scen').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9ec3d8);           // dis-himmel
-scene.fog = new THREE.Fog(0x9ec3d8, 600, 1600);
+/* U7 punkt 6: dis och djup.
+ *
+ * Dimman gjorde tidigare ett jobb den inte skulle: den dolde att scenen TOG
+ * SLUT vid korridorens 50 m. Med U15:s kjol finns det terräng där ute, och då
+ * kan dimman få göra sitt riktiga jobb — ge djup och låta horisonten tona ut
+ * i stället för att klippas av.
+ *
+ * Tonen är inte vald fritt. Den ligger mellan himlens blå och gräsets ton
+ * EFTER filtret (§9.1 mätte fairway till `#6d7f37` på Burlöv), lite ljusare än
+ * marken och lite varmare än himlen, så horisonten inte blir ett kallt band
+ * ovanför en varm bana. Avstånden är utdragna mot förut (600→1600 blev
+ * 900→2600) därför att kjolen räcker längre än korridoren gjorde. */
+const DIS_FARG = 0xa9c2c0;
+scene.background = new THREE.Color(DIS_FARG);
+scene.fog = new THREE.Fog(DIS_FARG, 900, 2600);
 
-scene.add(new THREE.HemisphereLight(0xdfeaf2, 0x3a4a38, 0.9));
-const sol = new THREE.DirectionalLight(0xfff2dd, 1.6);   // NV, som hillshaden
-sol.position.set(-0.5, 0.8, -0.6);
+const himmelLjus = new THREE.HemisphereLight(0xdfeaf2, 0x3a4a38, 0.9);
+scene.add(himmelLjus);
+const sol = new THREE.DirectionalLight(0xfff2dd, 1.6);
+sol.position.set(-0.5, 0.8, -0.6);                       // NV, som hillshaden
 scene.add(sol);
+scene.add(sol.target);
+
+/* ---- U7 punkt 1: skuggor -------------------------------------------------
+ *
+ * Enskilt största lyftet i etappen, och skälet är inte att det är snyggt: en
+ * skugga BINDER trädet till marken. Utan den svävar kronorna, och terrängens
+ * höjdskillnader syns inte alls — det är samma information hillshaden bär i
+ * 2D-kartan, fast i rätt riktning för klockslaget.
+ *
+ * PCFSoft + 2048 är valt för att en hård skuggkant på 1 m-DEM ser ut som ett
+ * fel i datan snarare än som en skugga. Kameran spänns om per hål (spannUpp)
+ * eftersom en fast frustum antingen missar långa hål eller slösar upplösning
+ * på korta. */
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+sol.castShadow = true;
+sol.shadow.mapSize.set(2048, 2048);
+sol.shadow.bias = -0.0009;          // mot akne på nästan plan fairway
+sol.shadow.normalBias = 0.6;        // mot "peter panning" vid trädfötterna
+
+/* U7 punkt 7: solens VERKLIGA position för datum, klockslag och latitud.
+ *
+ * Varför det är värt en formel i stället för ett fast ljus: skuggorna hamnar
+ * åt rätt håll, och du ser om ett hål ligger i motljus vid din starttid — det
+ * är spelinformation, inte dekor. NOAA:s lågprecisionsalgoritm räcker gott
+ * (fel < 0,1° här), och den är liten nog att inte behöva ett bibliotek.
+ *
+ * Lågt kvällsljus är vackert men gör terrängen svårare att läsa, så läsläget
+ * (det fasta NV-ljuset) går alltid att få tillbaka — se `sattSol`. */
+/* Formeln bor i `mobile/sol.js` och testas av `tests/js/test_sol.mjs` — här
+ * används den bara. En andra kopia här vore exakt den sortens spegel som
+ * glider isär (jfr `sgColor` och bollbanans två implementationer). */
+
+/* Läsläget är default. `sattSol(null)` = det fasta NV-ljuset; `sattSol(datum)`
+ * = sann sol för banans position. Solen hålls ALLTID över ~12° höjd i
+ * ljusstyrkan så scenen inte blir oläsbar vid soluppgång — riktningen är sann,
+ * exponeringen är vår. */
+/* Sann sol väljs med `?sol=<ISO-tid>` (t.ex. `?sol=2026-06-21T17:30`) eller
+ * `?sol=nu`. Att det ännu inte finns en KNAPP är medvetet: knappen hör hemma
+ * där starttiden bor — i planen (GP3) eller i rundan — och ett klockreglage i
+ * verktygsraden vore en tredje plats att hålla i synk med den. */
+function solUrParam() {
+  const v = new URLSearchParams(location.search).get('sol');
+  if (!v) return null;
+  if (v === 'nu') return Date.now();
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+let solLage = solUrParam();                // null = läsläge
+function sattSol(datum) {
+  solLage = datum;
+  if (!datum || !meta || !meta.ll2xz) {
+    sol.position.set(-0.5, 0.8, -0.6).normalize().multiplyScalar(1000);
+    sol.color.setHex(0xfff2dd);
+    sol.intensity = 1.6;
+    himmelLjus.intensity = 0.9;
+    return;
+  }
+  const [lon0, lat0] = meta.ll2xz;
+  const { alt, az } = Sol.solriktning(datum, lat0, lon0);
+  // Scenens +x = öst, -z = norr (samma ram som ll2xz), så azimut från norr
+  // blir (sin az, -cos az) i xz-planet.
+  const hojd = Math.max(alt, 12 * Math.PI / 180);
+  const r = Math.cos(hojd);
+  sol.position.set(Math.sin(az) * r, Math.sin(hojd), -Math.cos(az) * r)
+     .multiplyScalar(1000);
+  // Lågt stående sol är varmare och svagare; hemisfärljuset tar över.
+  const lagt = 1 - Math.min(1, alt / (35 * Math.PI / 180));
+  sol.color.setHSL(0.09, 0.35 + 0.25 * lagt, 0.62 - 0.06 * lagt);
+  sol.intensity = 1.6 - 0.5 * lagt;
+  himmelLjus.intensity = 0.9 + 0.35 * lagt;
+}
+
+/* Skuggkameran ska täcka hålet — inte mer (upplösning) och inte mindre
+ * (avklippta skuggor). Spänns om när ett hål laddats och när överdriften
+ * ändras, eftersom höjdskalan flyttar kronorna. */
+function spannUpp() {
+  if (!ground) return;
+  const box = new THREE.Box3().setFromObject(ground);
+  const c = box.getCenter(new THREE.Vector3());
+  const r = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 60);
+  sol.target.position.copy(c);
+  sol.position.normalize().multiplyScalar(r * 2.5).add(c);
+  const s = sol.shadow.camera;
+  s.left = -r; s.right = r; s.top = r; s.bottom = -r;
+  s.near = 1; s.far = r * 6;
+  s.updateProjectionMatrix();
+  sol.shadow.needsUpdate = true;
+}
 
 /* ---- ortofotot ska se LIKADANT ut i 2D och 3D (ORTOFOTO_FARG.md) ----------
  *
@@ -121,6 +224,54 @@ const controls = new CameraController(camera, renderer.domElement, {
 if (new URLSearchParams(location.search).get('dbg') === '1') {
   window.__hal3d = {
     ctl: controls, camera, scene, renderer,
+    // U7: bildfrekvens + rendererns egen räknare. `fps()` ger median och p95 på
+    // bildrutetiden; `nollstallFps()` före en mätning så uppstarten inte räknas.
+    fps: fpsStat, nollstallFps,
+    /* Renderkostnad utan rAF. Behövs därför att en bakgrundsflik aldrig får en
+     * bildruta (`document.hidden` → rAF pausas), och då är `fps()` alltid null
+     * — precis läget i verifieringspanen. Det här tvingar N renderingar och
+     * mäter tiden, vilket INTE är fps (ingen kompositering, ingen vsync) men är
+     * ett jämförbart före/efter-tal på samma maskin och samma scen. Den riktiga
+     * fps-siffran mäts med `fps()` på telefonen. */
+    matRender: (n = 120) => {
+      const t0 = performance.now();
+      for (let i = 0; i < n; i++) renderer.render(scene, camera);
+      const ms = (performance.now() - t0) / n;
+      return { n, ms_per_render: +ms.toFixed(2),
+               teoretisk_fps: +(1000 / ms).toFixed(0),
+               ...renderer.info.render };
+    },
+    render: () => ({ ...renderer.info.render, geometrier: renderer.info.memory.geometries,
+                     texturer: renderer.info.memory.textures }),
+    /* U7: scenens finish verifieras i scengrafen, inte i en skärmdump — en
+     * skuggkarta som inte är påslagen och en skugga som faller åt fel håll ser
+     * likadana ut i en pixelbild om man inte vet vad man letar efter. */
+    finish: () => ({
+      skuggkarta: { pa: renderer.shadowMap.enabled, typ: renderer.shadowMap.type,
+                    storlek: [sol.shadow.mapSize.x, sol.shadow.mapSize.y] },
+      sol: { pos: sol.position.toArray().map(v => +v.toFixed(1)),
+             mal: sol.target.position.toArray().map(v => +v.toFixed(1)),
+             farg: '#' + sol.color.getHexString(), styrka: +sol.intensity.toFixed(2),
+             lage: solLage ? new Date(solLage).toISOString() : 'lasläge' },
+      dis: { farg: '#' + scene.fog.color.getHexString(),
+             nar: scene.fog.near, fjarran: scene.fog.far },
+      trad: treeParts.map(o => ({
+        typ: o.geometry?.type, antal: o.count ?? 1,
+        material: o.material?.type,
+        roughness: o.material?.roughness,
+        kastar: o.castShadow, tar_emot: o.receiveShadow,
+        trianglar: (o.geometry?.index ? o.geometry.index.count / 3
+                    : (o.geometry?.attributes?.position?.count ?? 0) / 3) * (o.count ?? 1),
+      })),
+      mark: (() => {
+        let n = 0, tar = 0, kastar = 0;
+        ground?.traverse(c => { if (c.isMesh) { n++; if (c.receiveShadow) tar++; if (c.castShadow) kastar++; } });
+        return { mesh: n, tar_emot: tar, kastar };
+      })(),
+    }),
+    // U7: byt solläge utan att ladda om — så en verifiering kan jämföra
+    // läsläget och en sann sol i SAMMA scen.
+    sattSol: t => { sattSol(t); spannUpp(); return solLage; },
     // Var SKA en världspunkt hamna på skärmen denna bildruta? Jämförs med var
     // en DOM-etikett faktiskt står; skillnaden är eftersläpningen i px.
     screenOf: w => screenOf(controls.state, w, camera.fov,
@@ -386,7 +537,34 @@ el('vHojd').addEventListener('click', () => {
 
 // EN tick: flygning → kameratillstånd → render. Allt som hör till marken ska
 // skrivas här, före render, aldrig i en händelselyssnare (UPPGRADERING_3D §2).
-function tick() {
+/* U7: bildfrekvensen mäts på riktiga bildrutor, inte gissas. Ringbufferten är
+ * alltid på (två tal per tick, ingen mätbar kostnad) men läses bara via
+ * `?dbg=1` — kravet i etappen är ≥ 30 fps på det tätaste hålet, och det går
+ * inte att kontrollera i efterhand utan att ha mätt. */
+const _fpsBuf = new Float32Array(180);
+let _fpsI = 0, _fpsN = 0, _fpsSist = 0;
+function _fpsTick(nu) {
+  if (_fpsSist) {
+    _fpsBuf[_fpsI] = nu - _fpsSist;
+    _fpsI = (_fpsI + 1) % _fpsBuf.length;
+    if (_fpsN < _fpsBuf.length) _fpsN++;
+  }
+  _fpsSist = nu;
+}
+function fpsStat() {
+  if (_fpsN < 10) return null;
+  const v = Array.from(_fpsBuf.slice(0, _fpsN)).sort((a, b) => a - b);
+  const p = q => v[Math.min(v.length - 1, Math.floor(q * v.length))];
+  return { n: _fpsN, median: +(1000 / p(0.5)).toFixed(1),
+           // p95 på BILDRUTETIDEN = den långsammaste rutan, alltså det som
+           // känns som hack. Medelvärdet döljer precis det.
+           p5_fps: +(1000 / p(0.95)).toFixed(1),
+           varsta_ms: +v[v.length - 1].toFixed(1) };
+}
+function nollstallFps() { _fpsI = _fpsN = 0; _fpsSist = 0; }
+
+function tick(nu) {
+  _fpsTick(nu || performance.now());
   updateFly();
   if (!fly) controls.update();     // flygningen äger kameran medan den pågår
   updateHojdMarker();              // U6: markören härleds ur hojdS varje tick — aldrig i en lyssnare
@@ -437,6 +615,22 @@ function clearHole() {
 // mörkare undertill). Träd utan hölje faller tillbaka på kon (widest_frac
 // < 0.33, gran-lik) eller tillplattad sfär som InstancedMesh.
 // Höjden är SANN oavsett överdrift; bara markfoten (y_mark) följer exag.
+/* Kortaste avstånd (m) från en punkt i markplanet till hållinjen. Används av
+ * U7:s LOD-delning; linjen ligger i metans lokala ram, samma som träden. */
+function avstandTillLinje(x, z) {
+  const L = meta && meta.line;
+  if (!L || L.length < 2) return 0;
+  let bast = Infinity;
+  for (let i = 0; i < L.length - 1; i++) {
+    const [x1, , z1] = L[i], [x2, , z2] = L[i + 1];
+    const dx = x2 - x1, dz = z2 - z1, len2 = dx * dx + dz * dz;
+    const t = len2 ? Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / len2)) : 0;
+    const d2 = (x - (x1 + t * dx)) ** 2 + (z - (z1 + t * dz)) ** 2;
+    if (d2 < bast) bast = d2;
+  }
+  return Math.sqrt(bast);
+}
+
 function buildTrees() {
   for (const o of treeParts) scene.remove(o);
   treeParts = [];
@@ -444,38 +638,63 @@ function buildTrees() {
     : [t[0], t[1], t[2], t[3], t[4], t[4], 0, 0.45, 0.5, 74, 103, 65]);
   if (!trees.length) return;
   const hulls = meta.hulls || [];
+  // U7 punkt 5: gransen for "langt ut i sidled" (m fran hallinjen).
+  const LOD_M = 120;
 
-  // --- kronhöljen → ett sammanslaget mesh ---
-  const pos = [], colArr = [], idxArr = [];
-  let vOff = 0;
+  /* --- kronhöljen → TVÅ sammanslagna mesh: nära hållinjen och fjärran ---
+   *
+   * U7 punkt 5: delningen finns för skuggpassets skull. Höljena är den stora
+   * trädmassan, och låg de i ETT mesh skulle varenda krona ritas en gång till i
+   * skuggkartan — även de 150 m ut i sidled, vars skugga aldrig hamnar i bild.
+   * Två mesh kostar en extra draw call och gör hela den yttre skogen gratis i
+   * skuggpasset. */
+  const nara = { pos: [], col: [], idx: [], vOff: 0 };
+  const fjarran = { pos: [], col: [], idx: [], vOff: 0 };
   const coneIdx = [], sphIdx = [];
   trees.forEach((t, i) => {
     const hull = hulls[i];
     if (!hull) { (t[8] < 0.33 ? coneIdx : sphIdx).push(i); return; }
     const [x, gy, z, , , , , , , r, g, b] = t;
+    const hink2 = avstandTillLinje(x, z) > LOD_M ? fjarran : nara;
     const base = gy * exag;
     let hMin = Infinity, hMax = -Infinity;
     for (const v of hull.v) { if (v[1] < hMin) hMin = v[1]; if (v[1] > hMax) hMax = v[1]; }
     const span = Math.max(hMax - hMin, 0.5);
     const c = new THREE.Color();
+    /* U7 punkt 4: bryt upp siluetten. Kronhöljena är släta konvexa skal, och
+     * det är just den släta kanten som får en skog att se ut som klumpar
+     * plast. Jittret läggs LÅNGS radien ut från trädets mittaxel (billigare än
+     * riktiga normaler och ger samma effekt på siluetten), skalas med kronans
+     * storlek, och är seedat per träd så samma träd ser likadant ut varje gång
+     * — ett träd som ändrar form när man panorerar är värre än ett slätt. */
+    let fro = (i * 2654435761) >>> 0;
+    const brus = () => (((fro = (fro * 1664525 + 1013904223) >>> 0) / 4294967296) - 0.5);
     for (const [dx, hh, dz] of hull.v) {
-      pos.push(x + dx, base + hh, z + dz);
+      const rad = Math.hypot(dx, dz) || 1e-6;
+      const amp = Math.min(0.35, 0.06 * rad + 0.05);
+      const k2 = 1 + brus() * 2 * amp / rad;
+      hink2.pos.push(x + dx * k2, base + hh + brus() * amp, z + dz * k2);
       const k = 0.72 + 0.28 * (hh - hMin) / span;   // mörkare undersida
       // sRGB → linjärt arbetsfärgrum (annars urtvättade kronor)
       c.setRGB(r / 255 * k, g / 255 * k, b / 255 * k, THREE.SRGBColorSpace);
-      colArr.push(c.r, c.g, c.b);
+      hink2.col.push(c.r, c.g, c.b);
     }
-    for (const fi of hull.f) idxArr.push(vOff + fi);
-    vOff += hull.v.length;
+    for (const fi of hull.f) hink2.idx.push(hink2.vOff + fi);
+    hink2.vOff += hull.v.length;
   });
-  if (pos.length) {
+  for (const [h, kastar, namn] of [[nara, true, 'kronor-nara'],
+                                  [fjarran, false, 'kronor-fjarran']]) {
+    if (!h.pos.length) continue;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colArr, 3));
-    geo.setIndex(idxArr);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(h.pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(h.col, 3));
+    geo.setIndex(h.idx);
     geo.computeVertexNormals();
-    const hullMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-      vertexColors: true }));
+    const hullMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.85, metalness: 0.0 }));
+    hullMesh.name = namn;                 // scengraf-verifiering, ?dbg=1
+    hullMesh.castShadow = kastar;
+    hullMesh.receiveShadow = true;
     filtreraTrad(hullMesh);
     scene.add(hullMesh);
     treeParts.push(hullMesh);
@@ -483,16 +702,30 @@ function buildTrees() {
 
   const trunkG = new THREE.CylinderGeometry(1, 1, 1, 6);
   const trunks = new THREE.InstancedMesh(
-    trunkG, new THREE.MeshLambertMaterial({ color: 0x5c4a37 }), trees.length);
+    trunkG, new THREE.MeshStandardMaterial({ color: 0x5c4a37, roughness: 0.95 }),
+    trees.length);
+  trunks.castShadow = true;
+  trunks.receiveShadow = true;
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
         yAxis = new THREE.Vector3(0, 1, 0),
         p = new THREE.Vector3(), s = new THREE.Vector3(), col = new THREE.Color();
 
-  const makeCrowns = (geo, idx, coneY) => {
+  /* U7 punkt 3: roughness-variation PER TRÄD. En InstancedMesh delar material,
+   * så variationen kan inte ligga per instans utan en egen shader-attribut —
+   * i stället delas träden i tre grovhetshinkar. Det ger den variation ögat
+   * behöver (en skog där varje krona har exakt samma glans läser som en
+   * texturkarta, inte som löv) till priset av två extra draw calls per kronform.
+   * Vertexfärgerna ur laserdatan rörs INTE: de är artspecifika och det är de
+   * som gör skogen levande. */
+  const HINKAR = [0.72, 0.84, 0.94];
+  const makeCrowns = (geo, idx, coneY, roughness, kastarSkugga = true) => {
     if (!idx.length) return null;
     const mesh = new THREE.InstancedMesh(
-      geo, new THREE.MeshLambertMaterial(), idx.length);
+      geo, new THREE.MeshStandardMaterial({ roughness, metalness: 0.0 }),
+      idx.length);
+    mesh.castShadow = kastarSkugga;
+    mesh.receiveShadow = true;
     idx.forEach((ti, slot) => {
       const [x, gy, z, h, rx, ry, yawDeg, baseFrac, , r, g, b] = trees[ti];
       const base = gy * exag;                 // markfoten följer överdriften
@@ -510,8 +743,38 @@ function buildTrees() {
     filtreraTrad(mesh);          // kronorna, inte stammarna: bark ska inte bli grönare
     return mesh;
   };
-  const cones = makeCrowns(new THREE.ConeGeometry(1, 1, 7), coneIdx, true);
-  const sph = makeCrowns(new THREE.SphereGeometry(1, 8, 6), sphIdx, false);
+  /* U7 punkt 5: LOD. Etappen skrev "billboards bortom 250 m", alltså ett
+   * avstånd från KAMERAN — men det avståndet ändras varje bildruta, och att
+   * bygga om instansbuffertarna per bildruta kostar mer än det sparar för de
+   * här trädantalen (≤ 100 per hål). Det som faktiskt hotar budgeten är inte
+   * trianglarna utan SKUGGPASSET, som ritar geometrin en gång till.
+   *
+   * Delningen görs därför på avstånd från HÅLLINJEN, en gång vid bygget:
+   * kameran tittar praktiskt taget alltid längs korridoren, så träd långt ut i
+   * sidled (U15:s kjol) är de som alltid är små i bild. De får grövre kronor
+   * och kastar INGEN skugga — en skugga 150 m ut i sidled syns inte, men den
+   * kostar lika mycket som en vid tee. Träd nära linjen är oförändrade. */
+  const langtUt = ti => {
+    const [x, , z] = trees[ti];
+    return avstandTillLinje(x, z) > LOD_M;
+  };
+  const hink = ti => (ti * 2654435761 >>> 0) % HINKAR.length;
+  const geoNara = { kon: new THREE.ConeGeometry(1, 1, 7),
+                    sfar: new THREE.SphereGeometry(1, 8, 6) };
+  const geoFjarran = { kon: new THREE.ConeGeometry(1, 1, 4),
+                       sfar: new THREE.SphereGeometry(1, 5, 3) };
+  const kronor = [];
+  for (const fjarran of [false, true]) {
+    const g = fjarran ? geoFjarran : geoNara;
+    const rgh_hinkar = fjarran ? [HINKAR[1]] : HINKAR;   // fjärran: en hink räcker
+    rgh_hinkar.forEach((rgh, h) => {
+      const valj = (arr) => arr.filter(ti => langtUt(ti) === fjarran
+                                       && (fjarran || hink(ti) === h));
+      const k = makeCrowns(g.kon, valj(coneIdx), true, rgh, !fjarran);
+      const s = makeCrowns(g.sfar, valj(sphIdx), false, rgh, !fjarran);
+      kronor.push(k, s);
+    });
+  }
 
   const qi = new THREE.Quaternion();
   trees.forEach(([x, gy, z, h, , , , baseFrac], i) => {
@@ -522,9 +785,7 @@ function buildTrees() {
     trunks.setMatrixAt(i, m.compose(p, qi, s));
   });
 
-  const parts = [trunks];
-  if (cones) parts.push(cones);
-  if (sph) parts.push(sph);
+  const parts = [trunks, ...kronor.filter(Boolean)];
   parts.forEach(o => scene.add(o));
   treeParts.push(...parts);
 }
@@ -1380,6 +1641,7 @@ function applyExag(forra) {
   // träd och slag är dyra och schemaläggs till nästa bildruta (U18).
   if (ground) ground.scale.y = exag;
   if (wide) wide.scale.y = exag;      // kjolen följer marken, annars glider den
+  spannUpp();     // U7: höjdskalan flyttar kronorna → skuggkameran måste följa
   omTrad();
   omLinje();
   omSlope();         // lutningsmattan draperas på marken → likaså
@@ -1575,8 +1837,12 @@ function buildHojdPanel() {
 
   const net = HP.netHeight(meta, hojdTeeId());
   el('hojdDelta').textContent = fmtDh(net.dh);
+  // "· ungefärlig plats" (T1): tee:n är syntetisk — avståndet stämmer mot
+  // scorekortet, men sidoläget är ärvt. Säg det hellre än att visa en gissad
+  // punkt som ser exakt ut.
   el('hojdLangd').textContent = net.tee
     ? `vald tee ${net.tee} · ${net.len ?? meta.length_m} m`
+      + (net.approx ? ' · ungefärlig plats' : '')
     : `${meta.length_m} m`;
 
   renderHojd();
@@ -1707,10 +1973,15 @@ async function loadHole(slug) {
     const gltf = await loader.loadAsync(`data/holes3d/${meta.glb}`);
     ground = gltf.scene;
     ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    // U7: marken TAR EMOT skuggor men kastar inga — den är en enda yta, så en
+    // självskugga blir akne och inte relief. Reliefen kommer från solvinkeln.
+    ground.traverse(c => { if (c.isMesh) { c.receiveShadow = true; c.castShadow = false; } });
     filtreraMark(ground);          // ortofotot ska matcha 2D-kartan
     scene.add(ground);
     byggMarkindex();     // U18: EN gång per hål, före första ombyggnaden
     applyExag();
+    sattSol(solLage);    // U7: solen hör till banans position — sätt om per hål
+    spannUpp();          // U7: skuggkameran spänns kring DET här hålet
     stopFly();
     placeCamera();       // startvyn = överblicken, aldrig en flygning
     buildHojdMarker();   // U6: ny grupp per hål (clearHole tog bort förra)
@@ -1742,6 +2013,9 @@ async function loadWide(slug, file) {
     wide = gltf.scene;
     wide.name = 'u15-wide';                       // scengraf-verifiering, ?dbg=1
     wide.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    // U7: kjolen tar emot skuggor (annars slutar terrängen få relief precis där
+    // hålet tar slut, och sömmen syns som ett ljusbyte) men kastar inga.
+    wide.traverse(c => { if (c.isMesh) { c.receiveShadow = true; c.castShadow = false; } });
     filtreraMark(wide);            // samma korrigering som hålets mark — annars syns sömmen som ett färgbyte
     wide.scale.y = exag;
     wide.position.y = -SKIRT_DROP_M;

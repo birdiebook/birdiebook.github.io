@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0c2e22">
+<meta name="theme-color" content="#16221e"><!-- = --bg i tokens.css; meta läser inte CSS-variabler -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -26,14 +26,14 @@
 <script src="./mapcore.js"></script>
 <script src="./vybro.js"></script>      <!-- TILT_3D: överblickens lutning ägs av bron, inte av motorn -->
 <script src="./bollbana.js"></script>
+<script src="./sol.js"></script>       <!-- U7: solens position -->
 <script src="./playas.js"></script>
 <script src="./vind3d.js"></script>   <!-- efter playas.js: delegerar dit -->
 <script src="./slagjust.js"></script> <!-- U17: justeringar som visningslager -->
 
 <title>SG Hål i 3D</title>
+<link rel="stylesheet" href="./tokens.css">
 <style>
-  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
-          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; overflow:hidden; }
   body { background:var(--bg); color:var(--ink);
@@ -49,7 +49,7 @@
   #topp { position:fixed; top:0; left:0; right:0; z-index:5;
     display:flex; gap:8px; align-items:center;
     padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
-    background:linear-gradient(#0c2e22ee, #0c2e2200); }
+    background:linear-gradient(var(--panel), transparent); }
   #topp a.back { color:var(--ink); text-decoration:none; font-size:20px;
     padding:4px 10px 4px 4px; }
   #topp select { flex:1; min-width:0; background:var(--card); color:var(--ink);
@@ -58,14 +58,14 @@
   #fakta { font-size:13px; color:var(--dim); white-space:nowrap; }
   #botten { position:fixed; left:0; right:0; z-index:5;
     bottom:0; padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);
-    background:linear-gradient(#0c2e2200, #0c2e22ee);
+    background:linear-gradient(transparent, var(--panel));
     display:flex; align-items:center; gap:10px; }
   #botten label { font-size:13px; color:var(--dim); white-space:nowrap; }
-  #exag { flex:1; accent-color:var(--accent); }
+  #exag { flex:1; accent-color:var(--accent-ui); }
   #status { position:fixed; inset:0; display:flex; align-items:center;
     justify-content:center; z-index:4; color:var(--dim); font-size:15px;
     text-align:center; padding:0 30px; pointer-events:none; }
-  #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:#9fc4ae88;
+  #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:var(--dim-svagare);
     bottom:calc(env(safe-area-inset-bottom) + 58px); }
   /* U4 verktygsrad. UPPE till hoger sedan 2026-07-31 (beslut: bottenhogern ar
      kvar at overdriften och avbryt-knappen). Ligger UNDER halremsan, sa varken
@@ -77,14 +77,14 @@
     display:flex; flex-direction:column; gap:8px; }
   #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
     display:flex; flex-direction:column; align-items:center; gap:3px;
-    background:#0e2b3ad2; color:var(--ink); border:1px solid #ffffff26;
+    background:var(--panel); color:var(--ink); border:1px solid var(--panelkant);
     border-radius:14px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
-    box-shadow:0 10px 32px #0000006b; font:600 9px/1 inherit;
+    box-shadow:0 10px 32px var(--skuggfarg); font:600 9px/1 inherit;
     letter-spacing:.06em; text-transform:uppercase;
     transition:background .15s ease, border-color .15s ease, transform .12s ease; }
   #verktyg button:active:not(:disabled) { transform:scale(.97); }
-  #verktyg button[aria-pressed="true"] { border-color:#4eab79cc; color:#7fe0aa; }
+  #verktyg button[aria-pressed="true"] { border-color:var(--accent-ui-kant); color:var(--accent-ui-ljus); }
   #verktyg button:disabled { opacity:.38; cursor:default; }
   #verktyg svg { width:19px; height:19px; fill:none; stroke:currentColor;
     stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
@@ -101,19 +101,19 @@
      preserveAspectRatio="none" och skalar därför utan att beskäras. */
   #hojdpanel { position:fixed; left:10px; right:82px; z-index:5;
     top:calc(env(safe-area-inset-top) + 54px);
-    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
     padding:10px 12px 8px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
-    box-shadow:0 10px 32px #0000006b; }
+    box-shadow:0 10px 32px var(--skuggfarg); }
   #hojdpanel.dold { display:none; }
   /* U16 vindpanel. Bottenzonen ar fri sedan verktygsraden flyttade upp; den
      ligger ovanfor overdrifts-reglaget och lamnar mitten at banan (§3.4). */
   #vindpanel { position:fixed; left:10px; right:10px; z-index:5;
     bottom:calc(env(safe-area-inset-bottom) + 56px);
-    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
     padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
-    box-shadow:0 10px 32px #0000006b; }
+    box-shadow:0 10px 32px var(--skuggfarg); }
   #vindpanel.dold { display:none; }
   #vindrad { display:flex; justify-content:space-between; align-items:baseline;
     font-size:13px; color:var(--dim); gap:8px; margin-bottom:6px; }
@@ -121,31 +121,31 @@
   #vindalder { font-size:11px; color:var(--dim); }
   #vindpanel .reg { display:grid; grid-template-columns:52px 1fr 46px;
     align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
-  #vindpanel input[type=range] { width:100%; accent-color:var(--accent); }
+  #vindpanel input[type=range] { width:100%; accent-color:var(--accent-ui); }
   #vindpanel .varde { text-align:right; color:var(--ink); font-weight:600; }
-  #vindater { margin-top:7px; background:none; border:1px solid #ffffff26;
+  #vindater { margin-top:7px; background:none; border:1px solid var(--panelkant);
     color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
   /* U16 steg 4: siktraden. Samma bla som siktlinjen i scenen - texten och
      strecket ska laesas som samma svar, inte som tva upplysningar. */
-  .siktrad { margin-top:7px; padding-top:6px; border-top:1px solid #ffffff1a;
+  .siktrad { margin-top:7px; padding-top:6px; border-top:1px solid var(--panelkant-svag);
     font-size:12px; color:var(--dim); line-height:1.45; }
   .siktrad:empty { display:none; }
-  .siktrad b { color:#8fd6ff; font-weight:700; }
+  .siktrad b { color:var(--info); font-weight:700; }
   /* U17 slagpanelen. Samma bottendockning och samma reglage-grid som
      vindpanelen — de två visas aldrig samtidigt (setLage stanger vinden nar
      slaget oppnas), sa de far dela plats. */
   #slagpanel { position:fixed; left:10px; right:10px; z-index:5;
     bottom:calc(env(safe-area-inset-bottom) + 56px);
     max-height:62vh; overflow-y:auto;
-    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
     padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
-    box-shadow:0 10px 32px #0000006b; }
+    box-shadow:0 10px 32px var(--skuggfarg); }
   #slagpanel.dold { display:none; }
   #slagrubrik { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
   #slagrubrik b { font-size:15px; }
   #slagandrad { font:700 9px/1 inherit; letter-spacing:.08em; text-transform:uppercase;
-    color:#ffcf4d; border:1px solid #ffcf4d66; border-radius:6px; padding:3px 5px; }
+    color:var(--varning); border:1px solid var(--varning-svag); border-radius:6px; padding:3px 5px; }
   #slagandrad[hidden] { display:none; }
   #slagstang { margin-left:auto; background:none; border:none; color:var(--dim);
     font-size:19px; line-height:1; padding:0 3px; cursor:pointer; }
@@ -153,20 +153,20 @@
   #slagtal b { color:var(--ink); font-weight:600; }
   #slagpanel .reg { display:grid; grid-template-columns:60px 1fr 52px;
     align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
-  #slagpanel input[type=range] { width:100%; accent-color:var(--accent); }
+  #slagpanel input[type=range] { width:100%; accent-color:var(--accent-ui); }
   #slagpanel .varde { text-align:right; color:var(--ink); font-weight:600; }
   #slagpanel .rubrad { font:700 9px/1 inherit; letter-spacing:.08em; margin-top:8px;
-    text-transform:uppercase; color:#9fc4ae99; }
+    text-transform:uppercase; color:var(--dim-svag); }
   #slagpanel .knappar { display:flex; gap:8px; margin-top:8px; }
-  #slagpanel .knappar button { background:none; border:1px solid #ffffff26;
+  #slagpanel .knappar button { background:none; border:1px solid var(--panelkant);
     color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
-  #slaghjalp { font-size:10.5px; color:#9fc4ae99; margin-top:7px; line-height:1.45; }
+  #slaghjalp { font-size:10.5px; color:var(--dim-svag); margin-top:7px; line-height:1.45; }
   #hojdrad { display:flex; justify-content:space-between; align-items:baseline;
     font-size:13px; color:var(--dim); margin-bottom:4px; gap:8px; }
   #hojdrad b { color:var(--ink); font-size:15px; font-weight:700; }
   #hojdsvg { width:100%; height:74px; display:block; touch-action:none; }
   #hojdlive { font-size:12.5px; color:var(--dim); margin-top:4px; }
-  #hojdlive b { color:var(--accent); font-weight:700; }
+  #hojdlive b { color:var(--accent-ui); font-weight:700; }
 </style>
 </head>
 <body>
@@ -255,7 +255,7 @@
 <button id="flyavbryt" style="display:none; position:fixed; z-index:6;
   left:50%; transform:translateX(-50%);
   bottom:calc(env(safe-area-inset-bottom) + 66px);
-  background:#123c2dee; color:#e8f5ec; border:1px solid #1f5540;
+  background:var(--panel); color:var(--ink); border:1px solid var(--line);
   border-radius:20px; padding:8px 16px; font-size:14px;">⏸ Avbryt flygning</button>
 
 <script type="importmap">

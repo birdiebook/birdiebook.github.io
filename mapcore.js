@@ -237,7 +237,28 @@ const MapCore = (() => {
     return fitBand(map, teePt, farPt, band);
   }
 
+  /* U3: läs en frusen token ur tokens.css.
+   *
+   * Varför den behövs: Leaflet-optioner (`color`, `fillColor`) och SVG:s
+   * PRESENTATIONSATTRIBUT tar inte `var(--x)` — det är bara giltigt i CSS, och
+   * en Leaflet-option är en sträng som hamnar i ett attribut. En färg satt så
+   * blir tyst svart, vilket är precis den sortens fel som ser ut som design.
+   * Här läses tokenen ur den beräknade stilen i stället, så färgen fortfarande
+   * bara bor på ETT ställe.
+   *
+   * Värdet cachas: `getComputedStyle` tvingar layout och det här anropas per
+   * ritad markör. */
+  const _tokCache = new Map();
+  function token(namn) {
+    if (!_tokCache.has(namn)) {
+      _tokCache.set(namn, getComputedStyle(document.documentElement)
+        .getPropertyValue(namn).trim());
+    }
+    return _tokCache.get(namn);
+  }
+  if (typeof window !== "undefined") window.TOK = token;
+
   return { createMap, addOrthophoto, fitBand, fitHole,
     rad: _rad, hav: _hav, bearing, accColor, holeHeading, orientToHole,
-    teePoint, teeIsApprox, loadCourse, drawShots, drawHoleGeometry };
+    teePoint, teeIsApprox, loadCourse, drawShots, drawHoleGeometry, token };
 })();

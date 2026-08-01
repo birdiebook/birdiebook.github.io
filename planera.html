@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0c2e22">
+<meta name="theme-color" content="#16221e"><!-- = --bg i tokens.css; meta läser inte CSS-variabler -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,11 +13,8 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
 <title>Planera runda</title>
+<link rel="stylesheet" href="./tokens.css">
 <style>
-  :root {
-    --bg: #0c2e22; --card: #123c2d; --ink: #e8f5ec; --dim: #9fc4ae;
-    --line: #1f5540; --accent: #37b06b; --accent-ink: #06180f;
-  }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
   body {
@@ -38,7 +35,7 @@
   label { display: block; font-size: 13px; color: var(--dim); margin: 10px 0 4px; }
   label:first-child { margin-top: 0; }
   select.field { width: 100%; font-size: 17px; padding: 12px; border-radius: 10px;
-          border: 1px solid var(--line); background: #0e332656; color: var(--ink); }
+          border: 1px solid var(--line); background: var(--panel-svag); color: var(--ink); }
   .tools { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
   .tool { display: flex; align-items: center; gap: 14px; text-decoration: none;
           background: var(--card); border: 1px solid var(--line); border-radius: 14px;
@@ -48,9 +45,9 @@
   .tool .tt { font-size: 17px; font-weight: 700; }
   .tool .td { color: var(--dim); font-size: 13px; margin-top: 2px; }
   .tool .arr { color: var(--dim); font-size: 20px; flex: none; }
-  .tool:active { background: #16412f; }
+  .tool:active { background: var(--accent-ui-yta); }
   .hint { color: var(--dim); font-size: 13px; line-height: 1.5; }
-  .banner { background: #4a3413; border: 1px solid #7a5a1f; color: #f0d48a;
+  .banner { background: var(--amber-yta); border: 1px solid var(--amber-kant); color: var(--amber-ink);
           border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 10px 0; }
 </style>
 </head>
@@ -59,20 +56,20 @@
   <div class="top">
     <a class="back" href="./index.html" aria-label="tillbaka">‹</a>
     <div>
-      <h1>🗓 Planera runda</h1>
+      <h1 class="identitet">🗓 Planera runda</h1>
     </div>
   </div>
   <p class="sub">Gå igenom banan i förväg — utan att starta en runda.</p>
 
   <div class="card">
     <label for="round">Runda</label>
-    <select class="field" id="round">
+    <select class="field tee-val" id="round">
       <option value="1-18">1–18</option>
       <option value="10-27">10–27</option>
       <option value="19-9">19–9</option>
     </select>
     <label for="hole">Hål</label>
-    <select class="field" id="hole"></select>
+    <select class="field tee-val" id="hole"></select>
   </div>
 
   <!-- U11: EN ingång. Förut stod här tre (3D-genomgång, Planera slag,
