@@ -1,0 +1,782 @@
+﻿<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Planera">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Planera hålet</title>
+<link rel="stylesheet" href="./vendor/leaflet.css">
+<!-- Vanliga scripts före modulen, samma ordning som hal3d.html: motorn i
+     hal3d.js läser Store/Spelprofil/Bollbana/Vind3D/SlagJust som globaler. -->
+<script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./markhojd.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./store.js"></script>
+<script src="./coursemap.js"></script>
+<script src="./mapcore.js"></script>
+<script src="./bollbana.js"></script>
+<script src="./playas.js"></script>
+<script src="./vind3d.js"></script>
+<script src="./slagjust.js"></script>
+<script src="./slopeoverlay.js"></script>
+<script src="./vylage.js"></script>
+<script src="./vybro.js"></script>   <!-- U12: bron Leaflet ↔ camctl -->
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
+          --framebg: rgba(0,0,0,.55); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
+    overscroll-behavior:none; }
+
+  /* De två vinklarna. Båda ligger i dokumentet hela tiden; U11 gör ett HÅRT
+     klipp mellan dem (övertoningen är U12). Den dolda vinkeln renderar inte:
+     Leaflet vilar av sig självt, 3D:s rAF stoppas av `sattSynlig`. */
+  #map, #scen { position:fixed; inset:0; background:var(--bg); }
+  #scen { touch-action:none; }        /* U18: hör hemma HÄR, inte på body */
+  .leaflet-container { background:var(--bg); }
+
+  /* ---- topp: tillbaka · hålnamn · stegare · vinkelväxel (finns i BÅDA) ---- */
+  #top { position:fixed; top:0; left:0; right:0; z-index:1000;
+    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    display:flex; align-items:center; gap:8px; pointer-events:none; }
+  #top > * { pointer-events:auto; }
+  #top a.back { color:var(--ink); text-decoration:none; font-size:22px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:4px 12px; box-shadow:0 2px 8px #0007; }
+  #top .name { flex:1; min-width:0; text-align:center; font-weight:700; font-size:16px;
+    background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:7px 10px; box-shadow:0 2px 8px #0007; }
+  #top .name small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
+  #top .step { display:flex; gap:4px; }
+  #top .step button { background:var(--framebg); border:1px solid var(--line);
+    color:var(--ink); font-size:20px; width:42px; height:42px; border-radius:12px;
+    box-shadow:0 2px 8px #0007; }
+  #top .step button:disabled { opacity:.4; }
+  /* Vinkelväxeln. EN kontroll, två lägen — inte två ingångar (U11). */
+  #vinkel { display:flex; gap:2px; background:var(--framebg); border:1px solid var(--line);
+    border-radius:12px; padding:3px; box-shadow:0 2px 8px #0007; }
+  #vinkel button { background:none; border:none; color:var(--dim); font:800 13px inherit;
+    padding:7px 10px; border-radius:9px; letter-spacing:.04em; }
+  #vinkel button[aria-pressed="true"] { background:rgba(55,176,107,.85); color:var(--accent-ink); }
+  #vinkel button:disabled { opacity:.35; }
+
+  /* ---- botten i 2D: slagkedjan, lutningen, ångra ---- */
+  #bottom2d { position:fixed; left:0; right:0; z-index:1000;
+    bottom:calc(env(safe-area-inset-bottom) + 10px);
+    display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 12px; }
+  #slopeBtn { background:var(--framebg); border:1px solid var(--accent); color:var(--accent);
+    font-weight:800; font-size:14px; padding:12px 20px; border-radius:14px;
+    box-shadow:0 2px 8px #0007; }
+  #slopeBtn.on { background:rgba(55,176,107,.85); color:var(--accent-ink); }
+  .hint { color:var(--dim); font-size:12px; background:var(--framebg);
+    border:1px solid var(--line); border-radius:10px; padding:6px 12px; }
+  #legs { max-width:min(92vw, 420px); max-height:22vh; overflow-y:auto;
+    background:var(--framebg); border:1px solid var(--line); border-radius:10px;
+    padding:6px 10px; font-size:13px; display:none; }
+  #legs.show { display:block; }
+  #legs .leg { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+  #legs .leg b { color:var(--ink); }
+  #legs .leg span { color:var(--dim); display:flex; align-items:center; gap:6px; }
+  #legs .legX { background:transparent; border:1px solid var(--line); color:var(--dim);
+    font-size:11px; line-height:1; width:18px; height:18px; border-radius:50%; padding:0; }
+  #legRow { display:flex; gap:8px; }
+  #undoBtn { background:var(--framebg); border:1px solid var(--line); color:var(--ink);
+    font-size:13px; padding:10px 16px; border-radius:14px; box-shadow:0 2px 8px #0007; }
+  #undoBtn:disabled { opacity:.4; }
+  /* Ångra i 3D-vinkeln: samma knapp, annan plats (bottenmitten är upptagen av
+     överdriftsreglaget). Kedjan syns i scenen, så listan behövs inte här. */
+  #undo3d { position:fixed; z-index:6; left:10px;
+    bottom:calc(env(safe-area-inset-bottom) + 56px);
+    background:#0e2b3ad2; border:1px solid #ffffff26; color:var(--ink);
+    border-radius:12px; padding:8px 12px; font:600 12px inherit;
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+  #undo3d:disabled { opacity:.38; }
+
+  /* ---- 3D-chromet: SAMMA id:n och samma regler som hal3d.html ---- */
+  #status { position:fixed; inset:0; display:flex; align-items:center;
+    justify-content:center; z-index:4; color:var(--dim); font-size:15px;
+    text-align:center; padding:0 30px; pointer-events:none; }
+  #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:#9fc4ae88;
+    bottom:calc(env(safe-area-inset-bottom) + 58px); }
+  #botten { position:fixed; left:0; right:0; z-index:5;
+    bottom:0; padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);
+    background:linear-gradient(#0c2e2200, #0c2e22ee);
+    display:flex; align-items:center; gap:10px; }
+  #botten label { font-size:13px; color:var(--dim); white-space:nowrap; }
+  #exag { flex:1; accent-color:var(--accent); }
+  #verktyg { position:fixed; right:10px; z-index:6;
+    top:calc(env(safe-area-inset-top) + 54px);
+    display:flex; flex-direction:column; gap:8px; }
+  #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+    background:#0e2b3ad2; color:var(--ink); border:1px solid #ffffff26;
+    border-radius:14px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; font:600 9px/1 inherit;
+    letter-spacing:.06em; text-transform:uppercase;
+    transition:background .15s ease, border-color .15s ease, transform .12s ease; }
+  #verktyg button:active:not(:disabled) { transform:scale(.97); }
+  #verktyg button[aria-pressed="true"] { border-color:#4eab79cc; color:#7fe0aa; }
+  #verktyg button:disabled { opacity:.38; cursor:default; }
+  #verktyg svg { width:19px; height:19px; fill:none; stroke:currentColor;
+    stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  #slaginfo { width:64px; font:600 8.5px/1.25 inherit; color:var(--dim);
+    text-align:center; letter-spacing:.02em; }
+  @media (prefers-reduced-motion: reduce) { #verktyg button { transition:none; } }
+  #hojdpanel { position:fixed; left:10px; right:82px; z-index:5;
+    top:calc(env(safe-area-inset-top) + 54px);
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    padding:10px 12px 8px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; }
+  #hojdpanel.dold { display:none; }
+  #vindpanel, #slagpanel { position:fixed; left:10px; right:10px; z-index:5;
+    bottom:calc(env(safe-area-inset-bottom) + 56px);
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; }
+  #slagpanel { max-height:62vh; overflow-y:auto; }
+  #vindpanel.dold, #slagpanel.dold { display:none; }
+  #vindrad { display:flex; justify-content:space-between; align-items:baseline;
+    font-size:13px; color:var(--dim); gap:8px; margin-bottom:6px; }
+  #vindrad b { color:var(--ink); font-size:15px; font-weight:700; }
+  #vindalder { font-size:11px; color:var(--dim); }
+  #vindpanel .reg, #slagpanel .reg { display:grid; grid-template-columns:56px 1fr 50px;
+    align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
+  #vindpanel input[type=range], #slagpanel input[type=range] { width:100%; accent-color:var(--accent); }
+  #vindpanel .varde, #slagpanel .varde { text-align:right; color:var(--ink); font-weight:600; }
+  #vindater { margin-top:7px; background:none; border:1px solid #ffffff26;
+    color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
+  .siktrad { margin-top:7px; padding-top:6px; border-top:1px solid #ffffff1a;
+    font-size:12px; color:var(--dim); line-height:1.45; }
+  .siktrad:empty { display:none; }
+  .siktrad b { color:#8fd6ff; font-weight:700; }
+  #slagrubrik { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  #slagrubrik b { font-size:15px; }
+  #slagandrad { font:700 9px/1 inherit; letter-spacing:.08em; text-transform:uppercase;
+    color:#ffcf4d; border:1px solid #ffcf4d66; border-radius:6px; padding:3px 5px; }
+  #slagandrad[hidden] { display:none; }
+  #slagstang { margin-left:auto; background:none; border:none; color:var(--dim);
+    font-size:19px; line-height:1; padding:0 3px; cursor:pointer; }
+  #slagtal { font-size:12px; color:var(--dim); line-height:1.5; margin-bottom:5px; }
+  #slagtal b { color:var(--ink); font-weight:600; }
+  #slagpanel .rubrad { font:700 9px/1 inherit; letter-spacing:.08em; margin-top:8px;
+    text-transform:uppercase; color:#9fc4ae99; }
+  #slagpanel .knappar { display:flex; gap:8px; margin-top:8px; }
+  #slagpanel .knappar button { background:none; border:1px solid #ffffff26;
+    color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
+  #slaghjalp { font-size:10.5px; color:#9fc4ae99; margin-top:7px; line-height:1.45; }
+  #hojdrad { display:flex; justify-content:space-between; align-items:baseline;
+    font-size:13px; color:var(--dim); margin-bottom:4px; gap:8px; }
+  #hojdrad b { color:var(--ink); font-size:15px; font-weight:700; }
+  #hojdsvg { width:100%; height:74px; display:block; touch-action:none; }
+  #hojdlive { font-size:12.5px; color:var(--dim); margin-top:4px; }
+  #hojdlive b { color:var(--accent); font-weight:700; }
+  /* Slår ut även element med inline-display (t.ex. #flyavbryt, som motorn sätter
+     till block när en flygning pågår). */
+  .doldvy { display:none !important; }
+</style>
+</head>
+<body>
+<!-- de två vinklarna -->
+<div id="map"></div>
+<div id="scen" class="doldvy"></div>
+
+<!-- toppen: samma i båda vinklarna -->
+<div id="top">
+  <a class="back" href="./planera.html" aria-label="tillbaka">‹</a>
+  <div class="name" id="holeName">Laddar …</div>
+  <div class="step">
+    <button id="prev" aria-label="föregående hål">‹</button>
+    <button id="next" aria-label="nästa hål">›</button>
+  </div>
+  <div id="vinkel" role="group" aria-label="Kameravinkel">
+    <button id="v2d" type="button" aria-pressed="true">2D</button>
+    <button id="v3d" type="button" aria-pressed="false" disabled title="3D saknas för den här banan">3D</button>
+  </div>
+</div>
+
+<!-- 2D-vinkelns botten -->
+<div id="bottom2d">
+  <div id="legs"></div>
+  <div id="legRow">
+    <button id="slopeBtn">⛳ Green-lutning</button>
+    <button id="undoBtn" disabled>↩ Ångra</button>
+  </div>
+  <div class="hint" id="hint">Tappa på kartan för att lägga ett slag</div>
+</div>
+
+<!-- 3D-vinkelns chrome. Samma markup som hal3d.html — motorn i hal3d.js slår
+     upp exakt de här id:na, och det är hela skälet att de heter likadant. -->
+<div id="status" class="chrome3d"></div>
+<div id="kalla" class="chrome3d">Foto &amp; höjddata © Lantmäteriet (CC BY 4.0)</div>
+<div id="hojdpanel" class="dold chrome3d">
+  <div id="hojdrad"><b id="hojdDelta"></b><span id="hojdLangd"></span></div>
+  <svg id="hojdsvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
+  <div id="hojdlive"></div>
+</div>
+<div id="botten" class="chrome3d">
+  <label>överdrift <span id="exagv">3×</span></label>
+  <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
+</div>
+<button id="undo3d" class="chrome3d" type="button" disabled>↩ Ångra slaget</button>
+<div id="verktyg" class="chrome3d" role="group" aria-label="Verktyg">
+  <button id="vFlyover" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
+  <button id="vTeevy" type="button" title="Vyn fran teen, blicken mot green"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M12 3l7 2.5L12 8"/><ellipse cx="12" cy="18" rx="6" ry="2.2"/></svg><span>Tee-vy</span></button>
+  <button id="vHojd" type="button" title="Hojdprofil och spelar som"><svg viewBox="0 0 24 24"><path d="M3 18h18"/><path d="M3 14l6-7 5 5 3-3 4 5"/></svg><span>Hojd</span></button>
+  <button id="vSlaget" type="button" disabled title="Valj ett slag och andra apex, vind och spridning"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
+  <button id="vSlag" type="button" disabled title="Dina loggade slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
+  <button id="vVind" type="button" title="Vindens verkan pa bollbanan"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 13h15a3 3 0 1 1-3 3"/><path d="M3 18h8"/></svg><span>Vind</span></button>
+  <div id="slaginfo" hidden></div>
+</div>
+<div id="vindpanel" class="dold chrome3d">
+  <div id="vindrad"><b id="vindNu">–</b><span id="vindalder"></span></div>
+  <div class="reg"><label for="vMs">medel</label>
+    <input id="vMs" type="range" min="0" max="20" step="0.5" value="0">
+    <span class="varde" id="vMsV">0 m/s</span></div>
+  <div class="reg"><label for="vGust">by</label>
+    <input id="vGust" type="range" min="0" max="30" step="0.5" value="0">
+    <span class="varde" id="vGustV">0 m/s</span></div>
+  <div class="reg"><label for="vDir">från</label>
+    <input id="vDir" type="range" min="0" max="350" step="10" value="0">
+    <span class="varde" id="vDirV">N</span></div>
+  <button id="vindater" type="button">Återställ till hämtad vind</button>
+  <div class="siktrad"></div>
+</div>
+<div id="slagpanel" class="dold chrome3d">
+  <div id="slagrubrik"><b id="slagnr">Slaget</b><span id="slagandrad" hidden>ändrad</span>
+    <button id="slagstang" type="button" aria-label="stäng">×</button></div>
+  <div id="slagtal"></div>
+  <div class="reg"><label for="sApex">apex</label>
+    <input id="sApex" type="range" min="0.4" max="2" step="0.05" value="1">
+    <span class="varde" id="sApexV">×1,00</span></div>
+  <div class="rubrad">Vind för det här slaget</div>
+  <div class="reg"><label for="sMs">medel</label>
+    <input id="sMs" type="range" min="0" max="20" step="0.5" value="0">
+    <span class="varde" id="sMsV">0 m/s</span></div>
+  <div class="reg"><label for="sGust">by</label>
+    <input id="sGust" type="range" min="0" max="30" step="0.5" value="0">
+    <span class="varde" id="sGustV">0 m/s</span></div>
+  <div class="reg"><label for="sDir">från</label>
+    <input id="sDir" type="range" min="0" max="350" step="10" value="0">
+    <span class="varde" id="sDirV">N</span></div>
+  <div class="rubrad">Antagen spridning (0 = av)</div>
+  <div class="reg"><label for="sSprC">i sidled</label>
+    <input id="sSprC" type="range" min="0" max="40" step="1" value="0">
+    <span class="varde" id="sSprCV">av</span></div>
+  <div class="reg"><label for="sSprA">i längd</label>
+    <input id="sSprA" type="range" min="0" max="40" step="1" value="0">
+    <span class="varde" id="sSprAV">av</span></div>
+  <div class="knappar">
+    <button id="sAter" type="button">Återställ slaget</button>
+    <button id="sAterAlla" type="button">Återställ alla</button>
+  </div>
+  <div class="siktrad"></div>
+  <div id="slaghjalp">Justeringarna ändrar bara vyn — rundan är loggad data och rörs
+    aldrig. Spridningen kommer <span id="sprkalla">ur din spelprofil</span>.</div>
+</div>
+<button id="flyavbryt" class="chrome3d" style="display:none; position:fixed; z-index:6;
+  left:50%; transform:translateX(-50%);
+  bottom:calc(env(safe-area-inset-bottom) + 66px);
+  background:#123c2dee; color:#e8f5ec; border:1px solid #1f5540;
+  border-radius:20px; padding:8px 16px; font-size:14px;">⏸ Avbryt flygning</button>
+
+<script src="./vendor/leaflet.js"></script>
+<script src="./vendor/leaflet-rotate.js"></script>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script>
+  /* Måste stå FÖRE importen av hal3d.js: motorn läser flaggan när modulen
+     evalueras och bestämmer då om den äger hålvalet eller inte. */
+  window.__VY_EMBED = true;
+</script>
+<script>
+"use strict";
+/* PLANERINGSVYN — en vy, två kameravinklar (UPPGRADERING_3D §5 U11).
+ *
+ * Ersätter planera-karta.html och hal3d.html som planeringsingång. Spelaren
+ * väljer ett HÅL; 2D och 3D är två sätt att titta på det, och allt som hör till
+ * hålet — slagkedjan, green-lutningen, överdriften, läget, kameran — bor i
+ * `Vylage`. Den här filen ritar; den äger inget tillstånd.
+ *
+ * U11 gör ett HÅRT klipp mellan vinklarna (byte = visa den ena, dölj den andra).
+ * Övertoningen där kameran sjunker ner är U12, och den ska kunna mätas mot
+ * något som redan fungerar.
+ */
+const $ = id => document.getElementById(id);
+const hav = MapCore.hav;
+const params = new URLSearchParams(location.search);
+
+const VY = Vylage.skapa();                 // ENDA ägaren av vy-tillståndet
+let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
+    slopeArrowLayer = L.layerGroup(), legLayer = L.layerGroup();
+let ROUND = [], GLOBALS = [], hi = 0, WIND = null;
+let H3 = null;              // 3D-motorn, importeras först när 3D efterfrågas
+let h3dIndex = null;        // data/holes3d/index.<slug>.json, eller null
+let h3dLaddat = null;       // slug som ligger i scenen just nu
+
+const halNu = () => ROUND[hi] || null;
+const slugFor = h => h ? `${(h.loop || "").replace(" Course", "").toLowerCase()}_${h.hole}` : null;
+const finns3d = h => !!(h3dIndex && h3dIndex.holes.some(x => x.slug === slugFor(h)));
+
+// ------------------------------------------------------------ hålets text ---
+function teeToGreenText(h) {
+  const teePt = MapCore.teePoint(h) || (h.line && h.line[0]);
+  if (!teePt || !h.green_center) return "";
+  const geo = Math.round(hav(teePt, h.green_center));
+  const dh = PlayAs.dh3dToGreen({ fromTee: true, pt: teePt }, h);
+  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
+  const pa = WIND ? PlayAs.playAsRange(teePt, h.green_center, WIND, slope) : null;
+  const shown = pa ? pa.mean : Math.round(geo + slope);
+  const dhTxt = (dh != null && Math.abs(dh) >= 1)
+    ? ` · ${dh > 0 ? "↗" : "↘"} ${Math.abs(dh).toFixed(0)} m` : "";
+  return `${shown} m till green${dhTxt}`;
+}
+
+function updateHeader() {
+  const h = halNu();
+  if (!h) { $("holeName").textContent = "—"; return; }
+  const short = SGRound.LOOP_SHORT[h.loop] || h.loop;
+  const dist = teeToGreenText(h);
+  $("holeName").innerHTML =
+    `Hål ${hi + 1} <small>${short} ${h.hole} · Par ${h.par ?? "–"}` +
+    `${dist ? " · " + dist : ""}</small>`;
+  $("prev").disabled = hi <= 0;
+  $("next").disabled = hi >= ROUND.length - 1;
+}
+
+async function loadWind() {
+  const h = halNu();
+  const loc = (h && h.green_center) || [55.618, 13.07];
+  WIND = await PlayAs.fetchWind(loc[0], loc[1]);
+  updateHeader();
+  drawLegs();
+}
+
+// ------------------------------------------------------ 2D: kartan och kedjan ---
+function frameHole() {
+  const h = halNu();
+  if (!h || !map) return;
+  MapCore.orientToHole(map, h);
+  if (VY.slope && h.green && h.green.length) {
+    map.fitBounds(L.latLngBounds(h.green).pad(0.6), { animate: false });
+  } else {
+    const teePt = (h.line && h.line.length) ? h.line[0]
+      : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
+    const pts = [...(h.green || []), ...(h.line || []), teePt].filter(Boolean);
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.12), { animate: false });
+  }
+  requestAnimationFrame(() => map && map.invalidateSize({ pan: false }));
+}
+
+function syncSlope() {
+  const h = halNu();
+  $("slopeBtn").classList.toggle("on", VY.slope);
+  if (VY.slope && VY.vinkel === "2d" && h) {
+    SlopeOverlay.show(map, slopeLayer, slopeArrowLayer, h, null, () => true);
+  } else {
+    SlopeOverlay.hide(slopeLayer, slopeArrowLayer);
+  }
+}
+
+function legIcon(n) {
+  return L.divIcon({ className: "legpin", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<div style="width:26px;height:26px;border-radius:50%;background:#37b06b;`
+      + `border:2px solid #fff;color:#06180f;font-weight:800;font-size:13px;`
+      + `display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0007;">${n}</div>` });
+}
+
+// "Spelar som" a→b (PLANERA_RUNDA_PLAN §PR2): punkt→punkt-Δh ur 3D-metan.
+function legPlaysAs(a, b) {
+  const h = halNu();
+  const m = h && PlayAs.meta(h);
+  const y1 = m && PlayAs.elev3dAt(m, a[0], a[1]);
+  const y2 = m && PlayAs.elev3dAt(m, b[0], b[1]);
+  const dh = (y1 != null && y2 != null) ? y2 - y1 : null;
+  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
+  const pa = WIND ? PlayAs.playAsRange(a, b, WIND, slope) : null;
+  return pa ? pa.mean : Math.round(hav(a, b) + slope);
+}
+
+/* Ritar kedjan i BÅDA vinklarna ur samma källa (VY.legs()). Att 3D-sidan får
+   samma lista är hela beviset för "en punkt satt i 2D finns i 3D". */
+function drawLegs() {
+  const legs = VY.legs();
+  const h = halNu();
+  $("undoBtn").disabled = legs.length === 0;
+  $("undo3d").disabled = legs.length === 0;
+  if (H3) H3.sattPlanLegs(legs, h && h.green_center);
+
+  legLayer.clearLayers();
+  const box = $("legs");
+  const tomt = () => { box.classList.remove("show"); box.innerHTML = ""; };
+  if (!h || !h.green_center) return tomt();
+  const origin = MapCore.teePoint(h) || (h.line && h.line[0]);
+  if (!origin) return tomt();
+
+  L.marker(origin, { icon: legIcon(1) }).addTo(legLayer);
+  legs.forEach((p, i) => {
+    const mk = L.marker(p, { icon: legIcon(i + 2), draggable: true }).addTo(legLayer);
+    mk.on("dragend", () => {
+      const ll = mk.getLatLng();
+      VY.flyttaPunkt(i, [ll.lat, ll.lng]);
+    });
+  });
+  const solid = [origin, ...legs];
+  if (solid.length > 1) L.polyline(solid, { color: "#37b06b", weight: 3 }).addTo(legLayer);
+  const last = legs.length ? legs[legs.length - 1] : origin;
+  L.polyline([last, h.green_center], { color: "#37b06b", weight: 3, dashArray: "4,6" }).addTo(legLayer);
+
+  let rows = "", prev = origin;
+  legs.forEach((p, i) => {
+    const d = legPlaysAs(prev, p);
+    const rem = Math.round(hav(p, h.green_center));
+    rows += `<div class="leg"><b>Slag ${i + 1}: ${d} m</b><span>${rem} m kvar `
+      + `<button class="legX" data-i="${i}" aria-label="ta bort slag ${i + 1}">✕</button></span></div>`;
+    prev = p;
+  });
+  const dGreen = legPlaysAs(prev, h.green_center);
+  rows += `<div class="leg"><b>${legs.length ? `Slag ${legs.length + 1} (green)` : "Slag 1 (green)"}: ${dGreen} m</b><span></span></div>`;
+  box.innerHTML = rows;
+  box.classList.add("show");
+  box.querySelectorAll(".legX").forEach(btn => {
+    btn.onclick = () => VY.taBortPunkt(parseInt(btn.dataset.i, 10));
+  });
+}
+
+// ------------------------------------------------------------- vinkelbytet ---
+/* U12: BYTET. Kameran sjunker ner i 3D i stället för att sidan klipper om.
+ *
+ * Ordningen är hela etappen, och den står i §5 U12:
+ *   2D → 3D  (1) läs Leaflets vy → sätt kameran till EXAKT den posen, tilt 0,
+ *                överdrift 1 — då är de två bilderna nästan samma bild
+ *            (2) tona över canvasen ~150 ms
+ *            (3) sänk kameran till tilt 55° ~700 ms
+ *            (4) ge tillbaka spelarens överdrift
+ *   3D → 2D  reversen, och Leaflets vy sätts ur kameratillståndet FÖRE
+ *            övertoningen — aldrig efter, för då tonar man mot en bild som
+ *            ännu inte flyttat sig.
+ *
+ * `prefers-reduced-motion` gör hela bytet till ett hårt klipp (U11:s beteende).
+ * Sänkningen avbryts av första pekargesten — det sköter camctl självt, som för
+ * flyover: en gest nollar `_anim` och tar över posen.
+ */
+const REDUCERAD = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const FADE_MS = 150;
+const SANK_MS = 700;
+let byteId = 0;                 // ett nytt byte ogiltigförklarar det pågående
+const sov = ms => new Promise(r => setTimeout(r, ms));
+
+/** Leaflets vy som bron vill ha den. */
+function leafletVy() {
+  const c = map.getCenter();
+  return { center: [c.lat, c.lng], zoom: map.getZoom(),
+           bearing: (map.getBearing && map.getBearing()) || 0,
+           heightPx: map.getSize().y };
+}
+
+/** Kamerapose som visar exakt det Leaflet visar just nu (platt, ovanifrån). */
+function poseFranLeaflet() {
+  const k = H3 && H3.konv();
+  if (!k) return null;
+  return Vybro.poseFor2d({ ...leafletVy(), konv: k, yAt: H3.markY, yRef: H3.yRefPlan() });
+}
+
+function sattChrome(tre) {
+  $("v2d").setAttribute("aria-pressed", String(!tre));
+  $("v3d").setAttribute("aria-pressed", String(tre));
+  // `chrome3d` är en PERMANENT märkning av 3D-vinkelns paneler; `doldvy` är det
+  // som slås av och på. Att använda samma klass till båda hade tagit bort
+  // märkningen i samma andetag som den dolde elementet — och då hade panelerna
+  // aldrig kommit tillbaka.
+  $("bottom2d").classList.toggle("doldvy", tre);
+  document.querySelectorAll(".chrome3d").forEach(e => e.classList.toggle("doldvy", !tre));
+  // Green-lutningen är 2D:s i U11 — U13 tar den till 3D. En knapp som är på men
+  // inte visar något vore värre än en som säger varför den är av.
+  $("slopeBtn").disabled = tre;
+  $("slopeBtn").title = tre ? "Green-lutningen visas i 2D-vinkeln" : "";
+}
+
+/* Övertoningen. Scenen ligger ÖVER kartan i dokumentet, så ett byte åt båda
+   hållen är samma sak: `#scen`:s opacitet går 0→1 eller 1→0 medan kartan ligger
+   still under den. Ingen extra bild, ingen skärmdump — bara två lager. */
+function tona(till, ms) {
+  const s = $("scen");
+  s.style.transition = ms ? `opacity ${ms}ms linear` : "none";
+  s.style.opacity = String(till);
+  return sov(ms);
+}
+
+/* Tre vägar in i 3D-vinkeln, och de är olika saker:
+ *   forsta  sidans första uppställning — ingen bild att tona från och ingen
+ *           kartvy att ärva; motorn (eller hålets sparade pose) sätter kameran.
+ *   direkt  ett riktigt byte men utan animering (prefers-reduced-motion). Då
+ *           ska man ändå LANDA i 3D — ett hårt klipp till tilt 0 hade gett en
+ *           platt vy som bara ser trasig ut.
+ *   annars  övertoning + sänkning.
+ */
+async function visaVinkel(opt) {
+  const tre = VY.vinkel === "3d";
+  const mitt = ++byteId;
+  const forsta = !!(opt && opt.forsta);
+  const direkt = forsta || REDUCERAD || !!(opt && opt.direkt);
+  sattChrome(tre);
+
+  if (!tre) return till2d(mitt, direkt);
+
+  // --- 2D → 3D ---
+  await sakerstall3d();
+  if (!H3 || mitt !== byteId) return;
+  H3.sattSynlig(true);
+  // Hålet måste ligga i scenen INNAN posen sätts: `markY` frågar marken om
+  // höjden, och utan mark svarar den 0 — då står målpunkten fel i höjdled och
+  // sömmen glider isär i just det ögonblick den ska vara osynlig.
+  await visaHalI3d({ posefri: !forsta });
+  if (mitt !== byteId) return;
+
+  if (forsta) {
+    $("scen").style.opacity = "1";
+    $("scen").classList.remove("doldvy");
+    $("map").classList.add("doldvy");
+    H3.sattExag(VY.effektivExag());
+    return;
+  }
+
+  const pose = poseFranLeaflet();
+  if (direkt) {
+    // Hårt klipp, men till 3D: samma målpunkt och riktning som kartan visade,
+    // sänkningen bara hoppad över.
+    if (pose) { H3.sattExag(1); H3.sattPosen({ ...pose, tilt: Vybro.TILT_3D }); }
+    $("scen").style.opacity = "1";
+    $("scen").classList.remove("doldvy");
+    $("map").classList.add("doldvy");
+    H3.sattExag(VY.effektivExag());
+    return;
+  }
+  if (pose) { H3.sattExag(1); H3.sattPosen(pose); }
+  // (2) tona över medan BÅDA lagren visar samma bild
+  $("scen").style.opacity = "0";
+  $("scen").classList.remove("doldvy");
+  await tona(1, FADE_MS);
+  if (mitt !== byteId) return;
+  $("map").classList.add("doldvy");
+  // (3) sänkningen
+  H3.flygTill({ tilt: Vybro.TILT_3D }, SANK_MS);
+  await sov(SANK_MS);
+  if (mitt !== byteId) return;
+  // (4) spelarens överdrift tillbaka. Ett steg, inte en rampning: varje
+  // mellanläge kostar en ombyggnad av linje/träd/slag (10 ms, §9.9), och 60 av
+  // dem under sänkningen skulle göra just den rörelsen ryckig. Kameran följer
+  // markens lyft av sig själv (camctl.scaleHeights, anropad av applyExag).
+  H3.sattExag(VY.effektivExag());
+}
+
+async function till2d(mitt, direkt) {
+  if (!H3) { $("map").classList.remove("doldvy"); syncSlope(); return; }
+  if (direkt) {
+    $("scen").classList.add("doldvy");
+    $("scen").style.opacity = "1";
+    H3.sattSynlig(false);
+    $("map").classList.remove("doldvy");
+    syncSlope();
+    map.invalidateSize({ pan: false });
+    frameHole();
+    return;
+  }
+  // (1) res kameran och platta marken — det är vad 2D ÄR
+  H3.sattExag(1);
+  H3.flygTill({ tilt: Vybro.TILT_2D }, SANK_MS);
+  await sov(SANK_MS);
+  if (mitt !== byteId) return;
+  // (2) Leaflets vy ur kameratillståndet, FÖRE övertoningen
+  const k = H3.konv();
+  if (k) {
+    const v = Vybro.view2dFor({ konv: k, state: H3.posen(), heightPx: map.getSize().y,
+                                yRef: H3.yRefPlan() });
+    $("map").classList.remove("doldvy");
+    map.invalidateSize({ pan: false });
+    if (map.setBearing) map.setBearing(v.bearing);
+    map.setView(v.center, v.zoom, { animate: false });
+    syncSlope();
+  } else {
+    $("map").classList.remove("doldvy");
+    map.invalidateSize({ pan: false });
+    syncSlope();
+    frameHole();
+  }
+  // (3) tona ut scenen mot den kartbild som nu står på samma plats
+  await tona(0, FADE_MS);
+  if (mitt !== byteId) return;
+  $("scen").classList.add("doldvy");
+  $("scen").style.opacity = "1";        // nästa inbytning börjar från noll igen
+  H3.sattSynlig(false);
+}
+
+/* 3D-motorn laddas först när någon ber om vinkeln — three.js + GLTFLoader är
+   inte gratis, och 2D ska vara uppe direkt. */
+async function sakerstall3d() {
+  if (H3) return H3;
+  try {
+    H3 = await import("./hal3d.js");
+  } catch (e) {
+    H3 = null;
+    $("status").textContent = "kunde inte starta 3D-vyn (" + e.message + ")";
+    return null;
+  }
+  H3.paTapp(ll => VY.laggPunkt(ll));           // tapp-kontraktet, 3D-sidan
+  H3.paExag(v => VY.sattExag(v));
+  H3.paLage(l => VY.sattLage(l));              // verktygsradens läge → Vylage
+  return H3;
+}
+
+/* `posefri` = bytet äger kameran (U12). Hålets ihågkomna vinkel gäller när man
+   byter HÅL inne i 3D, men inte när man byter VINKEL: då är kontinuiteten med
+   kartbilden hela poängen, och en sparad pose skulle rycka bilden i sömmen. */
+async function visaHalI3d(opt) {
+  const h = halNu();
+  if (!H3 || !h || !finns3d(h)) return;
+  const slug = slugFor(h);
+  if (!(opt && opt.posefri)) H3.sattExag(VY.effektivExag());
+  if (h3dLaddat !== slug) {
+    h3dLaddat = slug;
+    await H3.laddaHal(slug);
+    const p = (opt && opt.posefri) ? null : VY.pose();
+    if (p) H3.sattPosen(p);
+  }
+  H3.sattPlanLegs(VY.legs(), h.green_center);
+}
+
+// -------------------------------------------------------------- hålbytet ---
+/* Kameran hör till hålet man lämnar. Sparas BARA om scenen faktiskt står på det
+   hålet — annars vore det kontrollerns startvärden vi lade undan som "spelarens
+   vinkel på hål 1", och nästa besök skulle återställa en pose ingen valt. */
+function sparaPose() {
+  if (H3 && VY.vinkel === "3d" && h3dLaddat && h3dLaddat === slugFor(halNu()))
+    VY.sattPose(H3.posen());
+}
+
+function goTo(rel) {
+  if (rel < 1 || rel > ROUND.length) return;
+  sparaPose();
+  hi = rel - 1;
+  h3dLaddat = h3dLaddat && slugFor(halNu()) === h3dLaddat ? h3dLaddat : null;
+  VY.sattHal(rel, GLOBALS[hi]);
+}
+
+/* EN ritväg. Allt som ändrar tillståndet går via Vylage, och Vylage ropar hit —
+   ingen knapp ritar sin egen konsekvens. */
+function rita(vad) {
+  const h = halNu();
+  $("v3d").disabled = !finns3d(h);
+  $("v3d").title = finns3d(h) ? "Se hålet i 3D"
+    : "3D saknas för det här hålet (kör tools/hole_gltf.py)";
+  if (!finns3d(h) && VY.vinkel === "3d") { VY.sattVinkel("2d"); return; }
+
+  if (vad === "hal") {
+    layers.clearLayers();
+    MapCore.drawHoleGeometry(layers, h);
+    PlayAs.loadElev3d(h, () => { updateHeader(); drawLegs(); });
+    updateHeader();
+    syncSlope();
+    if (VY.vinkel === "2d") frameHole();
+    loadWind();
+    visaHalI3d();
+  }
+  if (vad === "slope") { syncSlope(); frameHole(); }
+  // Ett VINKELBYTE animeras (U12). En batch är sidans första uppställning —
+  // där finns ingen bild att tona från, så den klipper hårt.
+  if (vad === "vinkel") visaVinkel();
+  if (vad === "batch") visaVinkel({ forsta: true });
+  if (vad === "exag" && H3) H3.sattExag(VY.effektivExag());
+  // Åt andra hållet: ändras läget i Vylage (t.ex. nollställt av ett vinkelbyte)
+  // ska scenen följa. Bara vid FAKTISK skillnad — annars ekar de två.
+  if (H3 && H3.lageNu() !== VY.lage) H3.sattLage(VY.lage);
+  drawLegs();
+}
+
+async function init() {
+  map = MapCore.createMap("map");
+  MapCore.addOrthophoto(map);
+  [layers, slopeLayer, slopeArrowLayer, legLayer].forEach(l => l.addTo(map));
+  SlopeOverlay.load();
+  map.on("zoomend", () => {
+    if (SlopeOverlay.activeHole()
+        && (SlopeOverlay.lastZoom() === null || Math.abs(map.getZoom() - SlopeOverlay.lastZoom()) > 0.15))
+      SlopeOverlay.drawArrows(map, slopeArrowLayer, null);
+  });
+  map.setView([55.618, 13.07], 15);
+  // Tapp-kontraktet, 2D-sidan: samma funktion som 3D-raycasten går igenom.
+  map.on("click", e => VY.laggPunkt([e.latlng.lat, e.latlng.lng]));
+
+  $("prev").onclick = () => goTo(hi);
+  $("next").onclick = () => goTo(hi + 2);
+  $("slopeBtn").onclick = () => VY.sattSlope(!VY.slope);
+  $("undoBtn").onclick = () => VY.angra();
+  $("undo3d").onclick = () => VY.angra();
+  $("v2d").onclick = () => VY.sattVinkel("2d");
+  $("v3d").onclick = () => VY.sattVinkel("3d");
+  VY.pa(vad => rita(vad));
+
+  try {
+    const course = await MapCore.loadCourse();
+    const seq = SGRound.ROUND_SEQ[SGRound.roundName()] || SGRound.ROUND_SEQ["1-18"];
+    ROUND = []; GLOBALS = [];
+    seq.forEach(g => { const h = course.byGlobal[g]; if (h) { ROUND.push(h); GLOBALS.push(g); } });
+  } catch (e) {
+    $("holeName").textContent = "Kunde ej ladda bandata";
+    return;
+  }
+
+  /* Har banan 3D alls? Utan index.<slug>.json finns ingen 3D-vinkel att erbjuda
+     — en knapp som laddar och misslyckas är sämre än ingen knapp (samma regel
+     som avstängda `Slaget` i U4). Uppslaget kräver inte att motorn laddas. */
+  try {
+    const r = await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`);
+    const idx = r.ok ? await r.json() : null;
+    if (idx && (idx.holes || []).length) h3dIndex = idx;
+  } catch (e) { h3dIndex = null; }
+
+  if (params.get("slope") === "1") VY.sattSlope(true);
+  if (params.get("vinkel") === "3d" || params.get("vy") === "3d") VY.sattVinkel("3d");
+  VY.batch(s => { s.sattHal(s.startRel(params.get("hal"), ROUND.length), null); });
+  goTo(VY.rel);
+  visaVinkel({ forsta: true });     // första uppställningen: inget att tona från
+}
+
+addEventListener("resize", () => { if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
+addEventListener("orientationchange", () => { if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
+/* Kameran ska överleva att appen läggs undan — inte bara ett hålbyte. */
+addEventListener("pagehide", sparaPose);
+init();
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone) — samma som övriga sidor. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>

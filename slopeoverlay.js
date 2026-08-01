@@ -227,7 +227,11 @@ const SlopeOverlay = (() => {
 
   return { load, show, drawArrows, hide,
            activeHole: () => slopeHole, lastZoom: () => lastArrowZoom,
-           arrowDist: () => slopeArrowDist, slopeRGB, slopeColor };
+           arrowDist: () => slopeArrowDist, slopeRGB, slopeColor,
+           // Exporterad sedan U12: `vybro.js` räknar kameraavstånd ur samma
+           // web-mercator-formel, och två kopior av den får inte kunna glida
+           // isär oupptäckt (princip 4). test_vybro.mjs jämför dem.
+           metersPerPixel };
 })();
 if (typeof window !== "undefined") window.SlopeOverlay = SlopeOverlay;
 else if (typeof globalThis !== "undefined") globalThis.SlopeOverlay = SlopeOverlay;

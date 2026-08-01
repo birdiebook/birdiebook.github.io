@@ -5,10 +5,18 @@
  * någonsin och sparas permanent i en egen cache (sg-tiles) som ALDRIG rensas
  * vid koduppdateringar. Runda 2+ = ~0 MB för kartan, fungerar offline.
  *
- * Tre cachar:
+ * Fyra cachar:
  *   sg-shell-v<VERSION>  app-shell (HTML, JS, vendor, ikoner). Rensas vid ny VERSION.
  *   sg-data              bandata (burlov.json, tiles/manifest.json). Network-first.
  *   sg-tiles             kartrutor. PERMANENT — överlever alla VERSION-byten.
+ *   sg-holes3d           3D-hålens glb/meta. PERMANENT, av samma skäl som tiles.
+ *
+ * sg-holes3d kom med U11 (UPPGRADERING_3D §5). Hålens glb är ~4 MB styck (72
+ * hål, 291 MB) och föll förut på sista raden i routern → SHELL_CACHE, som töms
+ * vid VARJE VERSION-bump. Så länge 3D var en sällan-vy märktes det inte; när
+ * den blev ett tryck bort i planeringsvyn hade varje publicering kostat 4 MB
+ * per hål om. Filerna är statiska (exporterade av tools/hole_gltf.py) — byts en
+ * export ut, byt cache-namnet, precis som för ortofotot.
  *
  * KILL-SWITCH: om en SW-bugg låser användare, ersätt HELA denna fil med:
  *     self.addEventListener('install', () => self.skipWaiting());
@@ -29,11 +37,12 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-01-reglage";
+const VERSION = "2026-08-01-bytet";
 
-const SHELL_CACHE = "sg-shell-v" + VERSION;
-const DATA_CACHE  = "sg-data";
-const TILES_CACHE = "sg-tiles";
+const SHELL_CACHE  = "sg-shell-v" + VERSION;
+const DATA_CACHE   = "sg-data";
+const TILES_CACHE  = "sg-tiles";
+const HOLES3D_CACHE = "sg-holes3d";
 
 // App-shell: allt som behövs för att sidorna ska rendera offline.
 // (Supabase-js laddas från CDN och faller tyst tillbaka offline — ingår ej.)
@@ -42,6 +51,7 @@ const SHELL_ASSETS = [
   "index.html",
   "karta.html",
   "planera.html",
+  "planvy.html",
   "planera-karta.html",
   "redigera.html",
   "oversikt.html",
@@ -63,6 +73,8 @@ const SHELL_ASSETS = [
   "score.js",
   "markhojd.js",
   "spelprofil.js",
+  "vylage.js",
+  "vybro.js",
   "store.js",
   "live.js",
   "offline-download.js",
@@ -97,7 +109,7 @@ self.addEventListener("activate", (event) => {
     const keys = await caches.keys();
     await Promise.all(keys.map((k) => {
       if (k.startsWith("sg-shell-v") && k !== SHELL_CACHE) return caches.delete(k);
-      return undefined; // sg-data och sg-tiles lämnas orörda
+      return undefined; // sg-data, sg-tiles och sg-holes3d lämnas orörda
     }));
     await self.clients.claim();
   })());
@@ -106,6 +118,8 @@ self.addEventListener("activate", (event) => {
 // ── hjälpare ───────────────────────────────────────────────────────────────
 // tiles/<slug>/{z}/{x}/{y}.webp (V8b — bana-scopad, se tools/build_imagery_tiles.py --mobile)
 const isTile = (url) => /\/tiles\/[^/]+\/\d+\/\d+\/\d+\.webp$/.test(url.pathname);
+// data/holes3d/** — hålens glb + meta-json. Statiska per export (U11).
+const isHole3d = (url) => /\/data\/holes3d\//.test(url.pathname);
 // Bandata för VALFRI bana (t.ex. data/burlov.json, data/ven.json) — network-first
 // så senaste versionen alltid vinner online, med cache-fallback offline. Ingen
 // bana hårdkodad här: mönstret matchar "<slug/mobile_json>.json" generellt.
@@ -158,6 +172,13 @@ self.addEventListener("fetch", (event) => {
   // Kartrutor: cache-first, permanent i sg-tiles (ALDRIG rensad).
   if (isTile(url)) {
     event.respondWith(cacheFirst(req, TILES_CACHE));
+    return;
+  }
+
+  // 3D-hål: cache-first, permanent i sg-holes3d (överlever VERSION-bump).
+  // Före bandata-regeln, så en meta-json under holes3d/ inte hamnar i sg-data.
+  if (isHole3d(url)) {
+    event.respondWith(cacheFirst(req, HOLES3D_CACHE));
     return;
   }
 

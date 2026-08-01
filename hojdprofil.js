@@ -117,6 +117,28 @@ export function latLonToXz(ll2xz, lat, lon) {
 }
 
 /**
+ * GRIDNORR: vinkeln (radianer) mellan scenens "norr" (−z) och SANT norr.
+ *
+ * `ll2xz` byggs ur SWEREF-koordinater, och SWEREF:s gridnorr avviker från sant
+ * norr med meridiankonvergensen — ~1,6° på Burlöv. Allt som blandar de två
+ * ramarna måste korrigera för det:
+ *   · vindens bäring (hal3d.js:s `slagVind` löser det genom att räkna bäringen
+ *     ur lat/lon i stället för ur de lokala koordinaterna);
+ *   · U12:s brygga, där Leaflets `bearing` är mot sant norr medan kamerans
+ *     `heading` ligger i scenens ram. UTAN den här termen ÄR sömmen mellan 2D
+ *     och 3D en vridning på precis meridiankonvergensen — uppmätt 1,63–1,68°
+ *     innan den infördes, mot affinens egna 1,599°.
+ *
+ * Talet härleds ur affinen SJÄLV: en nordlig enhetsförflyttning (dlat = 1)
+ * hamnar i (x, z) = (b, d), och en riktnings heading i scenen är atan2(x, −z).
+ * Ingen bana och inget gradtal är hårdkodat — byter banan zon följer talet med.
+ */
+export function gridNorthOffset(ll2xz) {
+  const [, , , b, , d] = ll2xz;
+  return Math.atan2(b, -d);
+}
+
+/**
  * Nettohöjd tee→green att visa i panelen: vald tees dh om metan har den
  * tee:n (localStorage "sg_tee", samma konvention som playas.js:dh3dToGreen),
  * annars hålets delta_h. Båda fälten läses OFÖRÄNDRADE ur samma holes3d-JSON

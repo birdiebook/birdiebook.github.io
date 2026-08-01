@@ -22,7 +22,13 @@ const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;
 
 export const LIMITS = {
-  tiltMin: 5 * DEG,        // aldrig rakt ovanifrån
+  // U12: MODELLEN måste kunna stå rakt ovanifrån — det är vad 2D-vinkeln ÄR
+  // (tilt = 0), och den är poserad, inte dragen. Samma uppdelning som taket
+  // nedan: modellen tillåter mer än gesten. Golvet för en GEST ligger kvar på
+  // 5° (tiltMinGesture) — utan det kan man dra sig till rakt ovanifrån, där
+  // panoreringens riktning blir odefinierad.
+  tiltMin: 0,
+  tiltMinGesture: 5 * DEG,  // aldrig rakt ovanifrån med fingret
   // Över 90° betyder att MÅLET ligger ovanför ögat — man står i en sänka och
   // tittar upp. Det är inte ett feltillstånd utan ett uppförshål, och det är
   // vanligt: Burlöv blue 1 kräver 90,28° för en tee-vy i ögonhöjd, eftersom
@@ -51,7 +57,7 @@ const TILT_PER_PX = 0.30 * DEG;
 export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 export const clampTilt = t => clamp(t, LIMITS.tiltMin, LIMITS.tiltMax);
 /** Klampning för TILT som användaren drar fram — se LIMITS.tiltMaxGesture. */
-export const clampTiltGesture = t => clamp(t, LIMITS.tiltMin, LIMITS.tiltMaxGesture);
+export const clampTiltGesture = t => clamp(t, LIMITS.tiltMinGesture, LIMITS.tiltMaxGesture);
 export const clampRange = r => clamp(r, LIMITS.rangeMin, LIMITS.rangeMax);
 
 /** Heading normaliserad till [0, 2π). Wrappar över varvet i båda riktningarna.
@@ -94,10 +100,43 @@ export function poseFromState(s) {
   };
 }
 
+/* Under den här tilten räknas kameran som NADIR (rakt ovanifrån) och rollen
+   måste komma ur heading. Se `screenUp` — de två uttrycken ger samma skärm-höger
+   för varje tilt i (0°, 90°), så gränsen kan ligga var som helst där emellan
+   utan att bilden hoppar. 20° är valt för att ligga långt från båda ändarna. */
+const NADIR_TILT = 20 * DEG;
+
+/**
+ * Vad som ska peka UPPÅT på skärmen, uttryckt i världen.
+ *
+ * U12: 2D-vinkeln är `tilt = 0`, och där är den vanliga konstruktionen
+ * degenererad — `cross(forward, (0,1,0))` blir nollvektorn när blicken är lodrät,
+ * så både `basis()` och three.js:s `lookAt` tappar rollen. (Uppmätt symptom:
+ * varje världspunkt projicerades till bildens mitt.)
+ *
+ * Gränsvärdet är dock känt och exakt. Ur `poseFromState` är skärm-höger
+ * `(cos heading, 0, sin heading)` för VARJE tilt > 0 — oberoende av tilten. Den
+ * up-vektor som ger samma höger vid nadir är `(sin heading, 0, −cos heading)`,
+ * och den ger identisk roll ända upp till horisonten (där den i sin tur blir
+ * degenererad — därför byter vi vid NADIR_TILT).
+ */
+export function screenUp(state) {
+  return state.tilt < NADIR_TILT
+    ? { x: Math.sin(state.heading), y: 0, z: -Math.cos(state.heading) }
+    : { x: 0, y: 1, z: 0 };
+}
+
 /** Kamerans ortonormala bas: forward (mot target), right, up. */
-function basis(eye, target) {
+function basis(eye, target, heading) {
   const f = norm(sub(target, eye));
-  const r = norm(cross(f, { x: 0, y: 1, z: 0 }));
+  let r = cross(f, { x: 0, y: 1, z: 0 });
+  if (Math.hypot(r.x, r.y, r.z) < 1e-9) {
+    // Lodrät blick: krysset kollapsar. Använd gränsvärdet (se screenUp) i
+    // stället för att ge upp — annars går 2D-vinkeln inte att mäta i.
+    const h = heading || 0;
+    r = { x: Math.cos(h), y: 0, z: Math.sin(h) };
+  }
+  r = norm(r);
   const u = cross(r, f);
   return { f, r, u };
 }
@@ -106,8 +145,8 @@ function basis(eye, target) {
  * Var en skärmpunkt träffar ett vågrätt plan. ndc = {x, y} i [-1, 1] med y uppåt.
  * Returnerar null när strålen pekar bort från planet (t.ex. mot himlen).
  */
-export function rayGroundHit(eye, target, ndc, fovDeg, aspect, planeY) {
-  const { f, r, u } = basis(eye, target);
+export function rayGroundHit(eye, target, ndc, fovDeg, aspect, planeY, heading) {
+  const { f, r, u } = basis(eye, target, heading);
   const tanHalf = Math.tan(fovDeg * DEG / 2);
   const sx = ndc.x * tanHalf * aspect;
   const sy = ndc.y * tanHalf;
@@ -131,8 +170,8 @@ export function rayGroundHit(eye, target, ndc, fovDeg, aspect, planeY) {
  */
 export function panTargetDelta(state, ndcFrom, ndcTo, fovDeg, aspect) {
   const eye = poseFromState(state);
-  const a = rayGroundHit(eye, state.target, ndcFrom, fovDeg, aspect, state.target.y);
-  const b = rayGroundHit(eye, state.target, ndcTo, fovDeg, aspect, state.target.y);
+  const a = rayGroundHit(eye, state.target, ndcFrom, fovDeg, aspect, state.target.y, state.heading);
+  const b = rayGroundHit(eye, state.target, ndcTo, fovDeg, aspect, state.target.y, state.heading);
   if (!a || !b) return null;
   return { x: a.x - b.x, z: a.z - b.z };
 }
@@ -144,7 +183,7 @@ export function panTargetDelta(state, ndcFrom, ndcTo, fovDeg, aspect) {
  */
 export function screenOf(state, world, fovDeg, aspect, width, height) {
   const eye = poseFromState(state);
-  const { f, r, u } = basis(eye, state.target);
+  const { f, r, u } = basis(eye, state.target, state.heading);
   const d = sub(world, eye);
   const zc = dot(d, f);
   if (zc <= 1e-6) return null;
@@ -248,6 +287,10 @@ export class CameraController {
   apply() {
     const eye = poseFromState(this.state);
     this.camera.position.set(eye.x, eye.y, eye.z);
+    // Rollen måste vara definierad även rakt ovanifrån (U12:s 2D-vinkel) — se
+    // screenUp. Sätts FÖRE lookAt, som läser den.
+    const up = screenUp(this.state);
+    this.camera.up?.set?.(up.x, up.y, up.z);
     const t = this.state.target;
     this.camera.lookAt(t.x, t.y, t.z);
   }

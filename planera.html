@@ -75,21 +75,16 @@
     <select class="field" id="hole"></select>
   </div>
 
+  <!-- U11: EN ingång. Förut stod här tre (3D-genomgång, Planera slag,
+       Green-lutning) — tre sidor med tre egna tillstånd, där man kunde stå på
+       olika hål i två av dem samtidigt. Funktionerna finns kvar allihop, men
+       inne i vyn: 2D och 3D är två kameravinklar på samma hål, och lutningen
+       är en toggle. Det som togs bort är VALET, inte det man kunde göra. -->
   <div class="tools" id="tools">
-    <a class="tool" id="t3d" href="#">
-      <span class="ic">🛰</span>
-      <span class="tx"><span class="tt">3D-genomgång</span>
-        <span class="td">Flyg över hålet i 3D</span></span>
-      <span class="arr">›</span></a>
-    <a class="tool" id="tslag" href="#">
-      <span class="ic">🗺</span>
-      <span class="tx"><span class="tt">Planera slag</span>
-        <span class="td">Lägg upp slagen tee → green i 2D</span></span>
-      <span class="arr">›</span></a>
-    <a class="tool" id="tslope" href="#">
+    <a class="tool" id="topna" href="#">
       <span class="ic">⛳</span>
-      <span class="tx"><span class="tt">Green-lutning</span>
-        <span class="td">Se var på greenen du vill hamna</span></span>
+      <span class="tx"><span class="tt">Öppna hålet</span>
+        <span class="td">2D och 3D, slagkedja och green-lutning i samma vy</span></span>
       <span class="arr">›</span></a>
   </div>
 
@@ -107,7 +102,6 @@
 // Ingen GPS, ingen live, rör aldrig rundan (Store). Hålvalet minns i
 // sg_plan_hole; rundvalet delar sg_round med resten av appen.
 const $ = id => document.getElementById(id);
-const slugOf = h => `${h.loop.replace(" Course", "").toLowerCase()}_${h.hole}`;
 
 let byGlobal = {};
 
@@ -116,15 +110,12 @@ function currentRel() {
   return v >= 1 && v <= SGRound.HOLES ? v : 1;
 }
 
-// Sätt verktygens href efter valt hål. 3D → hal3d (slug), 2D → planera-karta (rel).
+// Ingångens href efter valt hål. Vyn minns själv vinkel och slope-läge sedan
+// U11 — hubben skickar därför bara med hålet, inget vy-tillstånd.
 function syncLinks() {
   const rel = currentRel();
   try { localStorage.setItem("sg_plan_hole", String(rel)); } catch (e) {}
-  const g = SGRound.relToGlobal(rel);
-  const h = g != null ? byGlobal[g] : null;
-  $("t3d").href = h ? `hal3d.html?hal=${slugOf(h)}&from=plan` : "hal3d.html?from=plan";
-  $("tslag").href = `planera-karta.html?hal=${rel}`;
-  $("tslope").href = `planera-karta.html?hal=${rel}&slope=1`;
+  $("topna").href = `planvy.html?hal=${rel}`;
 }
 
 // Fyll hål-väljaren för vald runda (spelarens 1–18 med loop/lokalnummer + par).
