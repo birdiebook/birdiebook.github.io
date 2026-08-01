@@ -29,6 +29,7 @@
 <script src="./playas.js"></script>
 <script src="./vind3d.js"></script>
 <script src="./slagjust.js"></script>
+<script src="./laggmat.js"></script>
 <script src="./slopeoverlay.js"></script>
 <script src="./vylage.js"></script>
 <script src="./vybro.js"></script>   <!-- U12: bron Leaflet ↔ camctl -->
@@ -98,6 +99,13 @@
   /* U19: samma val som i 3D, markerat på samma sätt som scenen markerar bågen. */
   #legs .leg { border-radius:6px; padding:2px 4px; margin:0 -4px; cursor:pointer; }
   #legs .leg.vald { background:var(--accent-ui-tval); }
+  /* U8: avståndschip på segmentet. Mörk kontur runt texten så den läses mot
+     ljus sand i solljus — samma regel som numren och som 3D-chipet. */
+  .segchip { position:absolute; transform:translate(-50%,-50%);
+    background:var(--framebg); color:var(--ink); border:1px solid var(--overlay-kontur);
+    border-radius:9px; padding:2px 7px; font:700 11px/1.4 inherit; white-space:nowrap;
+    text-shadow:0 0 2px var(--overlay-kontur), 0 0 2px var(--overlay-kontur); }
+  #legs .klubba { font-style:normal; color:var(--accent-ui-ljus); font-weight:600; }
   #legs .leg i { font-style:normal; color:var(--dim-svag); font-weight:400; }
   #legs .legX { background:transparent; border:1px solid var(--line); color:var(--dim);
     font-size:11px; line-height:1; width:18px; height:18px; border-radius:50%; padding:0; }
@@ -207,6 +215,31 @@
   #slagtal b { color:var(--ink); font-weight:600; }
   #slagpanel .rubrad { font:700 9px/1 inherit; letter-spacing:.08em; margin-top:8px;
     text-transform:uppercase; color:var(--dim-svag); }
+  /* GP2: valen. Träffytan är 34 px hög + 8 px luft = 42 px effektivt mål,
+     samma storleksordning som guidens 44 px — panelen ska gå att träffa med
+     en tumme medan man står på tee, inte bara med en muspekare. */
+  #slagpanel .valgrupp { display:grid; grid-template-columns:56px 1fr;
+    align-items:center; gap:8px; margin:6px 0; }
+  #slagpanel .valrub { font-size:11px; color:var(--ink-svag); }
+  #slagpanel .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  /* Klubbraden ryms inte på 375 px och FÅR inte radbrytas till fyra rader —
+     panelen är redan 62vh. Den rullar i sidled i stället, med valet
+     framscrollat (se `ritaKlubbval`). */
+  #slagpanel .chips.rullar { flex-wrap:nowrap; overflow-x:auto;
+    scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  #slagpanel .chips.rullar::-webkit-scrollbar { display:none; }
+  #slagpanel .chips button { flex:0 0 auto; min-height:34px; padding:6px 10px;
+    border-radius:9px; border:1px solid var(--panelkant); background:none;
+    color:var(--ink); font:inherit; font-size:12px; cursor:pointer; }
+  #slagpanel .chips button[aria-pressed="true"] {
+    border-color:var(--accent-ui-kant); color:var(--accent-ui-ljus);
+    font-weight:600; }
+  #slagpanel #klubbtal { font-size:12px; color:var(--ink); margin:2px 0 6px; }
+  #slagpanel #klubbtal .varn { color:var(--varning); }
+  #slagpanel .helbred { width:100%; margin-top:8px; background:none;
+    border:1px solid var(--panelkant); border-radius:9px; padding:8px;
+    color:var(--ink); font:inherit; font-size:12px; cursor:pointer; }
+  #slagpanel .helbred:disabled { opacity:.4; cursor:default; }
   #slagpanel .knappar { display:flex; gap:8px; margin-top:8px; }
   #slagpanel .knappar button { background:none; border:1px solid var(--panelkant);
     color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
@@ -317,6 +350,21 @@
   <div id="slagrubrik"><b id="slagnr">Slaget</b><span id="slagandrad" hidden>ändrad</span>
     <button id="slagstang" type="button" aria-label="stäng">×</button></div>
   <div id="slagtal"></div>
+  <!-- GP2: frågan är "vad slår du här?", inte "hur bred är din spridning?".
+       Talen som följer visas ovanför valen, så panelen aldrig är en svart
+       låda, och allt besvaras med knappar — samma krav som GP1:s guide ställde
+       på profilen: inga sifferfält ute på banan. -->
+  <div class="rubrad">Vad slår du här?</div>
+  <div id="klubbtal"></div>
+  <div class="valgrupp"><span class="valrub">klubba</span>
+    <div id="valKlubba" class="chips rullar" role="group" aria-label="Klubba"></div></div>
+  <div class="valgrupp"><span class="valrub">form</span>
+    <div id="valForm" class="chips" role="group" aria-label="Form"></div></div>
+  <div class="valgrupp"><span class="valrub">ansats</span>
+    <div id="valAnsats" class="chips" role="group" aria-label="Ansats"></div></div>
+  <div class="valgrupp"><span class="valrub">höjd</span>
+    <div id="valHojd" class="chips" role="group" aria-label="Höjd"></div></div>
+  <button id="sProfil" type="button" class="helbred">Återställ till min profil</button>
   <div class="reg"><label for="sApex">apex</label>
     <input id="sApex" type="range" min="0.4" max="2" step="0.05" value="1">
     <span class="varde" id="sApexV">×1,00</span></div>
@@ -381,7 +429,8 @@ const params = new URLSearchParams(location.search);
 
 const VY = Vylage.skapa();                 // ENDA ägaren av vy-tillståndet
 let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
-    slopeArrowLayer = L.layerGroup(), legLayer = L.layerGroup();
+    slopeArrowLayer = L.layerGroup(), legLayer = L.layerGroup(),
+    chipLayer = L.layerGroup();      // U8: avståndschip per segment
 let ROUND = [], GLOBALS = [], hi = 0, WIND = null;
 let H3 = null;              // 3D-motorn, importeras först när 3D efterfrågas
 let h3dIndex = null;        // data/holes3d/index.<slug>.json, eller null
@@ -521,7 +570,8 @@ function drawLegs() {
   // U19: 3D-motorn får hela planen — tee, kedjan och green — och räknar EN
   // gång. Talen nedan hämtas sedan ur just den beräkningen (`ritaLista`).
   if (H3) H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h && h.line && h.line[0]),
-                            legs, green: h && h.green_center });
+                            legs, green: h && h.green_center,
+                            slagval: VY.allaSlagval() });
 
   legLayer.clearLayers();
   const box = $("legs");
@@ -550,6 +600,31 @@ function drawLegs() {
   ritaLista();
 }
 
+/* U8: hinderytorna på kartan — halvgenomskinlig fyllning MED KONTUR, samma
+   regel och samma tokens som i 3D. Konturen är det som gör att ytan läses som
+   ett lager och inte som en färgfläck i ortofotot.
+   Färgen slås upp med `TOK` och skrivs inte av: Leaflets `color`/`fillColor`
+   är attributsträngar och tar inte `var(--x)` — en färg satt så blir tyst
+   svart (§U3-fällan). */
+const HINDER_TOKEN = { water: "--vatten", bunker: "--fara" };
+
+function ritaHinder(h) {
+  for (const hz of ((h && h.hazards) || [])) {
+    if (!hz || !Array.isArray(hz.poly) || hz.poly.length < 3) continue;
+    const f = TOK(HINDER_TOKEN[hz.type] || "--fara");
+    L.polygon(hz.poly, { color: f, weight: 2, opacity: .95,
+                         fillColor: f, fillOpacity: .28 }).addTo(layers);
+  }
+}
+
+/* Chipet är en DivIcon och inte en Leaflet-tooltip: en tooltip ligger i sin
+   egen pane ovanför allt och följer inte kartans rotation, så den hade lossnat
+   från sitt segment så fort hålet vreds uppåt. */
+function chipIcon(text) {
+  return L.divIcon({ className: "", iconSize: null,
+    html: `<span class="segchip">${text}</span>` });
+}
+
 /* 2D-listan. Talen kommer ur `H3.kedjanNu()` — SAMMA rader som ritade bågarna
    i 3D-scenen (§5 U19). Det är därför en U17-justering av ett slags vind eller
    apex ändrar den här listan också: det finns bara ett svar, och båda vinklarna
@@ -561,16 +636,17 @@ function drawLegs() {
    modul och samma modeller som motorn använder — det är inte en andra modell,
    bara en andra anropsplats. Höjden kommer ur `PlayAs.elev3dAt` (hålets meta)
    i stället för ur scenens markindex; samma DEM, samma meter. */
-function kedjaFor(h, legs) {
+function kedjaFor(h, legs, slagval) {
   if (!h || !h.green_center) return [];
   const m = PlayAs.meta(h);
   return Planslag.kedja(
     { tee: MapCore.teePoint(h) || (h.line && h.line[0]), legs,
-      green: h.green_center, vind: WIND, just: {} },
+      green: h.green_center, vind: WIND, just: {}, slagval: slagval || {} },
     { hav, bearing: MapCore.bearing, relWind: PlayAs.relWind,
       windAlongShift: PlayAs.windAlongShift, slopeEffect: PlayAs.slopeEffect,
       hojd: (lat, lon) => (m ? PlayAs.elev3dAt(m, lat, lon) : null),
       spridning: dist => Spelprofil.spridning(Store.profile(), dist),
+      klubbslag: (dist, val) => Spelprofil.slagFor(Store.profile(), dist, val),
       effektiv: SlagJust.effektiv, bollbana: Bollbana, vind3d: Vind3D });
 }
 
@@ -579,13 +655,26 @@ function kedjan() {
   // en bana utan 3D) räknar vi här i stället — annars stod listan tom i någon
   // sekund vid varje hålbyte, vilket ser ut som "ingen plan" och inte som
   // "laddar". Samma modul, samma modeller: talen är desamma.
-  return h3Klar() ? H3.kedjanNu() : kedjaFor(halNu(), VY.legs());
+  return h3Klar() ? H3.kedjanNu() : kedjaFor(halNu(), VY.legs(), VY.allaSlagval());
 }
 
 function ritaLista() {
   const h = halNu();
   const box = $("legs");
   const rader = kedjan();
+  /* U8: avståndschipen ritas HÄR och inte i `drawLegs`, och det är inte
+     kosmetik. I 3D äger motorn kedjan och bygger om den på nästa bildruta —
+     `drawLegs` läser alltså den FÖRRA kedjan, och ett chip ritat där hade
+     visat föregående plans sträcka tills något annat råkade rita om det.
+     `ritaLista` är den funktion `paKedja` kallar när raderna faktiskt är nya,
+     alltså enda stället där talet är sant. Uppmätt: ett chip i drawLegs stod
+     kvar på 351 m (tee→green) efter att planen fått sin första landningspunkt. */
+  chipLayer.clearLayers();
+  rader.forEach(r => {
+    const mitt = [(r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2];
+    L.marker(mitt, { icon: chipIcon(`${r.spelarSom} m`), interactive: false })
+      .addTo(chipLayer);
+  });
   if (!h || !rader.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
   const valt = H3 ? H3.valtNu() : null;
   let rows = "";
@@ -598,6 +687,10 @@ function ritaLista() {
     rows += `<div class="leg${valt === r.idx ? " vald" : ""}" data-slag="${r.idx}">`
       + `<b>${namn}: ${r.spelarSom} m${geo !== r.spelarSom ? ` <i>(${geo})</i>` : ""}`
       + `${r.andrad ? " ✎" : ""}</b><span>`
+      // GP2: klubban står i listan när spelaren VALT en. Ett förslag skrivs inte
+      // ut här — listan ska visa spelarens beslut, inte modellens gissning, och
+      // en klubba per rad som ingen valt hade sett ut som en plan.
+      + (r.val && r.klubba ? `<em class="klubba">${r.klubba.label}</em> ` : "")
       + (r.tillGreen ? "" : `${kvar} m kvar `)
       + (r.tillGreen ? "" : `<button class="legX" data-i="${r.idx}" aria-label="ta bort slag ${r.nr}">✕</button>`)
       + `</span></div>`;
@@ -809,6 +902,14 @@ async function sakerstall3d() {
     return null;
   }
   H3.paTapp(ll => VY.laggPunkt(ll));           // tapp-kontraktet, 3D-sidan
+  // GP2: samma riktning för klubbvalet — motorn frågar, planen skriver.
+  // Motorn skickar slagets HELA val (eller null), inte en patch: ett fält som
+  // togs bort där måste försvinna här också, och en ren sammanslagning hade
+  // låtit det ligga kvar.
+  H3.paSlagval((i, val) => {
+    VY.aterstallSlagval(i);
+    if (val) VY.sattSlagval(i, val);
+  });
   H3.paExag(v => VY.sattExag(v));
   H3.paLage(l => VY.sattLage(l));              // verktygsradens läge → Vylage
   // U19: räknar motorn om kedjan (vind hämtad, reglage draget) skriver
@@ -838,10 +939,15 @@ async function visaHalI3d(opt) {
     const p = (opt && opt.posefri) ? null : VY.pose();
     if (p) H3.sattPosen(p);
   }
+  // U8: hindren skickas HÄR och inte i `rita`, för `clearHole` nollar dem vid
+  // varje hålbyte och motorn kan ha laddat hålet först efteråt. Det här är den
+  // enda punkten där både scenen och hålvalet säkert är på plats.
+  H3.sattHinder(h.hazards || []);
   // Hela planen, inte bara punkterna: motorn räknar kedjan och behöver tee och
   // green för att veta var slag 1 börjar och var sista slaget tar vägen (U19).
   H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h.line && h.line[0]),
-                    legs: VY.legs(), green: h.green_center });
+                    legs: VY.legs(), green: h.green_center,
+                    slagval: VY.allaSlagval() });
 }
 
 // -------------------------------------------------------------- hålbytet ---
@@ -873,6 +979,7 @@ function rita(vad) {
   if (vad === "hal") {
     layers.clearLayers();
     MapCore.drawHoleGeometry(layers, h);
+    ritaHinder(h);      // 2D-lagret; 3D-sidan får dem i visaHalI3d
     PlayAs.loadElev3d(h, () => { updateHeader(); drawLegs(); });
     updateHeader();
     syncSlope();
@@ -897,7 +1004,7 @@ function rita(vad) {
 async function init() {
   map = MapCore.createMap("map");
   MapCore.addOrthophoto(map);
-  [layers, slopeLayer, slopeArrowLayer, legLayer].forEach(l => l.addTo(map));
+  [layers, slopeLayer, slopeArrowLayer, legLayer, chipLayer].forEach(l => l.addTo(map));
   SlopeOverlay.load();
   map.on("zoomend", () => {
     if (SlopeOverlay.activeHole()
@@ -975,6 +1082,16 @@ addEventListener("resize", () => { mattToppremsa(); if (map) { map.invalidateSiz
 addEventListener("orientationchange", () => { mattToppremsa(); if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
 /* Kameran ska överleva att appen läggs undan — inte bara ett hålbyte. */
 addEventListener("pagehide", sparaPose);
+
+/* U2 (§2.4): eftersläpningsmätningen exponeras under ?dbg=1 och bara då.
+   `__lagg()` kör ett helt svep (panorering, zoom, rotation) och svarar med
+   max-avvikelsen i px per sort. Den lämnar kartan där den fann den. */
+if (new URLSearchParams(location.search).get("dbg") === "1") {
+  window.__lagg = () => {
+    const r = Laggmat.svep(map);
+    return { ...r, godkant: Laggmat.godkant(r), krav: Laggmat.KRAV };
+  };
+}
 init();
 </script>
 <script>

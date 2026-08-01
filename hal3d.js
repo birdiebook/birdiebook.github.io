@@ -601,7 +601,8 @@ function clearHole() {
   rensaSlope(); slopeHal = null;          // U13: lutningen hör till hålet
   // U11: planens kedja hör till hålet. Värdsidan sätter den nya direkt efter
   // laddningen; tills dess ska ingen gammal kedja stå kvar på ny mark.
-  planTee = null; planLegs = []; planGreen = null;
+  planTee = null; planLegs = []; planGreen = null; planSlagval = {};
+  rensaHinder(); hinderData = [];
   // U17: justeringarna hör till slagen på DET hålet. Nytt hål = tomt bord —
   // en apex-faktor från hål 5 får inte följa med till hål 6.
   slagJust = SlagJust.tom(); valtSlag = null; slagTal = [];
@@ -859,7 +860,7 @@ function byggMarkindex() {
  * läser slagens tal.
  *
  * Namnet är nyckeln: två `buildShots` under samma ruta blir ETT bygge. */
-const OMBYGG_ORDNING = ['trad', 'linje', 'slope', 'slag', 'sikte'];
+const OMBYGG_ORDNING = ['trad', 'hinder', 'linje', 'slope', 'slag', 'sikte'];
 const _ombyggKo = new Map();
 let _ombyggRaf = 0;
 function schemalagg(namn, fn) {
@@ -935,6 +936,7 @@ const PLAN_FARG = 0x37b06b;        // samma gröna som 2D-kartans plan-pins
 const PLAN_FARG_HEX = '#37b06b';
 let shotObjs = [], shotVisa = true;
 let planTee = null, planLegs = [], planGreen = null;   // lat/lon, satt av värdsidan
+let planSlagval = {};                                  // GP2: klubbval per slag, ur Vylage
 let KEDJA = [];                    // Planslag-raderna som just ritades
 
 function nummerSprite(n, hex) {
@@ -942,7 +944,10 @@ function nummerSprite(n, hex) {
   c.width = c.height = 64;
   const g = c.getContext('2d');
   g.fillStyle = hex; g.beginPath(); g.arc(32, 32, 26, 0, Math.PI * 2); g.fill();
-  g.lineWidth = 5; g.strokeStyle = '#fff'; g.stroke();
+  // U8: konturen är MÖRK, inte vit. En vit ring runt en ljus bricka försvinner
+  // mot sand och mot solblekt fairway — och det är precis där siffran behöver
+  // läsas. Färgen är `--overlay-kontur`, samma som resten av lagret.
+  g.lineWidth = 4; g.strokeStyle = OKONTUR(); g.stroke();
   g.fillStyle = '#0c2e22'; g.font = '700 34px -apple-system,Segoe UI,Roboto,sans-serif';
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(String(n), 32, 34);
@@ -950,6 +955,56 @@ function nummerSprite(n, hex) {
     map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
   s.scale.set(7, 7, 1);
   return s;
+}
+
+/* U8: overlay-lagrets konturfärg. Läses ur `tokens.css` via MapCore.token —
+   en canvas-kontext tar inte `var(--x)` (samma fälla som Leaflets options,
+   §U3), så tokenen måste slås upp och inte skrivas av. */
+const OKONTUR = () => (typeof TOK === 'function' && TOK('--overlay-kontur')) || '#000';
+
+/* U8: ett avståndschip PÅ segmentet — inte i en lista vid sidan.
+   Mörk kontur runt både bricka och text, för samma skäl som numren ovan: chipet
+   ska gå att läsa mot ljus sand i solljus. */
+function chipSprite(text) {
+  const pad = 10, h = 40;
+  const matt = document.createElement('canvas').getContext('2d');
+  matt.font = '700 26px -apple-system,Segoe UI,Roboto,sans-serif';
+  const b = Math.ceil(matt.measureText(text).width) + pad * 2;
+  const c = document.createElement('canvas');
+  c.width = b; c.height = h + 8;
+  const g = c.getContext('2d');
+  const r = 9, y0 = 4, hh = h;
+  g.beginPath();
+  g.moveTo(r, y0); g.arcTo(b, y0, b, y0 + hh, r); g.arcTo(b, y0 + hh, 0, y0 + hh, r);
+  g.arcTo(0, y0 + hh, 0, y0, r); g.arcTo(0, y0, b, y0, r); g.closePath();
+  g.fillStyle = 'rgba(22,34,30,.78)'; g.fill();
+  g.lineWidth = 3; g.strokeStyle = OKONTUR(); g.stroke();
+  g.font = '700 26px -apple-system,Segoe UI,Roboto,sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 4; g.strokeStyle = OKONTUR();
+  g.strokeText(text, b / 2, y0 + hh / 2 + 1);
+  g.fillStyle = '#edf3f0';
+  g.fillText(text, b / 2, y0 + hh / 2 + 1);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  // Skalan hålls i METER så chipet krymper med avståndet precis som marken —
+  // ett chip i konstant skärmstorlek hade lossnat från segmentet det hör till.
+  s.scale.set(b / 40 * 8, (h + 8) / 40 * 8, 1);
+  return s;
+}
+
+/* U8: kryssmarkör i en nod. Siktlinjens noder var kulor, och en kula på marken
+   säger "här ligger något" — ett kryss säger "HÄR", vilket är vad en siktepunkt
+   betyder. Ritas platt på marken så den läses som en markering och inte som ett
+   föremål. */
+function kryssMarkor(x, z, farg, r) {
+  const y = surfaceYAt(x, z, 0) + LINE_OFFSET;
+  const g = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(x - r, y, z), new THREE.Vector3(x + r, y, z),
+    new THREE.Vector3(x, y, z - r), new THREE.Vector3(x, y, z + r),
+  ]);
+  return new THREE.LineSegments(g,
+    new THREE.LineBasicMaterial({ color: farg, depthTest: false }));
 }
 
 // Slagen ligger i lat/lon (Store) och måste in i hålets lokala ram: samma
@@ -1051,6 +1106,80 @@ function ritaEllips(a, b, aCross, aAlong, farg, opacity, namn) {
   return ring;
 }
 
+/* ------------------------------------------- U8: hinderlagret --------------
+ *
+ * "Allt som behövs för att läsa hålet ligger på banan, inte i en sidopanel."
+ * Hindren ritas som halvgenomskinlig fyllning MED KONTUR — konturen är det som
+ * gör att ytan läses som ett lager och inte som en färgfläck i ortofotot, och
+ * utan den försvinner en dammig bunker helt i det gråtonade fotot (§ORTOFOTO_FARG).
+ *
+ * DATAN KOMMER UR BANDATAN, INTE UR 3D-METAN. `holes3d/<hål>.json` bär ingen
+ * hinderpolygon — men `data/burlov.json` gör det (`hazards: [{type, poly}]`,
+ * lat/lon), och den laddar appen redan för 2D-kartan. Att i stället exportera
+ * hindren en gång till i 3D-bunten hade gjort samma polygon till två filer som
+ * kan glida isär, och krävt en pipeline-körning per bana för något som redan
+ * finns. Värdsidan skickar in dem, som den skickar planen.
+ */
+let hinderObjs = [], hinderData = [];
+
+const HINDER_FARG = { water: '--vatten', bunker: '--fara' };
+
+function rensaHinder() {
+  hinderObjs.forEach(o => {
+    scene.remove(o); o.geometry?.dispose?.(); o.material?.dispose?.();
+  });
+  hinderObjs = [];
+}
+
+function buildHinder() {
+  rensaHinder();
+  if (!meta || !meta.ll2xz || !hinderData.length) return;
+  for (const [i, hz] of hinderData.entries()) {
+    const poly = (hz && hz.poly) || [];
+    if (poly.length < 3) continue;              // en yta behöver tre hörn
+    const xz = poly.map(ll => planPunkt(ll));
+    const tok = HINDER_FARG[hz.type] || '--fara';
+    const farg = new THREE.Color(
+      (typeof TOK === 'function' && TOK(tok)) || '#ff5a4d');
+
+    // Fyllningen: triangulerad i markplanet och sedan LYFT PER HÖRN till
+    // terrängen. En plan yta hade skurit genom en sluttning och sett ut som en
+    // glasskiva, vilket är exakt fel intryck för något som ligger PÅ marken.
+    const shape = new THREE.Shape(xz.map(p => new THREE.Vector2(p.x, p.z)));
+    const geo = new THREE.ShapeGeometry(shape);
+    const pos = geo.attributes.position;
+    for (let v = 0; v < pos.count; v++) {
+      const x = pos.getX(v), z = pos.getY(v);
+      pos.setXYZ(v, x, surfaceYAt(x, z, 0) + LINE_OFFSET * 0.5, z);
+    }
+    geo.computeVertexNormals();
+    const yta = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: farg, transparent: true, opacity: 0.28,
+      side: THREE.DoubleSide, depthWrite: false }));
+    yta.name = `hinder-yta-${hz.type}-${i}`;
+    scene.add(yta); hinderObjs.push(yta);
+
+    // Konturen — hela poängen med etappen. Den ligger något högre än
+    // fyllningen så den aldrig z-fightar med sin egen yta.
+    const ring = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(xz.map(p =>
+        new THREE.Vector3(p.x, surfaceYAt(p.x, p.z, 0) + LINE_OFFSET, p.z))),
+      new THREE.LineBasicMaterial({ color: farg, transparent: true, opacity: 0.95 }));
+    ring.name = `hinder-kontur-${hz.type}-${i}`;
+    scene.add(ring); hinderObjs.push(ring);
+  }
+}
+
+const omHinder = () => schemalagg('hinder', buildHinder);
+
+
+/* Värdsidan äger bandatan och skickar hindren hit — samma riktning som
+   `sattPlanLegs`. Motorn slår aldrig upp en bana själv. */
+function sattHinder(lista) {
+  hinderData = Array.isArray(lista) ? lista.filter(h => h && Array.isArray(h.poly)) : [];
+  buildHinder();
+}
+
 /* Kedjans punkter i scenens ram. `Planslag` arbetar i lat/lon (samma valuta som
    2D-kartan och som Vylage lagrar); scenen arbetar i hålets lokala meter. Här
    är ENDA stället som växlar mellan dem, via `hojdprofil.js` där affinen bor. */
@@ -1085,6 +1214,10 @@ function planDeps() {
       return isFinite(y) ? y / (exag || 1) : null;
     },
     spridning: dist => Spelprofil.spridning(Store.profile(), dist),
+    // GP2: klubbvalets tal. Slås upp här och inte i Planslag, som ska förbli
+    // ren — och genom SAMMA funktion som 2D-sidan använder, så en klubba inte
+    // kan betyda olika i de två vinklarna.
+    klubbslag: (dist, val) => Spelprofil.slagFor(Store.profile(), dist, val),
     effektiv: SlagJust.effektiv,
     bollbana: Bollbana, vind3d: Vind3D,
   };
@@ -1099,7 +1232,10 @@ function planKedja(legsOverride) {
   if (!meta || !meta.ll2xz) return [];
   return Planslag.kedja(
     { tee: planTeeLL(), legs: legsOverride || planLegs, green: planGreen,
-      vind: vindNu(), just: legsOverride ? {} : slagJust }, planDeps());
+      vind: vindNu(), just: legsOverride ? {} : slagJust,
+      // Ett override-anrop (rubrikens tee→green) är en ANNAN kedja än planens:
+      // dess slag har inga val, precis som det inte har några justeringar.
+      slagval: legsOverride ? {} : planSlagval }, planDeps());
 }
 
 function buildShots() {
@@ -1178,6 +1314,19 @@ function buildShots() {
     // andra beräkning.
     slagTal[i] = { ...rad, apex: rad.traj.apex, launch: rad.vinklar.launch,
                    desc: rad.vinklar.desc, pts };
+
+    /* U8: avståndet som ett chip PÅ segmentet, inte i en lista vid sidan.
+       Talet är "spelar som" och inte den geometriska sträckan — det är det
+       spelaren agerar på (samma val som U19 gjorde för 2D-listan och för
+       panelens rubrik), och två olika tal om samma ben vore precis det
+       princip 4 kallar värre än inget svar. Chipet sitter lågt över MARKEN
+       mitt på benet och inte på bågens topp: det hör till sträckan, och en
+       etikett som svävar högt läses som en höjd. */
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    const chip = chipSprite(`${rad.spelarSom} m`);
+    chip.position.set(mx, surfaceYAt(mx, mz, 0) + 4.5, mz);
+    chip.name = `slag-chip-${i}`;
+    scene.add(chip); shotObjs.push(chip);
   }
 
   // Punkterna: tee är slag 1 och kan inte flyttas; landningspunkterna är
@@ -1194,6 +1343,13 @@ function buildShots() {
     kula.name = `plan-punkt-${i}`;
     kula.userData.slagIdx = i;    // kulan väljer slaget som slås DÄRIFRÅN
     scene.add(kula); shotObjs.push(kula);
+    /* U8: kryss i noden. Kulan finns kvar som TRÄFFYTA — den är det man
+       trycker på, och ett kryss av linjer är nästan omöjligt att träffa med en
+       tumme. Krysset är markeringen: det säger "här", vilket är vad en
+       siktepunkt betyder, medan en ensam kula säger "här ligger något". */
+    const kryss = kryssMarkor(p.x, p.z, new THREE.Color(PLAN_FARG), 4.5);
+    kryss.name = `plan-kryss-${i}`;
+    scene.add(kryss); shotObjs.push(kryss);
     const nr = nummerSprite(i + 1, PLAN_FARG_HEX);
     nr.position.set(p.x, y + 7, p.z);
     nr.name = `plan-nummer-${i}`;
@@ -1416,11 +1572,123 @@ function ritaSlagPanel() {
   el('sSprCV').textContent = e.sprCross ? `${e.sprCross} m` : 'av';
   el('sSprAV').textContent = e.sprAlong ? `${e.sprAlong} m` : 'av';
   el('sprkalla').textContent =
-    e.sprKalla === 'profil' ? 'ur din spelprofil'
+    e.sprKalla === 'klubba' ? `ur klubbtrappan (${t.klubba ? t.klubba.label : 'vald klubba'})`
+    : e.sprKalla === 'profil' ? 'ur din spelprofil'
     : e.sprKalla === 'egen' ? 'ditt eget antagande'
     : 'ingen profil än — fyll i den under Profil';
   el('sAter').disabled = !t.andrad;
   el('sAterAlla').disabled = SlagJust.antalAndrade(slagJust) === 0;
+  ritaKlubbval(t);
+}
+
+/* ------------------------------------------- GP2: panelens klubbval --------
+ *
+ * Listorna ritas ur `Spelprofil` och aldrig ur en egen tabell här: ett
+ * alternativ som står i panelen men inte finns i modellen är ett löfte appen
+ * inte kan hålla. Saknas klubbtrappan (offline första gången, eller
+ * opublicerad tabell) göms hela avsnittet och skälet skrivs ut — hellre ingen
+ * fråga än en fråga vars svar inte betyder något.
+ */
+function chip(txt, valt, onClick, titel) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = txt;
+  b.setAttribute('aria-pressed', String(!!valt));
+  if (titel) b.title = titel;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/* En rad chips där `standard` är förvalt när spelaren inte svarat. Ett tryck
+   på det redan valda tar bort svaret — samma beteende som GP1:s guide, av
+   samma skäl: en felträffning ska gå att ångra utan att svara något annat. */
+function ritaChiprad(id, lista, valt, standard, satt) {
+  const box = el(id);
+  box.innerHTML = '';
+  for (const o of lista) {
+    const aktiv = valt ? valt === o.id : o.id === standard;
+    box.appendChild(chip(o.label, aktiv, () => satt(valt === o.id ? null : o.id)));
+  }
+}
+
+const listNamn = (lista, id, standard) =>
+  (lista.find(o => o.id === (id || standard)) || { label: '' }).label.toLowerCase();
+
+function ritaKlubbval(t) {
+  const listor = Spelprofil.valListor();
+  const trappa = Spelprofil.klubbtrappa(Store.profile());
+  const visa = !!(listor && trappa);
+  for (const id of ['valKlubba', 'valForm', 'valAnsats', 'valHojd']) {
+    const g = el(id) && el(id).closest('.valgrupp');
+    if (g) g.hidden = !visa;
+  }
+  const rub = el('klubbtal'), prof = el('sProfil');
+  if (!visa) {
+    if (rub) rub.textContent =
+      'Klubbtrappan saknas — fyll i Profil, eller ladda om när du har nät.';
+    if (prof) prof.hidden = true;
+    return;
+  }
+  if (prof) prof.hidden = false;
+
+  const val = slagvalNu(t.idx);
+  const k = t.klubba;          // slagets FAKTISKA rad (vald eller föreslagen)
+
+  // Talen FÖRST. "Driver, full: 232 m, ±26 m sidled" — panelen ska säga vad
+  // valet betyder innan den frågar efter nästa val (§GP2: aldrig en svart låda).
+  if (rub && k) {
+    rub.innerHTML =
+      `<b>${k.label}</b>, ${listNamn(listor.ansats, val.ansats, 'full')}: ` +
+      `<b>${Math.round(k.langd)} m</b> · ±${Math.round(k.cross)} m sidled` +
+      (k.foreslagen ? ' <span style="opacity:.65">(föreslagen för avståndet)</span>' : '') +
+      // Ett val som inte når fram är fortfarande ett giltigt val (lägg upp!) —
+      // men planen får inte låtsas att bollen kommer fram.
+      (k.racker ? ''
+        : `<br><span class="varn">Når inte fram — ${Math.round(t.spelarSom)} m spelar som.</span>`);
+  }
+
+  // Klubbraden. Längden står PÅ chipen: frågan "vad slår du här?" går inte att
+  // svara på utan att se hur långt klubborna går.
+  const kl = el('valKlubba');
+  kl.innerHTML = '';
+  for (const c of trappa.klubbor) {
+    const vald = val.klubba === c.id;
+    kl.appendChild(chip(`${c.label} ${Math.round(c.langd)}`, vald,
+      () => sattVal(t.idx, { klubba: vald ? null : c.id }),
+      `${c.label}: ${Math.round(c.langd)} m, ±${Math.round(c.across_sd)} m sidled`));
+  }
+  // Rulla fram valet — annars ligger ett valt 9-järn utanför bild och panelen
+  // ser ut att sakna svar.
+  const aktiv = kl.querySelector('[aria-pressed="true"]')
+    || (k && [...kl.children].find(b => b.textContent.startsWith(k.label)));
+  if (aktiv) kl.scrollLeft = Math.max(
+    0, aktiv.offsetLeft - kl.clientWidth / 2 + aktiv.offsetWidth / 2);
+
+  ritaChiprad('valForm', listor.form, val.form, 'rakt', v => sattVal(t.idx, { form: v }));
+  ritaChiprad('valAnsats', listor.ansats, val.ansats, 'full', v => sattVal(t.idx, { ansats: v }));
+  ritaChiprad('valHojd', listor.hojd, val.hojd, 'normal', v => sattVal(t.idx, { hojd: v }));
+
+  if (prof) prof.disabled = Object.keys(val).length === 0;
+}
+
+/* Valet ÄGS av planen (Vylage), inte av motorn — till skillnad från U17:s
+   justeringar, som är ett visningslager och medvetet inte sparas. Skillnaden
+   är avsiktlig: "jag slår 6-järn här" är ett beslut om hålet och ska finnas
+   kvar nästa gång, "visa mig hur det ser ut med högre apex" är en fråga.
+   Motorn bär därför bara en KOPIA (`planSlagval`) och skickar ändringen till
+   värdsidan, som skriver — samma riktning som tapp-kontraktet (§5 U11). */
+let slagvalPa = null;
+const paSlagval = fn => { slagvalPa = fn; };
+const slagvalNu = i => ({ ...(planSlagval[i] || {}) });
+
+function sattVal(i, patch) {
+  const nu = slagvalNu(i);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === undefined) delete nu[k]; else nu[k] = v;
+  }
+  if (Object.keys(nu).length) planSlagval[i] = nu; else delete planSlagval[i];
+  if (slagvalPa) slagvalPa(i, Object.keys(nu).length ? nu : null);
+  omSlag();          // §2: ellipsen ritas om i SAMMA bildruta som marken
 }
 
 /* Alla reglage går samma väg: nytt tillstånd ur SlagJust → rita om scenen.
@@ -1448,6 +1716,17 @@ el('sAterAlla').addEventListener('click', () => {
   buildShots();
 });
 el('slagstang').addEventListener('click', () => valjSlag(null));
+
+/* GP2: `Återställ till min profil` tar bort HELA slagets val — klubba, form,
+   ansats och höjd på en gång. Att bara nollställa ett fält i taget hade
+   lämnat spelaren att gissa vilka som fortfarande avvek, och panelen markerar
+   avvikelsen på slaget och inte per rad. */
+el('sProfil').addEventListener('click', () => {
+  if (valtSlag == null) return;
+  delete planSlagval[valtSlag];
+  if (slagvalPa) slagvalPa(valtSlag, null);
+  omSlag();
+});
 
 // --------------------------------------- U16 steg 4: siktlinjen (W4) --------
 // W1–W3 svarar på vart bollen tar vägen. Siktet svarar på spelarens fråga:
@@ -1644,6 +1923,7 @@ function applyExag(forra) {
   spannUpp();     // U7: höjdskalan flyttar kronorna → skuggkameran måste följa
   omTrad();
   omLinje();
+  omHinder();        // U8: hinderytorna ligger PÅ marken → följer överdriften
   omSlope();         // lutningsmattan draperas på marken → likaså
   omSlag();          // planens slag ligger på marken → räknas om med den
   if (!forra || forra === exag) return;
@@ -1956,6 +2236,9 @@ function sattPlanLegs(plan) {
   planTee = ll(o.tee);
   planLegs = (o.legs || []).map(ll).filter(Boolean);
   planGreen = ll(o.green);
+  // GP2: valen bor i Vylage (planen), inte här. Motorn får dem samma väg som
+  // punkterna — en ägare, två skepnader (§5 U11).
+  planSlagval = (o.slagval && typeof o.slagval === 'object') ? { ...o.slagval } : {};
   omSlag();
 }
 
@@ -2157,7 +2440,7 @@ export { loadHole as laddaHal, sattExag, sattSynlig, setLage as sattLage,
          sattPlanLegs, posen, sattPosen, harIndex, paTapp, paExag, paLage,
          lageNu, metaNu, konv, markY, yRefPlan, flygTill, flygerNu, skarmAv, rita1,
          paKedja, kedjanNu, kedjaFor, valtNu, valjFran2d, vindenNu, sattSlope, harSlope,
-         baringNu, paBildruta };
+         baringNu, paBildruta, paSlagval, sattHinder };
 
 if (!EMBED) (async () => {
   let idx;

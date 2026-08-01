@@ -12,7 +12,10 @@
  * testet ett vanligt objekt.
  *
  * Persistensen är MEDVETET oförändrad där den redan fanns:
- *   sg-plan-v1   { "<globaltHål>": { legs: [[lat,lon], …] } }   (PR2, rörs ej)
+ *   sg-plan-v1   { "<globaltHål>": { legs: [[lat,lon], …],
+ *                                   slagval: { "<slagIdx>": {…} } }
+ *                (PR2:s `legs` orörd; `slagval` tillkom i GP2 och är ADDITIV —
+ *                 en plan sparad före GP2 saknar bara nyckeln)
  *   sg_plan_hole spelarens hål 1–18                              (hubben, rörs ej)
  * och två nya nycklar som bara hör till vyn:
  *   sg_plan_vy   { vinkel, slope, exag, lage }
@@ -77,6 +80,7 @@ const Vylage = (() => {
       exag: Number.isFinite(+vy.exag) ? klamp(+vy.exag, EXAG_MIN, EXAG_MAX) : 3,
       lage: LAGEN.includes(vy.lage) ? vy.lage : null,
       legs: [],
+      slagval: {},
     };
     let plan = las(lagring, PLAN_KEY, {});
     let poser = las(lagring, POSE_KEY, {});
@@ -100,6 +104,7 @@ const Vylage = (() => {
       st.rel = r;
       st.global = global == null ? null : global;
       st.legs = lasLegs(st.global);
+      st.slagval = lasSlagval(st.global);
       try { lagring.setItem(HOLE_KEY, String(r)); } catch (e) {}
       meddela("hal");
       return true;
@@ -111,19 +116,72 @@ const Vylage = (() => {
         ? e.legs.map(punkt).filter(Boolean) : [];
     }
 
+    /* GP2: slagvalen (klubba/form/ansats/höjd) per SLAG i kedjan.
+       De hör till PLANEN och inte till spelaren — ett trångt hål ska inte göra
+       spelaren sämre överallt (§GP2). Därför bor de här bredvid `legs` och
+       aldrig i profilen. */
+    function lasSlagval(global) {
+      const e = global == null ? null : plan[String(global)];
+      const s = e && e.slagval;
+      return s && typeof s === "object" ? { ...s } : {};
+    }
+
     function sparaLegs() {
       if (st.global == null) return;
-      plan[String(st.global)] = { legs: st.legs.map(p => [p[0], p[1]]) };
+      // Bevarar allt annat som redan står på hålet: en gammal plan som saknar
+      // `slagval` ska inte få nyckeln påtvingad, och en ny plan ska inte tappa
+      // sina val bara för att en punkt flyttades.
+      const e = plan[String(st.global)] || {};
+      plan[String(st.global)] = { ...e, legs: st.legs.map(p => [p[0], p[1]]) };
       sparaPlan();
       meddela("legs");
+    }
+
+    function sparaSlagval() {
+      if (st.global == null) return;
+      const e = plan[String(st.global)] || {};
+      if (Object.keys(st.slagval).length) e.slagval = { ...st.slagval };
+      else delete e.slagval;
+      plan[String(st.global)] = e;
+      sparaPlan();
+      meddela("slagval");
+    }
+
+    /* Kedjan ändrades — valen måste följa med SLAGET, inte med indexet.
+       Slag `i` går från punkt `i` till punkt `i+1`. Tas landningspunkt `i` bort
+       smälter slag `i` och `i+1` ihop till ett; det sammanslagna slaget är en
+       ANNAN sträcka än båda de gamla, så dess val släpps i stället för att ärva
+       ett av dem. Att låta valet ligga kvar hade gett ett 6-järn på ett slag som
+       plötsligt är 90 m längre — en siffra som ser inmatad ut och är fel. */
+    function skiftaSlagval(idx, delta) {
+      const nytt = {};
+      for (const [k, v] of Object.entries(st.slagval)) {
+        const i = parseInt(k, 10);
+        if (!isFinite(i)) continue;
+        if (delta < 0) {
+          if (i === idx || i === idx + 1) continue;      // det sammanslagna
+          nytt[i > idx ? i + delta : i] = v;
+        } else {
+          nytt[i >= idx ? i + delta : i] = v;
+        }
+      }
+      st.slagval = nytt;
+      sparaSlagval();
     }
 
     // ---- tapp-kontraktet: EN väg in för en landningspunkt, oavsett vinkel ----
     function laggPunkt(p) {
       const q = punkt(p);
       if (!q || st.global == null) return false;
+      // En ny punkt läggs SIST och delar det som var sista slaget i två. Valet
+      // på det slaget gäller inte längre någon av halvorna.
+      const delat = st.legs.length;
       st.legs.push(q);
       sparaLegs();
+      if (st.slagval[delat] !== undefined) {
+        delete st.slagval[delat];
+        sparaSlagval();
+      }
       return true;
     }
     function flyttaPunkt(i, p) {
@@ -137,8 +195,37 @@ const Vylage = (() => {
       if (!(i >= 0 && i < st.legs.length)) return false;
       st.legs.splice(i, 1);
       sparaLegs();
+      skiftaSlagval(i, -1);
       return true;
     }
+
+    /* Slagets val, eller {} — alltid ett objekt, så anroparen slipper fråga. */
+    function slagval(i) {
+      const v = st.slagval[i];
+      return v && typeof v === "object" ? { ...v } : {};
+    }
+    function harSlagval(i) { return Object.keys(slagval(i)).length > 0; }
+    function antalSlagval() {
+      return Object.keys(st.slagval).filter(k => harSlagval(+k)).length;
+    }
+
+    /* Ett fält satt till null TAS BORT — så uttrycks "tillbaka till profilens
+       default" per fält, och därför städas ett tomt slag bort helt: ett slag
+       utan val ska inte kunna se ändrat ut. Samma kontrakt som SlagJust.satt,
+       med avsikt: två närliggande begrepp som beter sig olika är en fälla. */
+    function sattSlagval(i, patch) {
+      if (!(i >= 0)) return false;
+      const nu = { ...slagval(i) };
+      for (const [k, v] of Object.entries(patch || {})) {
+        if (v === null || v === undefined) delete nu[k];
+        else nu[k] = v;
+      }
+      if (Object.keys(nu).length) st.slagval[i] = nu; else delete st.slagval[i];
+      sparaSlagval();
+      return true;
+    }
+    function aterstallSlagval(i) { delete st.slagval[i]; sparaSlagval(); return true; }
+    function aterstallAllaSlagval() { st.slagval = {}; sparaSlagval(); return true; }
     function angra() { return taBortPunkt(st.legs.length - 1); }
 
     // ---- vinkel, slope, överdrift, läge ----
@@ -220,6 +307,9 @@ const Vylage = (() => {
       get lage() { return st.lage; },
       legs: () => st.legs.map(p => [p[0], p[1]]),
       antalLegs: () => st.legs.length,
+      slagval, harSlagval, antalSlagval, sattSlagval,
+      aterstallSlagval, aterstallAllaSlagval,
+      allaSlagval: () => ({ ...st.slagval }),
       sattHal, sattVinkel, sattSlope, sattExag, sattLage,
       effektivExag, laggPunkt, flyttaPunkt, taBortPunkt, angra,
       pose, sattPose, batch,

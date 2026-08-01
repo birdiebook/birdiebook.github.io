@@ -285,6 +285,170 @@ const Spelprofil = (() => {
     return { cross: rad.across_sd, along: rad.along_sd, profil: bas, bucket: b };
   }
 
+  /* ---- Klubbtrappan (GP2) -------------------------------------------------
+     "Vad slår du här?" kräver att en klubba har ett svar på hur långt och hur
+     brett. Modellen ägs av `src/api/klubbtrappa.py` och dess KONSTANTER kommer
+     med i `dispersion.json` (`klubbtrappa`-blocket) — trappans rader, de tre
+     modifierarna, och basprofilernas inspelsmönster som en rät linje i
+     avståndet.
+
+     FORMELN räknas här och inte i Python, av samma skäl som `kombination`
+     speglas: telefonen måste kunna svara UTAN NÄT, och en full uppräkning av
+     alla kombinationer hade varit ~200 kB app-shell för något som är en formel
+     med tolv rader indata. `tests/test_klubbtrappa_paritet.py` kör Python och
+     den här koden över alla kombinationer och kräver identiska tal — repots
+     etablerade sätt att ha samma logik på två språk utan att de glider isär.
+
+     Utan tabell svarar allt null i stället för att gissa: en klubblängd appen
+     hittat på är värre än ingen klubblista alls. */
+  const KT = () => (TAB && TAB.klubbtrappa) || null;
+
+  /* Spelarens två ankare i meter + varifrån de kom. Speglar `_ankare`. */
+  function ankare(profil) {
+    const k = KT();
+    if (!k) return null;
+    const o = normalisera(profil);
+    const bas = k.hcp_bas[o.hcpBucket] || k.hcp_bas["vet-inte"];
+    const prof = TAB.profiler && TAB.profiler[bas];
+    if (!prof || !prof.drive) return null;
+    const hink = k.driver_hink[o.driver];
+    // "Slår inte driver" och obesvarat ger båda basprofilens längd — den säger
+    // hur långt spelaren slår sitt längsta slag, vilket är vad trappan behöver.
+    const D = hink ? (hink[0] + hink[1]) / 2 : prof.drive.dist_med;
+    const j7 = k.jarn7_mid[o.jarn7];
+    // Utan eget järnsvar hålls bagens PROPORTION (se klubbtrappa.py) — annars
+    // fick en kortslående spelare en trappa utan steg.
+    let S = j7 != null ? j7 : D * (k.referens.S0 / k.referens.D0);
+    let kS = j7 != null ? "svar" : "profil";
+    // Ankarna får motsäga varandra (två oberoende hinkfrågor) och gör då
+    // trappan icke-monoton — se klubbtrappa.py. Klampa, och SÄG att det
+    // gjordes: appen ska inte tyst rätta spelaren.
+    const kvot = S / D;
+    if (kvot > k.referens.KVOT_MAX) { S = D * k.referens.KVOT_MAX; kS = "justerad"; }
+    else if (kvot < k.referens.KVOT_MIN) { S = D * k.referens.KVOT_MIN; kS = "justerad"; }
+    return { D, S, bas, kalla: { driver: hink ? "svar" : "profil", jarn7: kS } };
+  }
+
+  /* EN avrundningsregel för både JS och Python: halvt BORT FRÅN NOLL.
+     Varken språkets egen räcker — Pythons `round` är bankers-avrundning
+     (−5,95 → −6,0), JS `Math.round` är halvt mot +∞ (−5,95 → −5,9). Samma
+     formel gav alltså olika tal i sista decimalen, uppmätt på along_bias och
+     across_bias. Speglar `klubbtrappa.rund`. */
+  function avrunda(v, n) {
+    const p = 10 ** n;
+    return Math.floor(Math.abs(v) * p + 0.5) / p * (v >= 0 ? 1 : -1) + 0;
+  }
+
+  function langder(D, S) {
+    const k = KT(), ut = {};
+    for (const c of k.klubbor) {
+      ut[c.id] = avrunda(c.L0 * (D / k.referens.D0) ** c.w
+                                * (S / k.referens.S0) ** (1 - c.w), 1);
+    }
+    return ut;
+  }
+
+  /* Linjen utvärderad vid L, klampad utanför spannet — samma klampning som
+     Python gör mot ytterbuckets. */
+  function linjeVid(linje, L) {
+    const x = Math.min(Math.max(L, linje.L_min), linje.L_max);
+    return { along_bias: linje.along_bias[0] * x + linje.along_bias[1],
+             along_sd: linje.along_sd[0] * x + linje.along_sd[1],
+             across_sd: linje.across_sd[0] * x + linje.across_sd[1] };
+  }
+
+  /* Hela trappan för en profil: {ankare, klubbor:[{id,label,langd,…}]}. */
+  function klubbtrappa(profil) {
+    const k = KT(), a = ankare(profil);
+    if (!k || !a) return null;
+    const d = TAB.profiler[a.bas].drive;
+    const linje = k.approach_linje[a.bas];
+    if (!linje) return null;
+    const L = langder(a.D, a.S);
+    return {
+      ankare: { driver: avrunda(a.D, 1), jarn7: avrunda(a.S, 1),
+                kalla: a.kalla, bas: a.bas },
+      klubbor: k.klubbor.map(c => {
+        const v = linjeVid(linje, L[c.id]);
+        return {
+          id: c.id, label: c.label, langd: L[c.id],
+          // Drive-mönstret har ingen along_bias — den tonas ut med w.
+          along_bias: avrunda((1 - c.w) * v.along_bias, 1),
+          along_sd: avrunda(c.w * d.dist_sd + (1 - c.w) * v.along_sd, 1),
+          across_sd: avrunda(c.w * d.across_sd + (1 - c.w) * v.across_sd, 1),
+        };
+      }),
+    };
+  }
+
+  /* Vilken klubba trappan föreslår för `dist` meter — panelens default.
+     Närmast i LÄNGD, inte närmast uppåt (se klubbtrappa.py). */
+  function valjKlubba(profil, dist) {
+    const t = klubbtrappa(profil);
+    if (!t || !(dist > 0)) return null;
+    let b = null, bd = Infinity;
+    for (const c of t.klubbor) {
+      const d = Math.abs(c.langd - dist);
+      if (d < bd) { bd = d; b = c.id; }
+    }
+    return b;
+  }
+
+  /* Trappans rad + de tre modifierarna → slagets faktiska tal.
+     `apex` matas rakt in i SlagJust.apexFaktor: GP2 skriver ingen egen
+     bollbanemodell, den skruvar på den som W-etapperna kalibrerade. */
+  function applicera(rad, val) {
+    const k = KT();
+    if (!k || !rad) return null;
+    const v = val || {};
+    const f = k.form[v.form] || k.form.rakt;
+    const a = k.ansats[v.ansats] || k.ansats.full;
+    const h = k.hojd[v.hojd] || k.hojd.normal;
+    const across = rad.across_sd * a.sigma;
+    return {
+      langd: avrunda(rad.langd * f.langd * a.langd * h.langd, 1),
+      along_sd: avrunda(rad.along_sd * a.sigma, 1),
+      across_sd: avrunda(across, 1),
+      // Biasen räknas på den MODIFIERADE spridningen: en kontrollerad fade
+      // kröker mindre än en full fade — det är hela poängen med att slå den.
+      across_bias: avrunda(f.bias_andel * across, 1),
+      apex: h.apex,
+    };
+  }
+
+  /* Ett SLAG med GP2-val: trappans rad + modifierarna, i den form
+     `Planslag.kedja` vill ha den ({cross, along, bias, apex, langd, …}).
+
+     Klubban kommer ur valet när spelaren gjort ett, annars ur trappans förslag
+     för avståndet. Att den ALLTID finns är avsiktligt: panelen ska kunna visa
+     "Driver, full: 232 m, ±26 m sidled" innan spelaren rört något, så det
+     aldrig är en svart låda (§GP2). */
+  function slagFor(profil, dist, val) {
+    const t = klubbtrappa(profil);
+    if (!t) return null;
+    const v = val || {};
+    const kid = v.klubba || valjKlubba(profil, dist);
+    const rad = t.klubbor.find(c => c.id === kid);
+    if (!rad) return null;
+    const a = applicera(rad, v);
+    return { klubba: rad.id, label: rad.label, langd: a.langd,
+             cross: a.across_sd, along: a.along_sd,
+             bias: a.across_bias, apex: a.apex,
+             // Räcker klubban till? En plan som tyst låter spelaren "slå"
+             // 210 m med ett 8-järn är inte en plan.
+             racker: !(dist > 0) || a.langd >= dist - a.along_sd,
+             foreslagen: !v.klubba };
+  }
+
+  /* Valen panelen får erbjuda. Listorna kommer ur tabellen så ett alternativ
+     aldrig kan stå i panelen utan att modellen känner det. */
+  function valListor() {
+    const k = KT();
+    if (!k) return null;
+    const lista = o => Object.entries(o).map(([id, v]) => ({ id, label: v.label }));
+    return { form: lista(k.form), ansats: lista(k.ansats), hojd: lista(k.hojd) };
+  }
+
   /* Har spelaren svarat på något alls? Guiden (GP1 del 2) använder det för att
      veta om den ska visas, och Profil-fliken för att skilja "ny" från "tom". */
   function harSvar(p) {
@@ -296,7 +460,8 @@ const Spelprofil = (() => {
   return { V, HCP, DRIVER, JARN7, MISS, SVAGHET, STIL, TEE,
            tom, normalisera, hink, hcpTal, hcpForBerakning, bucketForHcp,
            franLegacy, harSvar, kombination, HCP_BAS, DRIVER_KOD, MISS_SIDA,
-           sattSpridning, spridning, bucketFor };
+           sattSpridning, spridning, bucketFor,
+           klubbtrappa, valjKlubba, applicera, valListor, ankare, slagFor };
 })();
 
 if (typeof globalThis !== "undefined") globalThis.Spelprofil = Spelprofil;

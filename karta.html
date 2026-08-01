@@ -268,6 +268,7 @@
 <script src="./coursemap.js"></script>
 <script src="./mapcore.js"></script>
 <script src="./playas.js"></script>
+<script src="./laggmat.js"></script>
 <script src="./slopeoverlay.js"></script>
 <script src="./round.js"></script>
 <script src="./score.js"></script>
@@ -1202,6 +1203,15 @@ async function init() {
   map.on("rotate", updateRose);   // rosen följer kartans rotation
   // Autozoom: manuell gest (pan/pinch) pausar följningen FOLLOW_PAUSE_MS och
   // återupptar sedan själv. programmaticMove skiljer våra egna setView från gester.
+  /* U2 (§2.4): eftersläpningsmätningen under ?dbg=1 och bara då. `__lagg()`
+     kör ett helt svep (panorering, zoom, rotation) och svarar med
+     max-avvikelsen i px per sort. Den lämnar kartan där den fann den. */
+  if (new URLSearchParams(location.search).get("dbg") === "1") {
+    window.__lagg = () => {
+      const r = Laggmat.svep(map);
+      return { ...r, godkant: Laggmat.godkant(r), krav: Laggmat.KRAV };
+    };
+  }
   map.on("movestart zoomstart", () => {
     if (programmaticMove) return;
     if (animRAF) { cancelAnimationFrame(animRAF); animRAF = null; }   // avbryt vår animering – slåss inte med användaren

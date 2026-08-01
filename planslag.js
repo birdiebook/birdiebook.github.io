@@ -93,9 +93,10 @@ const Planslag = (() => {
 
   /* Hela kedjan.
    *
-   * `in` = { tee, legs, green, vind, just }
-   *   vind : hålets vind {ms, dir, gust} eller null (offline — princip 3)
-   *   just : SlagJust-tillståndet för hålet ({} = orörd plan)
+   * `in` = { tee, legs, green, vind, just, slagval }
+   *   vind    : hålets vind {ms, dir, gust} eller null (offline — princip 3)
+   *   just    : SlagJust-tillståndet för hålet ({} = orörd plan)
+   *   slagval : GP2:s klubbval per slag ur Vylage ({} = profilens default)
    *
    * `deps` = { hav, bearing, relWind, windAlongShift, slopeEffect, hojd,
    *            spridning, effektiv }
@@ -120,21 +121,52 @@ const Planslag = (() => {
       // Nedförsbacke ger inte lika många meter tillbaka som uppförsbacke tar —
       // asymmetrin bor i PlayAs.slopeEffect och ska inte kopieras hit.
       const slope = dh != null ? d.slopeEffect(dh) : 0;
-      const eff = d.effektiv(
-        { vind: o.vind || null,
-          spr: typeof d.spridning === "function" ? d.spridning(dist) : null },
-        (o.just || {})[i] || null);
+      /* GP2: slagets egna val (klubba/form/ansats/höjd) ersätter profilens
+         avståndsbaserade spridning för just det slaget. Valet går IN som en
+         färdigräknad rad — modulen slår inte upp någon klubbtrappa själv, av
+         samma skäl som den inte känner Store: den ska förbli ren och testbar
+         utan DOM och utan nät. `d.klubbslag(dist, val)` är injicerad och svarar
+         {cross, along, bias, apex, langd, klubba} eller null. */
+      const val = (o.slagval || {})[i] || null;
+      // Klubban räknas ALLTID när trappan finns, även utan val — panelen ska
+      // kunna säga "7-järn, full: 140 m" innan spelaren rört något (§GP2: ingen
+      // svart låda), och rader i 2D-listan ska kunna visa förslaget. Men den
+      // STYR bara spridningen när spelaren faktiskt valt: annars hade en tom
+      // plan tyst bytt ellips den dagen klubbtrappan byggdes.
+      const ks = typeof d.klubbslag === "function" ? d.klubbslag(dist, val) : null;
+      const bas = (ks && val) ? { cross: ks.cross, along: ks.along }
+                     : (typeof d.spridning === "function" ? d.spridning(dist) : null);
+      /* Höjdvalet är en apex-faktor och inget annat (§GP2). Den läggs som
+         BASENS apex, så att U17:s manuella skruv fortfarande vinner: väljer man
+         "låg" och sedan drar i apex-reglaget är det manuella svaret det som
+         gäller — annars hade ett reglage tyst slutat betyda något. */
+      const ov = { ...((o.just || {})[i] || {}) };
+      if (val && ks && ks.apex != null && ov.apexFaktor === undefined) ov.apexFaktor = ks.apex;
+      const eff = d.effektiv({ vind: o.vind || null, spr: bas },
+                             Object.keys(ov).length ? ov : null);
+      // Spridningens härkomst är nu tregradig: modellens klubbtrappa väger
+      // tyngre än profilens avståndsbucket, och båda väger tyngre än en siffra
+      // spelaren dragit fram själv. Panelen får inte påstå lika mycket om dem.
+      if (val && ks && eff.sprKalla === "profil") eff.sprKalla = "klubba";
+      eff.klubba = ks || null;
       const pa = spelarSom(dist, bearing, eff.vind, slope, d);
+      const bn = bana(dist, pa.rel, eff, d);
+      // Formen (fade/draw) flyttar MEDELBANAN i sidled — samma storhet som
+      // vindens sidodrift, och därför samma fält. Att ge den ett eget fält hade
+      // tvingat varje ritkod att komma ihåg att addera två tal, och den som
+      // glömde hade ritat en fade som flög rakt.
+      if (val && ks && ks.bias) bn.drift += ks.bias;
       ut.push({
         idx: i, nr: i + 1,
         a, b, dist, bearing, dh, slope,
+        val, klubba: ks,
         // Sista slaget är inspelet: det är det enda som per definition slutar
         // på green, och vyerna ritar det streckat.
         tillGreen: i === pts.length - 2 && !!(o.green && o.green.length === 2),
         franTee: i === 0,
         vind: pa.rel, spelarSom: pa.mean, spelarSomBy: pa.gust,
-        eff, andrad: eff.andrad,
-        ...bana(dist, pa.rel, eff, d),
+        eff, andrad: eff.andrad || !!val,
+        ...bn,
       });
     }
     return ut;

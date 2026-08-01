@@ -615,7 +615,16 @@ const Store = (() => {
     nu.updatedAt = nowIso();
     profil = nu;
     const rad = Object.assign({ id: PROFILE_ID }, nu);
-    Promise.resolve()
+    /* INVÄNTA BACKEND-EN. `Promise.resolve().then(() => be.put(…))` såg ut att
+       göra det men gjorde det inte: `be` är null tills `ready()` valt backend,
+       och en microtask hinner före. En profil satt strax efter sidladdning
+       försvann därför TYST — den låg kvar i minnet, så allt såg rätt ut ända
+       tills sidan laddades om, och enda spåret var en console.warn.
+       Uppmätt 2026-08-01 i browsern: `TypeError: … reading 'put'`, och
+       `profile`-lagret tomt medan `Store.profile()` svarade fullt. Att GP1:s
+       egen mätning inte såg det är logiskt — en människa hinner aldrig trycka
+       i guiden lika fort efter en sidladdning som ett skript gör. */
+    ready()
       .then(() => be.put(PROFILE, rad))
       .catch(e => console.warn("[Store] kunde inte spara profilen", e));
     return clone(nu);
