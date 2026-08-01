@@ -14,6 +14,7 @@
 <script src="./boot.js"></script>
 <script src="./round.js"></script>
 <script src="./score.js"></script>
+<script src="./markhojd.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
 <!-- U6: höjdprofil/"spelar som" (MapCore rad/hav/bearing + PlayAs). Vanliga
@@ -34,8 +35,14 @@
   html, body { margin:0; height:100%; overflow:hidden; }
   body { background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif;
-    touch-action:none; overscroll-behavior:none; }
-  #scen { position:fixed; inset:0; }
+    overscroll-behavior:none; }
+  /* U18: `touch-action:none` hor hemma HAR, pa canvasen, och inte pa body.
+     Egenskapen arvs, sa pa body traffade den varje <input type=range> pa
+     sidan - och med touch-action:none driver webblasaren inte langre
+     reglagets tumme. Reglagen svarade darfor pa tryck men inte pa drag
+     ("svara att fa tag i", faltrapport 2026-08-01). Kameragesterna behover
+     regeln, panelerna far inte ha den. */
+  #scen { position:fixed; inset:0; touch-action:none; }
   #topp { position:fixed; top:0; left:0; right:0; z-index:5;
     display:flex; gap:8px; align-items:center;
     padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
@@ -318,6 +325,26 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
                namn: siktObjs.map(o => o.name),
                mal: m ? { x: m.position.x, z: m.position.z } : null };
     },
+    // U18: ombyggnadskön. Det här ÄR instrumentet för etappens krav (< 16 ms
+    // per bildruta) — samma skäl som `screenOf` finns för §2.4: ett krav som
+    // inte går att mäta blir en åsikt. `ko` säger vad som väntar, `byggNu`
+    // kör kön synkront och returnerar millisekunderna. (Kroken behövs också
+    // för att rAF inte tickar i en dold browser-panel, se CLAUDE.md.)
+    ombygg: () => ({ ko: [..._ombyggKo.keys()], markindex: !!markIndex }),
+    byggNu: () => {
+      const t = performance.now();
+      for (const n of OMBYGG_ORDNING) if (_ombyggKo.has(n)) _ombyggKo.get(n)();
+      _ombyggKo.clear();
+      return +(performance.now() - t).toFixed(2);
+    },
+    // Höjduppslaget, för jämförelsen mot raycasten (U18:s < 5 cm-krav).
+    yAt: (x, z) => surfaceYAt(x, z, NaN),
+    yRay: (x, z) => {
+      if (!ground) return NaN;
+      _lineRay.set(new THREE.Vector3(x, 1e4, z), _lineDown);
+      const h = _lineRay.intersectObject(ground, true);
+      return h.length ? h[0].point.y : NaN;
+    },
     valj: i => valjSlag(i),
     slag: () => ({ kalla: shotKalla, visa: shotVisa, objekt: shotObjs.length,
                    antal: shotRec ? (shotRec.shots || []).length : null,
@@ -507,6 +534,7 @@ function clearHole() {
     o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
   }
   ground = null; wide = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
+  markIndex = null;                       // hör till hålet, inte till vyn
   shotObjs = []; shotRec = null; shotKalla = '';
   // U17: justeringarna hör till slagen på DET hålet. Nytt hål = tomt bord —
   // en apex-faktor från hål 5 får inte följa med till hål 6.
@@ -611,23 +639,101 @@ function buildTrees() {
   treeParts.push(...parts);
 }
 
+let markIndex = null;      // U18: höjduppslag i stället för raycast (per hål)
 const _lineRay = new THREE.Raycaster();
 const _lineDown = new THREE.Vector3(0, -1, 0);
 const LINE_OFFSET = 0.6;   // m ovanför markytan
 const LINE_STEP = 4;       // m: densifiera linjen så den följer terrängen mellan grovpunkterna
 
-// Markytans y i (x,z) via nedåt-raycast mot den (överdrifts-skalade) glb-marken;
-// fallback till coarse-y om marken inte finns/träffas.
+/* U18: markytans y i (x, z).
+ *
+ * Detta VAR en nedåt-raycast mot hela markmeshen. Uppmätt 2026-08-01: 6,3 ms
+ * per stråle som träffar, och lagren frågar 40–130 gånger per ombyggnad — det
+ * var hela orsaken till att reglagen hackade (905 ms per input-event på banans
+ * längsta hål). `Markhojd` svarar på samma fråga ur ett XZ-rutnät över
+ * trianglarna: 0,0006 ms per uppslag.
+ *
+ * Indexet bär höjden UTAN överdrift, så ett ryck i överdriftsreglaget bara
+ * byter faktorn här — ingen ombyggnad av indexet, ingen ny sampling.
+ *
+ * Raycasten finns kvar som fallback när indexet inte kunde byggas (modulen
+ * saknas, marken laddad men tom). Den är långsam men den är rätt, och en vy som
+ * ritar linjen i luften vore värre än en seg vy. */
 function surfaceYAt(x, z, fallback) {
+  if (markIndex) {
+    const y = markIndex.hojd(x, z);
+    return y === null ? fallback : y * exag;
+  }
   if (!ground) return fallback;
   _lineRay.set(new THREE.Vector3(x, 1e4, z), _lineDown);
   const hit = _lineRay.intersectObject(ground, true);
   return hit.length ? hit[0].point.y : fallback;
 }
 
+/* Bygger höjdindexet ur marken vid överdrift 1 — en gång per hål.
+   `scale.y` nollställs tillfälligt: då är världskoordinaterna oskalade och
+   indexet kan multipliceras med vilken överdrift som helst efteråt. Att i
+   stället dividera bort skalan hade antagit att inget led i kedjan har en
+   y-förskjutning, och det antagandet vill jag inte bära. */
+function byggMarkindex() {
+  markIndex = null;
+  if (!ground || typeof Markhojd === 'undefined') return;
+  const forra = ground.scale.y;
+  ground.scale.y = 1;
+  ground.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  const arr = [];
+  ground.traverse(o => {
+    const g = o.isMesh && o.geometry;
+    if (!g || !g.attributes || !g.attributes.position) return;
+    const pos = g.attributes.position, idx = g.index;
+    const antal = idx ? idx.count : pos.count;
+    for (let i = 0; i < antal; i++) {
+      v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld);
+      arr.push(v.x, v.y, v.z);
+    }
+  });
+  ground.scale.y = forra;
+  ground.updateMatrixWorld(true);
+  markIndex = arr.length ? Markhojd.bygg(new Float32Array(arr)) : null;
+}
+
+/* U18: en ombyggnad per BILDRUTA, inte per event.
+ *
+ * Ett drag i ett reglage skickar ~60 `input` i sekunden. Utan grind körde varje
+ * event en full ombyggnad, och eftersom en ombyggnad tog längre tid än en
+ * bildruta hann kön aldrig i kapp — det var det som kändes som hack. Grinden
+ * behåller det SENASTE jobbet per namn och kör dem i fast ordning på nästa
+ * ruta: linjen först (marken), sedan slagen som ligger på den, sist siktet som
+ * läser slagens tal.
+ *
+ * Namnet är nyckeln: två `buildShots` under samma ruta blir ETT bygge. */
+const OMBYGG_ORDNING = ['trad', 'linje', 'slag', 'sikte'];
+const _ombyggKo = new Map();
+let _ombyggRaf = 0;
+function schemalagg(namn, fn) {
+  _ombyggKo.set(namn, fn);
+  if (_ombyggRaf) return;
+  _ombyggRaf = requestAnimationFrame(() => {
+    _ombyggRaf = 0;
+    const jobb = OMBYGG_ORDNING.filter(n => _ombyggKo.has(n)).map(n => _ombyggKo.get(n));
+    _ombyggKo.clear();
+    for (const j of jobb) j();
+  });
+}
+/* Vyns fyra ombyggnader, schemalagda. Anropa DESSA från allt som kan trigga
+   upprepat (reglage, gester); de direkta funktionerna används vid hålbyte där
+   ordningen måste vara synkron. */
+const omTrad  = () => schemalagg('trad', buildTrees);
+const omLinje = () => schemalagg('linje', buildLine);
+const omSlag  = () => schemalagg('slag', buildShots);
+const omSikte = () => schemalagg('sikte', ritaSikte);
+
 function buildLine() {
-  if (lineObj) scene.remove(lineObj);
-  markers.forEach(o => scene.remove(o));
+  // U18: rensa RIKTIGT. Utan dispose läckte ett drag 60 geometrier i sekunden —
+  // scene.remove() tar bort noden men lämnar buffertarna på grafikkortet.
+  if (lineObj) { scene.remove(lineObj); lineObj.geometry?.dispose(); lineObj.material?.dispose(); }
+  markers.forEach(o => { scene.remove(o); o.geometry?.dispose(); o.material?.dispose(); });
   if (ground) ground.updateMatrixWorld(true);   // färsk world-matris (exag-skala) före raycast
   // Densifiera linjen horisontellt och lägg varje punkt på den VERKLIGA ytan + offset,
   // så den aldrig dyker under mark när överdriften buktar terrängen mellan grovpunkterna.
@@ -656,7 +762,7 @@ function buildLine() {
     scene.add(s);
     return s;
   });
-  ritaSikte();   // siktet ligger på samma mark — ny linje, nytt sikte
+  omSikte();     // siktet ligger på samma mark — ny linje, nytt sikte (U18: köad)
 }
 
 // -------------------------------------------- U9: dina slag på hålet i 3D ---
@@ -727,9 +833,10 @@ function ritaVindPanel() {
   el('vGustV').textContent = `${(+el('vGust').value).toFixed(1)} m/s`;
   el('vDirV').textContent = kompass(+el('vDir').value);
   el('vindater').disabled = !vindHamtad || !vindEgen;
-  // Siktet är vindens invers — ändras vinden ändras siktet i samma andetag,
-  // annars står en korrigering kvar för en vind som inte längre gäller.
-  ritaSikte();
+  // U18: siktet ritas INTE härifrån. Varje vindändring kör ändå buildShots,
+  // som avslutar med ritaSikte — den här raden gjorde alltså om samma arbete
+  // en gång till per event (dubbelarbete infört i U16 steg 4). De två fall som
+  // rör vinden UTAN att röra slagen (panelen öppnas) schemalägger siktet själva.
 }
 
 async function hamtaVind() {
@@ -795,14 +902,14 @@ function buildShots() {
   if (!meta || !meta.ll2xz || !shotRec || !shotVisa) {
     // U17: finns inga bågar finns inget valt slag — annars kan panelen stå kvar
     // och visa tal för ett slag som inte längre är ritat.
-    valtSlag = null; slagTal = []; ritaSlagPanel(); ritaSikte();
+    valtSlag = null; slagTal = []; ritaSlagPanel(); omSikte();
     return;
   }
   if (ground) ground.updateMatrixWorld(true);
   const punkter = (shotRec.shots || [])
     .filter(s => s && s.lat != null && s.lon != null)
     .map(s => { const [x, z] = shotXZ(s.lat, s.lon); return { x, z, acc: s.acc }; });
-  if (!punkter.length) { valtSlag = null; slagTal = []; ritaSlagPanel(); ritaSikte(); return; }
+  if (!punkter.length) { valtSlag = null; slagTal = []; ritaSlagPanel(); omSikte(); return; }
 
   const bana = [...punkter];
   if (shotRec.green && shotRec.green.lat != null) {
@@ -927,7 +1034,10 @@ function buildShots() {
     scene.add(m); shotObjs.push(m);
   }
   ritaSlagPanel();     // U17: panelen läser slagTal som just fylldes i
-  ritaSikte();         // U16 steg 4: siktet ärver apexen ur slagTal ovan
+  // U16 steg 4: siktet ärver apexen ur slagTal ovan — och U18:s kö garanterar
+  // ordningen (linje → slag → sikte) och att det bara sker EN gång per ruta,
+  // även när både linjen och slagen byggts om i samma bildruta.
+  omSikte();
 }
 
 /* GP1: spridningstabellen (mobile/data/dispersion.json, genererad av
@@ -991,7 +1101,7 @@ function ritaSlagPanel() {
 function justera(patch) {
   if (valtSlag == null) return;
   slagJust = SlagJust.satt(slagJust, valtSlag, patch);
-  buildShots();
+  omSlag();            // U18: reglagen drar 60 gånger i sekunden
 }
 
 el('sApex').addEventListener('input', () => justera({ apexFaktor: +el('sApex').value }));
@@ -1224,7 +1334,7 @@ el('vSlag').addEventListener('click', () => {
 el('vVind').addEventListener('click', () => {
   const p = el('vindpanel'), oppen = p.classList.toggle('dold');
   el('vVind').setAttribute('aria-pressed', String(!oppen));
-  if (!oppen) ritaVindPanel();
+  if (!oppen) { ritaVindPanel(); omSikte(); }
 });
 
 for (const id of ['vMs', 'vGust', 'vDir'])
@@ -1232,23 +1342,26 @@ for (const id of ['vMs', 'vGust', 'vDir'])
     // Spelarens egen vind ersätter den hämtade tills hen återställer. Panelen
     // säger "egen vind" så ingen tror att siffran kommer från nätet.
     vindEgen = { ms: +el('vMs').value, gust: +el('vGust').value, dir: +el('vDir').value };
-    ritaVindPanel();
-    buildShots();
+    ritaVindPanel();     // ren DOM, billig — får gå direkt så talen följer fingret
+    omSlag();            // scenen kostar — en ombyggnad per bildruta (U18)
   });
 
 el('vindater').addEventListener('click', () => {
   vindEgen = null;
   ritaVindPanel();
-  buildShots();
+  omSlag();
 });
 
 function applyExag(forra) {
   if (!meta) return;
+  // Skalningen och kameran är BILLIGA och måste följa fingret direkt — det är
+  // de som gör att reglaget känns kopplat till bilden. Ombyggnaderna av linje,
+  // träd och slag är dyra och schemaläggs till nästa bildruta (U18).
   if (ground) ground.scale.y = exag;
   if (wide) wide.scale.y = exag;      // kjolen följer marken, annars glider den
-  buildTrees();
-  buildLine();
-  buildShots();      // slagen ligger på marken → måste räknas om med den
+  omTrad();
+  omLinje();
+  omSlag();          // slagen ligger på marken → måste räknas om med den
   if (!forra || forra === exag) return;
   // Marken flyttar sig lodrätt när överdriften ändras. Gör inte kameran samma
   // resa hamnar den under terrängen (eller svävande högt över den) utan att
@@ -1523,6 +1636,7 @@ async function loadHole(slug) {
     ground = gltf.scene;
     ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
     scene.add(ground);
+    byggMarkindex();     // U18: EN gång per hål, före första ombyggnaden
     applyExag();
     placeCamera();
     stopFly();
