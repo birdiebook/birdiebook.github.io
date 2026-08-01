@@ -1,0 +1,431 @@
+{
+ "_": "GENERERAD av tools/publish_mobile_dispersion.py — redigera inte.",
+ "kalla": "data/dispersion/profile_<namn>.csv (tools/gen_dispersion_profiles.py)",
+ "buckets": [
+  "<50",
+  "50–75",
+  "75–100",
+  "100–125",
+  "125–150",
+  "150–175",
+  "175–200",
+  "200+"
+ ],
+ "bucket_edges": [
+  50,
+  75,
+  100,
+  125,
+  150,
+  175,
+  200
+ ],
+ "profiler": {
+  "hcp13": {
+   "drive": {
+    "dist_med": 200.0,
+    "dist_sd": 17.5,
+    "across_bias": 0.0,
+    "across_sd": 32.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -6.1,
+     "along_sd": 3.7,
+     "across_bias": 0.0,
+     "across_sd": 3.1
+    },
+    "50–75": {
+     "along_bias": -7.7,
+     "along_sd": 5.8,
+     "across_bias": 0.0,
+     "across_sd": 4.9
+    },
+    "75–100": {
+     "along_bias": -9.5,
+     "along_sd": 8.1,
+     "across_bias": 0.0,
+     "across_sd": 6.8
+    },
+    "100–125": {
+     "along_bias": -11.3,
+     "along_sd": 10.3,
+     "across_bias": 0.0,
+     "across_sd": 8.8
+    },
+    "125–150": {
+     "along_bias": -13.1,
+     "along_sd": 12.7,
+     "across_bias": 0.0,
+     "across_sd": 10.7
+    },
+    "150–175": {
+     "along_bias": -14.9,
+     "along_sd": 14.9,
+     "across_bias": 0.0,
+     "across_sd": 12.7
+    },
+    "175–200": {
+     "along_bias": -16.7,
+     "along_sd": 17.2,
+     "across_bias": 0.0,
+     "across_sd": 14.6
+    },
+    "200+": {
+     "along_bias": -19.4,
+     "along_sd": 20.7,
+     "across_bias": 0.0,
+     "across_sd": 17.6
+    }
+   }
+  },
+  "hcp18": {
+   "drive": {
+    "dist_med": 188.0,
+    "dist_sd": 19.5,
+    "across_bias": 0.0,
+    "across_sd": 37.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -7.5,
+     "along_sd": 4.0,
+     "across_bias": 0.0,
+     "across_sd": 3.5
+    },
+    "50–75": {
+     "along_bias": -9.5,
+     "along_sd": 6.3,
+     "across_bias": 0.0,
+     "across_sd": 5.5
+    },
+    "75–100": {
+     "along_bias": -11.7,
+     "along_sd": 8.8,
+     "across_bias": 0.0,
+     "across_sd": 7.7
+    },
+    "100–125": {
+     "along_bias": -13.9,
+     "along_sd": 11.4,
+     "across_bias": 0.0,
+     "across_sd": 9.9
+    },
+    "125–150": {
+     "along_bias": -16.1,
+     "along_sd": 13.9,
+     "across_bias": 0.0,
+     "across_sd": 12.1
+    },
+    "150–175": {
+     "along_bias": -18.3,
+     "along_sd": 16.4,
+     "across_bias": 0.0,
+     "across_sd": 14.3
+    },
+    "175–200": {
+     "along_bias": -20.5,
+     "along_sd": 18.9,
+     "across_bias": 0.0,
+     "across_sd": 16.5
+    },
+    "200+": {
+     "along_bias": -23.8,
+     "along_sd": 22.7,
+     "across_bias": 0.0,
+     "across_sd": 19.8
+    }
+   }
+  },
+  "hcp2": {
+   "drive": {
+    "dist_med": 245.0,
+    "dist_sd": 12.5,
+    "across_bias": 0.0,
+    "across_sd": 20.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -1.7,
+     "along_sd": 2.6,
+     "across_bias": 0.0,
+     "across_sd": 2.0
+    },
+    "50–75": {
+     "along_bias": -2.2,
+     "along_sd": 4.1,
+     "across_bias": 0.0,
+     "across_sd": 3.1
+    },
+    "75–100": {
+     "along_bias": -2.7,
+     "along_sd": 5.7,
+     "across_bias": 0.0,
+     "across_sd": 4.4
+    },
+    "100–125": {
+     "along_bias": -3.3,
+     "along_sd": 7.3,
+     "across_bias": 0.0,
+     "across_sd": 5.6
+    },
+    "125–150": {
+     "along_bias": -3.8,
+     "along_sd": 8.9,
+     "across_bias": 0.0,
+     "across_sd": 6.9
+    },
+    "150–175": {
+     "along_bias": -4.3,
+     "along_sd": 10.6,
+     "across_bias": 0.0,
+     "across_sd": 8.1
+    },
+    "175–200": {
+     "along_bias": -4.8,
+     "along_sd": 12.2,
+     "across_bias": 0.0,
+     "across_sd": 9.4
+    },
+    "200+": {
+     "along_bias": -5.6,
+     "along_sd": 14.6,
+     "across_bias": 0.0,
+     "across_sd": 11.2
+    }
+   }
+  },
+  "hcp23": {
+   "drive": {
+    "dist_med": 178.0,
+    "dist_sd": 21.0,
+    "across_bias": 0.0,
+    "across_sd": 41.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -8.7,
+     "along_sd": 4.3,
+     "across_bias": 0.0,
+     "across_sd": 3.8
+    },
+    "50–75": {
+     "along_bias": -10.9,
+     "along_sd": 6.8,
+     "across_bias": 0.0,
+     "across_sd": 6.0
+    },
+    "75–100": {
+     "along_bias": -13.4,
+     "along_sd": 9.4,
+     "across_bias": 0.0,
+     "across_sd": 8.4
+    },
+    "100–125": {
+     "along_bias": -15.9,
+     "along_sd": 12.2,
+     "across_bias": 0.0,
+     "across_sd": 10.8
+    },
+    "125–150": {
+     "along_bias": -18.4,
+     "along_sd": 14.8,
+     "across_bias": 0.0,
+     "across_sd": 13.2
+    },
+    "150–175": {
+     "along_bias": -20.9,
+     "along_sd": 17.6,
+     "across_bias": 0.0,
+     "across_sd": 15.6
+    },
+    "175–200": {
+     "along_bias": -23.4,
+     "along_sd": 20.2,
+     "across_bias": 0.0,
+     "across_sd": 18.0
+    },
+    "200+": {
+     "along_bias": -27.2,
+     "along_sd": 24.3,
+     "across_bias": 0.0,
+     "across_sd": 21.6
+    }
+   }
+  },
+  "hcp30": {
+   "drive": {
+    "dist_med": 165.0,
+    "dist_sd": 23.0,
+    "across_bias": 0.0,
+    "across_sd": 46.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -10.2,
+     "along_sd": 4.7,
+     "across_bias": 0.0,
+     "across_sd": 4.2
+    },
+    "50–75": {
+     "along_bias": -12.8,
+     "along_sd": 7.4,
+     "across_bias": 0.0,
+     "across_sd": 6.6
+    },
+    "75–100": {
+     "along_bias": -15.8,
+     "along_sd": 10.3,
+     "across_bias": 0.0,
+     "across_sd": 9.3
+    },
+    "100–125": {
+     "along_bias": -18.6,
+     "along_sd": 13.3,
+     "across_bias": 0.0,
+     "across_sd": 11.9
+    },
+    "125–150": {
+     "along_bias": -21.6,
+     "along_sd": 16.2,
+     "across_bias": 0.0,
+     "across_sd": 14.6
+    },
+    "150–175": {
+     "along_bias": -24.5,
+     "along_sd": 19.2,
+     "across_bias": 0.0,
+     "across_sd": 17.2
+    },
+    "175–200": {
+     "along_bias": -27.4,
+     "along_sd": 22.1,
+     "across_bias": 0.0,
+     "across_sd": 19.9
+    },
+    "200+": {
+     "along_bias": -31.7,
+     "along_sd": 26.5,
+     "across_bias": 0.0,
+     "across_sd": 23.8
+    }
+   }
+  },
+  "hcp8": {
+   "drive": {
+    "dist_med": 215.0,
+    "dist_sd": 15.0,
+    "across_bias": 0.0,
+    "across_sd": 26.0
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -4.3,
+     "along_sd": 3.2,
+     "across_bias": 0.0,
+     "across_sd": 2.6
+    },
+    "50–75": {
+     "along_bias": -5.5,
+     "along_sd": 5.1,
+     "across_bias": 0.0,
+     "across_sd": 4.1
+    },
+    "75–100": {
+     "along_bias": -6.8,
+     "along_sd": 7.1,
+     "across_bias": 0.0,
+     "across_sd": 5.8
+    },
+    "100–125": {
+     "along_bias": -8.1,
+     "along_sd": 9.1,
+     "across_bias": 0.0,
+     "across_sd": 7.4
+    },
+    "125–150": {
+     "along_bias": -9.3,
+     "along_sd": 11.1,
+     "across_bias": 0.0,
+     "across_sd": 9.1
+    },
+    "150–175": {
+     "along_bias": -10.6,
+     "along_sd": 13.2,
+     "across_bias": 0.0,
+     "across_sd": 10.7
+    },
+    "175–200": {
+     "along_bias": -11.9,
+     "along_sd": 15.2,
+     "across_bias": 0.0,
+     "across_sd": 12.4
+    },
+    "200+": {
+     "along_bias": -13.9,
+     "along_sd": 18.2,
+     "across_bias": 0.0,
+     "across_sd": 14.9
+    }
+   }
+  },
+  "hcpokand": {
+   "drive": {
+    "dist_med": 188.0,
+    "dist_sd": 30.2,
+    "across_bias": 0.0,
+    "across_sd": 37.8
+   },
+   "approach": {
+    "<50": {
+     "along_bias": -7.5,
+     "along_sd": 4.1,
+     "across_bias": 0.0,
+     "across_sd": 3.6
+    },
+    "50–75": {
+     "along_bias": -9.5,
+     "along_sd": 6.4,
+     "across_bias": 0.0,
+     "across_sd": 5.6
+    },
+    "75–100": {
+     "along_bias": -11.7,
+     "along_sd": 8.9,
+     "across_bias": 0.0,
+     "across_sd": 7.8
+    },
+    "100–125": {
+     "along_bias": -13.9,
+     "along_sd": 11.5,
+     "across_bias": 0.0,
+     "across_sd": 10.1
+    },
+    "125–150": {
+     "along_bias": -16.1,
+     "along_sd": 14.1,
+     "across_bias": 0.0,
+     "across_sd": 12.3
+    },
+    "150–175": {
+     "along_bias": -18.3,
+     "along_sd": 16.6,
+     "across_bias": 0.0,
+     "across_sd": 14.5
+    },
+    "175–200": {
+     "along_bias": -20.5,
+     "along_sd": 19.2,
+     "across_bias": 0.0,
+     "across_sd": 16.8
+    },
+    "200+": {
+     "along_bias": -23.8,
+     "along_sd": 23.0,
+     "across_bias": 0.0,
+     "across_sd": 20.1
+    }
+   }
+  }
+ }
+}

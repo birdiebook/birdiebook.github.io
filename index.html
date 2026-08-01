@@ -31,7 +31,7 @@
   }
   #app { max-width: 480px; margin: 0 auto; padding: 12px 14px 96px; }
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:6px;
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:4px;
     background:var(--card); border-top:1px solid var(--line);
     padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   /* Hemskärm: app-shell med FLIK-RADEN SOM FLEX-ELEMENT i botten (inte fixed).
@@ -52,7 +52,7 @@
     }
   }
   .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
-    font-size:12px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
+    font-size:11px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
   .tabs a .ico { display:block; font-size:20px; }
   .tabs a.active { color:var(--ink); background:#1a4c38; }
   h1 { font-size: 22px; margin: 10px 0 2px; }
@@ -212,6 +212,7 @@
   <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
   <a href="./oversikt.html"><span class="ico">📋</span>Översikt</a>
   <a href="./analys.html"><span class="ico">📊</span>Analys</a>
+  <a href="./profil.html"><span class="ico">👤</span>Profil</a>
 </nav>
 <script src="./round.js"></script>
 <!-- Live-scoring (additivt): supabase-js + delad score-härledning + klient.
@@ -219,6 +220,7 @@
      Faller tyst tillbaka till "ingen live" om CDN inte nås (t.ex. offline). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
+<script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
 <script src="./live.js"></script>
 <script src="./offline-download.js"></script>

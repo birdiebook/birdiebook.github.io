@@ -13,12 +13,19 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
 <script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./store.js"></script>
 <!-- U6: höjdprofil/"spelar som" (MapCore rad/hav/bearing + PlayAs). Vanliga
      scripts (inte moduler) FÖRE modulen nedan — samma mönster som
      karta.html/planera-karta.html. mapcore.js rör Leaflets `L` bara INNE i
      funktioner som aldrig anropas här, så den går att ladda utan Leaflet. -->
 <script src="./mapcore.js"></script>
+<script src="./bollbana.js"></script>
 <script src="./playas.js"></script>
+<script src="./vind3d.js"></script>   <!-- efter playas.js: delegerar dit -->
+<script src="./slagjust.js"></script> <!-- U17: justeringar som visningslager -->
+
 <title>SG Hål i 3D</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
@@ -50,10 +57,13 @@
     text-align:center; padding:0 30px; pointer-events:none; }
   #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:#9fc4ae88;
     bottom:calc(env(safe-area-inset-bottom) + 58px); }
-  /* U4 verktygsrad. Hojs av #botten-hojden sa den aldrig hamnar under
-     overdrifts-reglaget pa nagon skarm (UPPGRADERING_3D 3.4). */
+  /* U4 verktygsrad. UPPE till hoger sedan 2026-07-31 (beslut: bottenhogern ar
+     kvar at overdriften och avbryt-knappen). Ligger UNDER halremsan, sa varken
+     notch eller select kan hamna over den - samma 54px-dockning som
+     hojdpanelen, och darfor maste panelen sluta 82px fran hoger kant
+     (knappbredd 64 + 10 marginal + 8 luft). Se #hojdpanel. */
   #verktyg { position:fixed; right:10px; z-index:6;
-    bottom:calc(env(safe-area-inset-bottom) + 76px);
+    top:calc(env(safe-area-inset-top) + 54px);
     display:flex; flex-direction:column; gap:8px; }
   #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
     display:flex; flex-direction:column; align-items:center; gap:3px;
@@ -68,17 +78,79 @@
   #verktyg button:disabled { opacity:.38; cursor:default; }
   #verktyg svg { width:19px; height:19px; fill:none; stroke:currentColor;
     stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  /* U9: vilken runda slagen kommer ur. Ligger i verktygsraden (flex column) sa
+     den inte behover en egen fixerad position som kan glida ifran raden. */
+  #slaginfo { width:64px; font:600 8.5px/1.25 inherit; color:var(--dim);
+    text-align:center; letter-spacing:.02em; }
   @media (prefers-reduced-motion: reduce) {
     #verktyg button { transition:none; } }
-  /* U6 höjdprofil-panel. Dockad under #topp — bottenzonen är redan upptagen av
-     overdrifts-reglaget och verktygsraden (UPPGRADERING_3D §5 U6). */
-  #hojdpanel { position:fixed; left:10px; right:10px; z-index:5;
+  /* U6 höjdprofil-panel. Dockad under #topp — bottenzonen är upptagen av
+     överdrifts-reglaget (UPPGRADERING_3D §5 U6). Slutar 82px från höger kant
+     eftersom verktygsraden sedan 2026-07-31 står i samma zon; går den ända ut
+     ligger panelen ovanpå knapparna. Profilens SVG har
+     preserveAspectRatio="none" och skalar därför utan att beskäras. */
+  #hojdpanel { position:fixed; left:10px; right:82px; z-index:5;
     top:calc(env(safe-area-inset-top) + 54px);
     background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
     padding:10px 12px 8px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     box-shadow:0 10px 32px #0000006b; }
   #hojdpanel.dold { display:none; }
+  /* U16 vindpanel. Bottenzonen ar fri sedan verktygsraden flyttade upp; den
+     ligger ovanfor overdrifts-reglaget och lamnar mitten at banan (§3.4). */
+  #vindpanel { position:fixed; left:10px; right:10px; z-index:5;
+    bottom:calc(env(safe-area-inset-bottom) + 56px);
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; }
+  #vindpanel.dold { display:none; }
+  #vindrad { display:flex; justify-content:space-between; align-items:baseline;
+    font-size:13px; color:var(--dim); gap:8px; margin-bottom:6px; }
+  #vindrad b { color:var(--ink); font-size:15px; font-weight:700; }
+  #vindalder { font-size:11px; color:var(--dim); }
+  #vindpanel .reg { display:grid; grid-template-columns:52px 1fr 46px;
+    align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
+  #vindpanel input[type=range] { width:100%; accent-color:var(--accent); }
+  #vindpanel .varde { text-align:right; color:var(--ink); font-weight:600; }
+  #vindater { margin-top:7px; background:none; border:1px solid #ffffff26;
+    color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
+  /* U16 steg 4: siktraden. Samma bla som siktlinjen i scenen - texten och
+     strecket ska laesas som samma svar, inte som tva upplysningar. */
+  .siktrad { margin-top:7px; padding-top:6px; border-top:1px solid #ffffff1a;
+    font-size:12px; color:var(--dim); line-height:1.45; }
+  .siktrad:empty { display:none; }
+  .siktrad b { color:#8fd6ff; font-weight:700; }
+  /* U17 slagpanelen. Samma bottendockning och samma reglage-grid som
+     vindpanelen — de två visas aldrig samtidigt (setLage stanger vinden nar
+     slaget oppnas), sa de far dela plats. */
+  #slagpanel { position:fixed; left:10px; right:10px; z-index:5;
+    bottom:calc(env(safe-area-inset-bottom) + 56px);
+    max-height:62vh; overflow-y:auto;
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; }
+  #slagpanel.dold { display:none; }
+  #slagrubrik { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  #slagrubrik b { font-size:15px; }
+  #slagandrad { font:700 9px/1 inherit; letter-spacing:.08em; text-transform:uppercase;
+    color:#ffcf4d; border:1px solid #ffcf4d66; border-radius:6px; padding:3px 5px; }
+  #slagandrad[hidden] { display:none; }
+  #slagstang { margin-left:auto; background:none; border:none; color:var(--dim);
+    font-size:19px; line-height:1; padding:0 3px; cursor:pointer; }
+  #slagtal { font-size:12px; color:var(--dim); line-height:1.5; margin-bottom:5px; }
+  #slagtal b { color:var(--ink); font-weight:600; }
+  #slagpanel .reg { display:grid; grid-template-columns:60px 1fr 52px;
+    align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
+  #slagpanel input[type=range] { width:100%; accent-color:var(--accent); }
+  #slagpanel .varde { text-align:right; color:var(--ink); font-weight:600; }
+  #slagpanel .rubrad { font:700 9px/1 inherit; letter-spacing:.08em; margin-top:8px;
+    text-transform:uppercase; color:#9fc4ae99; }
+  #slagpanel .knappar { display:flex; gap:8px; margin-top:8px; }
+  #slagpanel .knappar button { background:none; border:1px solid #ffffff26;
+    color:var(--dim); border-radius:9px; padding:4px 9px; font:600 11px inherit; }
+  #slaghjalp { font-size:10.5px; color:#9fc4ae99; margin-top:7px; line-height:1.45; }
   #hojdrad { display:flex; justify-content:space-between; align-items:baseline;
     font-size:13px; color:var(--dim); margin-bottom:4px; gap:8px; }
   #hojdrad b { color:var(--ink); font-size:15px; font-weight:700; }
@@ -119,7 +191,56 @@
   <button id="vFlyover" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
   <button id="vTeevy" type="button" title="Vyn fran teen, blicken mot green"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M12 3l7 2.5L12 8"/><ellipse cx="12" cy="18" rx="6" ry="2.2"/></svg><span>Tee-vy</span></button>
   <button id="vHojd" type="button" title="Hojdprofil och spelar som"><svg viewBox="0 0 24 24"><path d="M3 18h18"/><path d="M3 14l6-7 5 5 3-3 4 5"/></svg><span>Hojd</span></button>
-  <button id="vSlaget" type="button" disabled title="Sikte och spridning - byggs i GP2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
+  <button id="vSlaget" type="button" disabled title="Valj ett slag och andra apex, vind och spridning"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
+  <button id="vSlag" type="button" disabled title="Dina loggade slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
+  <button id="vVind" type="button" title="Vindens verkan pa bollbanan"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 13h15a3 3 0 1 1-3 3"/><path d="M3 18h8"/></svg><span>Vind</span></button>
+  <div id="slaginfo" hidden></div>
+</div>
+<div id="vindpanel" class="dold">
+  <div id="vindrad"><b id="vindNu">–</b><span id="vindalder"></span></div>
+  <div class="reg"><label for="vMs">medel</label>
+    <input id="vMs" type="range" min="0" max="20" step="0.5" value="0">
+    <span class="varde" id="vMsV">0 m/s</span></div>
+  <div class="reg"><label for="vGust">by</label>
+    <input id="vGust" type="range" min="0" max="30" step="0.5" value="0">
+    <span class="varde" id="vGustV">0 m/s</span></div>
+  <div class="reg"><label for="vDir">från</label>
+    <input id="vDir" type="range" min="0" max="350" step="10" value="0">
+    <span class="varde" id="vDirV">N</span></div>
+  <button id="vindater" type="button">Återställ till hämtad vind</button>
+  <div class="siktrad"></div>
+</div>
+<div id="slagpanel" class="dold">
+  <div id="slagrubrik"><b id="slagnr">Slaget</b><span id="slagandrad" hidden>ändrad</span>
+    <button id="slagstang" type="button" aria-label="stäng">×</button></div>
+  <div id="slagtal"></div>
+  <div class="reg"><label for="sApex">apex</label>
+    <input id="sApex" type="range" min="0.4" max="2" step="0.05" value="1">
+    <span class="varde" id="sApexV">×1,00</span></div>
+  <div class="rubrad">Vind för det här slaget</div>
+  <div class="reg"><label for="sMs">medel</label>
+    <input id="sMs" type="range" min="0" max="20" step="0.5" value="0">
+    <span class="varde" id="sMsV">0 m/s</span></div>
+  <div class="reg"><label for="sGust">by</label>
+    <input id="sGust" type="range" min="0" max="30" step="0.5" value="0">
+    <span class="varde" id="sGustV">0 m/s</span></div>
+  <div class="reg"><label for="sDir">från</label>
+    <input id="sDir" type="range" min="0" max="350" step="10" value="0">
+    <span class="varde" id="sDirV">N</span></div>
+  <div class="rubrad">Antagen spridning (0 = av)</div>
+  <div class="reg"><label for="sSprC">i sidled</label>
+    <input id="sSprC" type="range" min="0" max="40" step="1" value="0">
+    <span class="varde" id="sSprCV">av</span></div>
+  <div class="reg"><label for="sSprA">i längd</label>
+    <input id="sSprA" type="range" min="0" max="40" step="1" value="0">
+    <span class="varde" id="sSprAV">av</span></div>
+  <div class="knappar">
+    <button id="sAter" type="button">Återställ slaget</button>
+    <button id="sAterAlla" type="button">Återställ alla</button>
+  </div>
+  <div class="siktrad"></div>
+  <div id="slaghjalp">Justeringarna ändrar bara vyn — rundan är loggad data och rörs
+    aldrig. Spridningen kommer <span id="sprkalla">ur din spelprofil</span>.</div>
 </div>
 <button id="flyavbryt" style="display:none; position:fixed; z-index:6;
   left:50%; transform:translateX(-50%);
@@ -175,6 +296,35 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
     // en DOM-etikett faktiskt står; skillnaden är eftersläpningen i px.
     screenOf: w => screenOf(controls.state, w, camera.fov,
                             innerWidth / innerHeight, innerWidth, innerHeight),
+    // U9: slag-lagrets tillstånd. Samma skäl som `hojd` nedan — lagret ritas i
+    // scenen, så det verifieras i scengrafen och inte i en skärmdump.
+    // U16: vindens tillstånd — hämtad, egen, och vad bågarna faktiskt räknar på.
+    vind: () => ({ hamtad: vindHamtad, egen: vindEgen, nu: vindNu(),
+                   alder: vindAlderText() }),
+    // U17: justeringslagret. `tal` är precis vad panelen visar, och `namn` är
+    // scengrafens etiketter — det är DÄR beviset ligger för att ett ändrat slag
+    // ser ändrat ut och att rundan aldrig rörs (jämför Store.export() omkring).
+    slagjust: () => ({
+      lage, valt: valtSlag, just: slagJust,
+      andrade: SlagJust.antalAndrade(slagJust),
+      tal: valtSlag != null ? slagTal[valtSlag] : null,
+      namn: shotObjs.map(o => o.name).filter(Boolean),
+    }),
+    // U16 steg 4: siktet. Både texten spelaren läser och punkten i scenen —
+    // ett teckenfel syns bara om man kan jämföra ordet med var strecket ligger.
+    sikt: () => {
+      const m = siktObjs.find(o => o.name === 'sikt-mal');
+      return { text: (document.querySelector('.siktrad') || {}).textContent || '',
+               namn: siktObjs.map(o => o.name),
+               mal: m ? { x: m.position.x, z: m.position.z } : null };
+    },
+    valj: i => valjSlag(i),
+    slag: () => ({ kalla: shotKalla, visa: shotVisa, objekt: shotObjs.length,
+                   antal: shotRec ? (shotRec.shots || []).length : null,
+                   punkter: shotRec && meta && meta.ll2xz
+                     ? (shotRec.shots || []).filter(s => s && s.lat != null)
+                         .map(s => shotXZ(s.lat, s.lon).map(v => Math.round(v)))
+                     : null }),
     // U6: höjdprofilens tillstånd + möjligheten att driva EN tick för hand.
     // rAF tickar INTE i en dold browser-panel (läxa i §10), så utan detta går
     // kopplingen profil ↔ 3D-markör inte att verifiera automatiskt: att vänta
@@ -305,9 +455,9 @@ function updateFly() {
 // att den ska kunna ta emot det greppet och överta posen sömlöst.
 if (fromPlan) el('flyavbryt').addEventListener('click', stopFly);
 
-// U4: verktygsraden. Flyover och Tee-vy lever; Höjd och Slaget är avstängda
-// tills U6 respektive GP2 finns — en knapp som ser klickbar ut men inte gör
-// något är sämre än en som ärligt visar att den inte är byggd än.
+// U4: verktygsraden. Flyover, Tee-vy och Höjd lever; Slaget lever sedan U17
+// men är avstängd på hål utan loggade slag — en knapp som ser klickbar ut men
+// inte gör något är sämre än en som ärligt visar varför den inte går att trycka.
 el('vFlyover').addEventListener('click', () => {
   if (lage === 'flyover') { stopFly(); setLage(null); return; }
   setLage('flyover');
@@ -343,18 +493,24 @@ renderer.setAnimationLoop(() => {
 // matriser räknas om — bara markfoten (groundY) följer skalan.
 const loader = new GLTFLoader();
 let ground = null, treeParts = [], lineObj = null, markers = [], hojdMarker = null;
+let wide = null;              // U15 vidvinkeln: terrängen bortom korridoren
 let meta = null;
 let exag = 3;
 
 const CROWN_GREENS = [0x4a6741, 0x587644, 0x405c3a, 0x62804e];
 
 function clearHole() {
-  for (const o of [ground, lineObj, hojdMarker, ...treeParts, ...markers]) {
+  for (const o of [ground, wide, lineObj, hojdMarker, ...treeParts, ...markers,
+                   ...shotObjs]) {
     if (!o) continue;
     scene.remove(o);
     o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
   }
-  ground = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
+  ground = null; wide = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
+  shotObjs = []; shotRec = null; shotKalla = '';
+  // U17: justeringarna hör till slagen på DET hålet. Nytt hål = tomt bord —
+  // en apex-faktor från hål 5 får inte följa med till hål 6.
+  slagJust = SlagJust.tom(); valtSlag = null; slagTal = [];
 }
 
 // Träd byggs ur meta-JSON:ens kompakta format (per hole_gltf.py):
@@ -500,13 +656,599 @@ function buildLine() {
     scene.add(s);
     return s;
   });
+  ritaSikte();   // siktet ligger på samma mark — ny linje, nytt sikte
 }
+
+// -------------------------------------------- U9: dina slag på hålet i 3D ---
+// Numrering och färg är 2D:s: `MapCore.accColor` — SAMMA funktion som
+// `MapCore.drawShots` anropar, inte kopierade hex-koder, så vyerna inte kan
+// glida isär (princip 4: en sanning per siffra).
+//
+// Men FORMEN är PC-vyns, inte kartans. Kartan ritar en rak linje mellan två
+// loggade punkter för att den bara har två dimensioner; i 3D finns höjdleden,
+// och då är en båge det sanna svaret. Modellen är `Bollbana` — speglad ur
+// rundor3d.js och låst av tests/js/test_bollbana.mjs, så telefonen och skärmen
+// visar samma slag med samma båge.
+const SHOT_GREEN = 0x7ee2a8;
+const SHOT_PIN = 0xe23b3b;
+let shotObjs = [], shotRec = null, shotVisa = true, shotKalla = '';
+
+function nummerSprite(n, hex) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = hex; g.beginPath(); g.arc(32, 32, 26, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 5; g.strokeStyle = '#fff'; g.stroke();
+  g.fillStyle = '#0c2e22'; g.font = '700 34px -apple-system,Segoe UI,Roboto,sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(String(n), 32, 34);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  s.scale.set(7, 7, 1);
+  return s;
+}
+
+// Slagen ligger i lat/lon (Store) och måste in i hålets lokala ram: samma
+// ll2xz-affin som allt annat, via hojdprofil.js där inversen redan bor.
+function shotXZ(lat, lon) { return HP.latLonToXz(meta.ll2xz, lat, lon); }
+const xzLL = (x, z) => HP.xzToLatLon(meta.ll2xz, x, z);
+
+// ------------------------------------------------- U16: vinden i bågen ---
+// Beslut 2026-08-01: vindlagret får kräva nät (princip 3 gäller inte det), men
+// en vindsiffra får ALDRIG se färskare ut än den är — därför bär panelen alltid
+// åldern, och utan nät står det att vinden saknas.
+//
+// Modellen är `Vind3D` (spegel av PC-vyns W1–W3, låst av test_vind3d.mjs).
+// Längdeffekten delegeras dit den redan bor: PlayAs.windAlongShift.
+let vindHamtad = null;    // {ms, dir, gust, ts} från nätet
+let vindEgen = null;      // spelarens override {ms, dir, gust}
+const vindNu = () => vindEgen || vindHamtad;
+
+function vindAlderText() {
+  if (!vindHamtad) return 'ingen vind hämtad';
+  if (vindEgen) return 'egen vind';
+  const min = Math.round((Date.now() - vindHamtad.ts) / 60000);
+  return min < 1 ? 'hämtad nyss' : `hämtad för ${min} min sedan`;
+}
+
+const KOMPASS = ['N','NNO','NO','ONO','O','OSO','SO','SSO','S','SSV','SV','VSV','V','VNV','NV','NNV'];
+const kompass = d => KOMPASS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+
+function ritaVindPanel() {
+  const v = vindNu();
+  el('vindNu').textContent = v
+    ? `${v.ms.toFixed(1)} m/s från ${kompass(v.dir)}${v.gust ? ` · by ${v.gust.toFixed(1)}` : ''}`
+    : 'vind saknas';
+  el('vindalder').textContent = vindAlderText();
+  if (v) {
+    el('vMs').value = v.ms; el('vGust').value = v.gust || 0; el('vDir').value = Math.round(v.dir / 10) * 10;
+  }
+  el('vMsV').textContent = `${(+el('vMs').value).toFixed(1)} m/s`;
+  el('vGustV').textContent = `${(+el('vGust').value).toFixed(1)} m/s`;
+  el('vDirV').textContent = kompass(+el('vDir').value);
+  el('vindater').disabled = !vindHamtad || !vindEgen;
+  // Siktet är vindens invers — ändras vinden ändras siktet i samma andetag,
+  // annars står en korrigering kvar för en vind som inte längre gäller.
+  ritaSikte();
+}
+
+async function hamtaVind() {
+  vindHamtad = null;
+  if (!meta || !meta.ll2xz || !meta.line) { ritaVindPanel(); return; }
+  const mitt = meta.line[Math.floor(meta.line.length / 2)];
+  const [lat, lon] = xzLL(mitt[0], mitt[2]);
+  try {
+    const w = await PlayAs.fetchWind(lat, lon);
+    if (w) vindHamtad = { ms: w.ms, dir: w.dir, gust: w.gust, ts: Date.now() };
+  } catch { /* utan nät: vindHamtad förblir null och panelen säger det */ }
+  ritaVindPanel();
+  buildShots();
+}
+
+/* Slagets relativa vind: bäringen tas ur ändpunkternas lat/lon (MapCore.bearing)
+   och inte ur de lokala koordinaterna — ll2xz bär SWEREF:s gridnorr, som avviker
+   ~1,6° från sant norr här, och vinden kommer i sanna grader. */
+function slagVind(a, b, v) {
+  if (!v || !v.ms) return null;
+  const A = xzLL(a.x, a.z), B = xzLL(b.x, b.z);
+  const rel = PlayAs.relWind(MapCore.bearing(A, B), v.ms, v.dir);
+  return { ...rel, ms: v.ms, gust: v.gust };
+}
+
+// ------------------------------------ U17: justeringar som visningslager ---
+// `slagJust` är hela justeringstillståndet (SlagJust, ren modul) och `valtSlag`
+// vilket slag panelen står på. Ingenting av detta tar vägen till Store: rundan
+// är loggad data, och ett skruvat apex får inte kunna bli facit (§5 U17).
+// `slagTal` är det panelen visar — fylls i av buildShots i samma svep som
+// bågarna ritas, så talen ALDRIG kan säga något annat än det som står i scenen.
+let slagJust = SlagJust.tom();
+let valtSlag = null;
+let slagTal = [];
+
+/* En ellips på marken vid NEDSLAGET b, orienterad efter slagriktningen a→b:
+   halvaxeln `aCross` tvärs banan, `aAlong` längs den. Bruten ur W3:s
+   byellips när U17 behövde rita en andra (spelarens antagna spridning) —
+   två ellipser med samma form ska inte ha två ritvägar som kan glida isär. */
+function ritaEllips(a, b, aCross, aAlong, farg, opacity, namn) {
+  const langd = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+  const fx = (b.x - a.x) / langd, fz = (b.z - a.z) / langd;   // framåt
+  const kurva = new THREE.EllipseCurve(0, 0, aCross, aAlong, 0, 2 * Math.PI);
+  const pts = kurva.getPoints(48).map(p => {
+    const x = b.x + fx * p.y + (-fz) * p.x;
+    const z = b.z + fz * p.y + (fx) * p.x;
+    return new THREE.Vector3(x, surfaceYAt(x, z, 0) + LINE_OFFSET, z);
+  });
+  const ring = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: farg, transparent: true, opacity }));
+  ring.name = namn;
+  scene.add(ring); shotObjs.push(ring);
+  return ring;
+}
+
+function buildShots() {
+  shotObjs.forEach(o => { scene.remove(o); o.geometry?.dispose?.();
+    o.material?.map?.dispose?.(); o.material?.dispose?.(); });
+  shotObjs = [];
+  el('slaginfo').hidden = !(shotVisa && shotRec && shotKalla);
+  el('slaginfo').textContent = shotKalla;
+  if (!meta || !meta.ll2xz || !shotRec || !shotVisa) {
+    // U17: finns inga bågar finns inget valt slag — annars kan panelen stå kvar
+    // och visa tal för ett slag som inte längre är ritat.
+    valtSlag = null; slagTal = []; ritaSlagPanel(); ritaSikte();
+    return;
+  }
+  if (ground) ground.updateMatrixWorld(true);
+  const punkter = (shotRec.shots || [])
+    .filter(s => s && s.lat != null && s.lon != null)
+    .map(s => { const [x, z] = shotXZ(s.lat, s.lon); return { x, z, acc: s.acc }; });
+  if (!punkter.length) { valtSlag = null; slagTal = []; ritaSlagPanel(); ritaSikte(); return; }
+
+  const bana = [...punkter];
+  if (shotRec.green && shotRec.green.lat != null) {
+    const [x, z] = shotXZ(shotRec.green.lat, shotRec.green.lon);
+    bana.push({ x, z, acc: null });
+  }
+  // Ett rör per slag, längs slagets BÅGE — inte en linje på marken. Formen
+  // kommer ur `Bollbana`, som är PC-vyns modell (rundor3d.js, C2) speglad hit
+  // och låst av tests/js/test_bollbana.mjs: apex-platån ~25–29 m, apex förbi
+  // mitten, brantare landning än utgång. Samma slag ska se likadant ut i
+  // telefonen som på skärmen.
+  //
+  // Bågens höjd läggs på i SANNA meter ovanpå kordan mellan ändpunkterna, som
+  // själva sitter på den överdrifts-skalade marken. Apex skalas alltså ALDRIG
+  // med överdriften — samma princip som träden: en boll som gick 27 m upp gick
+  // 27 m upp, hur mycket vi än överdriver terrängen.
+  slagTal = [];
+  for (let i = 0; i < bana.length - 1; i++) {
+    const a = bana[i], b = bana[i + 1];
+    const dist = Math.hypot(b.x - a.x, b.z - a.z);
+    if (dist < 1) continue;
+    const y0 = surfaceYAt(a.x, a.z, 0) + LINE_OFFSET;
+    const y1 = surfaceYAt(b.x, b.z, 0) + LINE_OFFSET;
+    const traj = Bollbana.shotTrajectory(dist);
+    // U17: slagets egen vind/apex vinner över hålets — utan justering ÄR
+    // effektiv() basen, så raden nedan är oförändrad semantik för orörda slag.
+    // GP1: profilens spridning är UTGÅNGSLÄGET för slagets ellips. Den slås
+    // upp per avstånd (`Spelprofil.spridning`) och skickas IN i SlagJust, som
+    // därmed förblir ren. Saknas profil eller tabell blir svaret null och
+    // ellipsen är av — samma läge som före GP1, men nu av brist på svar och
+    // inte av princip.
+    const eff = SlagJust.effektiv(
+      { vind: vindNu(), spr: Spelprofil.spridning(Store.profile(), dist) },
+      SlagJust.get(slagJust, i));
+    // W1: along-vinden formar bågen. Ändpunkterna är MÄTTA och rörs aldrig —
+    // medvind plattar, motvind ballongar, men bollen landade där den landade.
+    const vind = slagVind(a, b, eff.vind);
+    if (vind) traj.apex *= Vind3D.windApexFactor(vind.along, dist);
+    traj.apex = Math.max(0.4, traj.apex * eff.apexFaktor);
+    const arc = Bollbana.arcHeights(dist, traj);
+    // W2: sidvinden. Bollen siktades uppvinds och drevs till nedslaget, så
+    // flygvägen ligger UPPVINDS om kordan — noll i båda ändar, störst i mitten.
+    const drift = vind ? Vind3D.crossDrift(vind.cross, traj.apex) : 0;
+    let sido = [0, 0];
+    if (drift && vind.side) {
+      const langd = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const hoger = [-(b.z - a.z) / langd, (b.x - a.x) / langd];   // 90° medsols
+      // uppvinds = MOT den sida vinden trycker
+      sido = vind.side === 'H' ? [-hoger[0], -hoger[1]] : hoger;
+    }
+    const pts = arc.map((h, k) => {
+      const t = k / (arc.length - 1);
+      const off = drift * Vind3D.crossBowShape(t);
+      return new THREE.Vector3(a.x + (b.x - a.x) * t + sido[0] * off,
+                               y0 + (y1 - y0) * t + h,
+                               a.z + (b.z - a.z) * t + sido[1] * off);
+    });
+    // W3: byigheten gör nedslaget till en fördelning, inte en punkt.
+    let gustE = null;
+    if (vind && vind.gust) {
+      const e = Vind3D.gustEllipse(vind.ms, vind.gust, vind.along, vind.cross,
+                                   traj.apex, dist);
+      if (e.gustDelta > 0.05 && (e.aCross > Vind3D.GPS_FLOOR_M + 0.2 ||
+                                 e.aAlong > Vind3D.GPS_FLOOR_M + 0.2)) {
+        gustE = e;
+        ritaEllips(a, b, e.aCross, e.aAlong, 0x9fc4ae, 0.7, `slag-by-${i}`);
+      }
+    }
+    // U17 + GP1: spridningsellipsen. Två olika saker med samma form, och de
+    // får inte se likadana ut: profilens tal är en MODELL (spelprofilens hink),
+    // spelarens egen siffra ett ANTAGANDE. Färgen och namnet i scengrafen
+    // skiljer dem, och panelen skriver ut vilket det är.
+    if (eff.sprCross > 0 || eff.sprAlong > 0)
+      ritaEllips(a, b, eff.sprCross || 0.1, eff.sprAlong || 0.1,
+                 eff.sprKalla === "egen" ? 0xffcf4d : 0x8fd6ff, 0.75,
+                 `slag-spridning-${eff.sprKalla}-${i}`);
+    // Färgen är START-punktens: bågen tillhör slaget som slogs DÄRIFRÅN, så
+    // röret får samma färg som kulan det lämnar.
+    // U17: ett ändrat slag ska SE ändrat ut (annars tror spelaren att den
+    // skruvade bågen är den uppmätta), och det valda ska synas som valt. Det
+    // första är en ärlighetsregel, det andra bara UI — därför olika medel:
+    // genomskinlighet för "ändrad", självlysning för "vald".
+    const vald = valtSlag === i;
+    const mat = new THREE.MeshLambertMaterial({
+      color: new THREE.Color(MapCore.accColor(a.acc)),
+      transparent: eff.andrad, opacity: eff.andrad ? 0.55 : 1,
+      emissive: new THREE.Color(vald ? 0x445511 : 0x000000) });
+    const ror = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 32,
+                             vald ? 0.7 : 0.4, 5), mat);
+    ror.name = `slag-ror-${i}${eff.andrad ? '-andrad' : ''}${vald ? '-vald' : ''}`;
+    ror.userData.slagIdx = i;
+    scene.add(ror); shotObjs.push(ror);
+    // Panelens tal kommer HÄRIFRÅN, ur samma variabler som just ritade bågen.
+    const vinklar = Bollbana.trajAngles(traj.apex, traj.fa, dist);
+    slagTal[i] = { nr: i + 1, dist, apex: traj.apex, ...vinklar, vind, drift,
+                   gustE, andrad: eff.andrad, eff, pts };
+  }
+
+  punkter.forEach((p, i) => {
+    const y = surfaceYAt(p.x, p.z, 0);
+    const hex = MapCore.accColor(p.acc);          // SAMMA färgfunktion som 2D
+    const kula = new THREE.Mesh(new THREE.SphereGeometry(valtSlag === i ? 2.2 : 1.5, 12, 10),
+      new THREE.MeshLambertMaterial({ color: new THREE.Color(hex),
+        emissive: new THREE.Color(valtSlag === i ? 0x445511 : 0x000000) }));
+    kula.position.set(p.x, y + LINE_OFFSET, p.z);
+    kula.name = `slag-kula-${i}`;
+    kula.userData.slagIdx = i;    // kulan väljer slaget som slogs DÄRIFRÅN
+    scene.add(kula); shotObjs.push(kula);
+    const nr = nummerSprite(i + 1, hex);
+    nr.position.set(p.x, y + 7, p.z);
+    scene.add(nr); shotObjs.push(nr);
+  });
+
+  for (const [k, färg] of [['green', SHOT_GREEN], ['pin', SHOT_PIN]]) {
+    const q = shotRec[k];
+    if (!q || q.lat == null) continue;
+    const [x, z] = shotXZ(q.lat, q.lon);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 10),
+      new THREE.MeshLambertMaterial({ color: färg }));
+    m.position.set(x, surfaceYAt(x, z, 0) + LINE_OFFSET, z);
+    scene.add(m); shotObjs.push(m);
+  }
+  ritaSlagPanel();     // U17: panelen läser slagTal som just fylldes i
+  ritaSikte();         // U16 steg 4: siktet ärver apexen ur slagTal ovan
+}
+
+/* GP1: spridningstabellen (mobile/data/dispersion.json, genererad av
+   tools/publish_mobile_dispersion.py). Laddas EN gång och är helt frivillig:
+   saknas filen svarar `Spelprofil.spridning` null och ellipsen är av. En vy som
+   kraschar för att en frivillig tabell fattas vore värre än en vy utan ellips. */
+let spridningLaddad = null;
+function laddaSpridning() {
+  if (spridningLaddad) return spridningLaddad;
+  spridningLaddad = fetch('./data/dispersion.json')
+    .then(r => (r.ok ? r.json() : null))
+    .then(t => { if (t) Spelprofil.sattSpridning(t); })
+    .catch(() => { /* offline eller inte publicerad — ellipsen är bara av */ });
+  return spridningLaddad;
+}
+
+// ------------------------------------------- U17: panelen SLAGET ------------
+const fmtVind = t => {
+  if (!t.vind) return 'ingen vind';
+  const langs = t.vind.along >= 0 ? 'medvind' : 'motvind';
+  const sido = t.vind.side ? ` · ${Math.abs(t.vind.cross).toFixed(1)} m/s från ${t.vind.side === 'H' ? 'höger' : 'vänster'}` : '';
+  return `${langs} ${Math.abs(t.vind.along).toFixed(1)} m/s${sido}`;
+};
+
+function ritaSlagPanel() {
+  const p = el('slagpanel');
+  const t = valtSlag != null ? slagTal[valtSlag] : null;
+  if (!t) { p.classList.add('dold'); return; }
+  p.classList.remove('dold');
+  el('slagnr').textContent = `Slag ${t.nr} · ${Math.round(t.dist)} m`;
+  el('slagandrad').hidden = !t.andrad;
+  el('slagtal').innerHTML =
+    `apex <b>${t.apex.toFixed(1)} m</b> · ut <b>${t.launch.toFixed(0)}°</b> · ` +
+    `ned <b>${t.desc.toFixed(0)}°</b><br>${fmtVind(t)}` +
+    (t.drift ? ` · drift <b>${Math.abs(t.drift).toFixed(1)} m</b>` : '') +
+    (t.gustE ? `<br>byellips ${t.gustE.aCross.toFixed(1)} × ${t.gustE.aAlong.toFixed(1)} m` : '');
+  // Reglagen speglar det EFFEKTIVA läget: utan justering står de på modellens
+  // och hålets värden, så en spelare som drar i dem börjar där bågen står.
+  const e = t.eff;
+  el('sApex').value = e.apexFaktor;
+  el('sApexV').textContent = `×${e.apexFaktor.toFixed(2).replace('.', ',')}`;
+  el('sMs').value = e.vind ? e.vind.ms : 0;
+  el('sGust').value = e.vind ? (e.vind.gust || 0) : 0;
+  el('sDir').value = e.vind ? Math.round(e.vind.dir / 10) * 10 : 0;
+  el('sMsV').textContent = `${(+el('sMs').value).toFixed(1)} m/s`;
+  el('sGustV').textContent = `${(+el('sGust').value).toFixed(1)} m/s`;
+  el('sDirV').textContent = kompass(+el('sDir').value);
+  el('sSprC').value = e.sprCross; el('sSprA').value = e.sprAlong;
+  el('sSprCV').textContent = e.sprCross ? `${e.sprCross} m` : 'av';
+  el('sSprAV').textContent = e.sprAlong ? `${e.sprAlong} m` : 'av';
+  el('sprkalla').textContent =
+    e.sprKalla === 'profil' ? 'ur din spelprofil'
+    : e.sprKalla === 'egen' ? 'ditt eget antagande'
+    : 'ingen profil än — fyll i den under Profil';
+  el('sAter').disabled = !t.andrad;
+  el('sAterAlla').disabled = SlagJust.antalAndrade(slagJust) === 0;
+}
+
+/* Alla reglage går samma väg: nytt tillstånd ur SlagJust → rita om scenen.
+   Ingenting skrivs, ingenting sparas — därför räcker buildShots som "spara". */
+function justera(patch) {
+  if (valtSlag == null) return;
+  slagJust = SlagJust.satt(slagJust, valtSlag, patch);
+  buildShots();
+}
+
+el('sApex').addEventListener('input', () => justera({ apexFaktor: +el('sApex').value }));
+el('sSprC').addEventListener('input', () => justera({ sprCross: +el('sSprC').value }));
+el('sSprA').addEventListener('input', () => justera({ sprAlong: +el('sSprA').value }));
+for (const id of ['sMs', 'sGust', 'sDir'])
+  el(id).addEventListener('input', () => justera({
+    vind: { ms: +el('sMs').value, gust: +el('sGust').value, dir: +el('sDir').value } }));
+
+el('sAter').addEventListener('click', () => {
+  if (valtSlag == null) return;
+  slagJust = SlagJust.aterstall(slagJust, valtSlag);
+  buildShots();
+});
+el('sAterAlla').addEventListener('click', () => {
+  slagJust = SlagJust.aterstallAlla();
+  buildShots();
+});
+el('slagstang').addEventListener('click', () => valjSlag(null));
+
+// --------------------------------------- U16 steg 4: siktlinjen (W4) --------
+// W1–W3 svarar på vart bollen tar vägen. Siktet svarar på spelarens fråga:
+// vad måste JAG göra för att den ska landa där jag vill. Modellen är
+// `Vind3D.aimAdvice` — PC-vyns W4 speglad och låst av test_vind3d.mjs, så
+// telefonen och skärmen aldrig kan säga åt olika håll om samma slag.
+//
+// Siktet gäller ETT SLAG. Är ett slag valt (U17) gäller det slaget — med dess
+// egen vind och dess justerade apex, alltså exakt den båge som står i scenen.
+// Annars gäller hålets tee→pin-linje, men bara när den är kort nog att vara
+// ett enda slag: en siktkorrigering för 480 m är inte fel i modellen, den är
+// fel i FRÅGAN — ingen spelar hålet i ett slag, så talet skulle beskriva ett
+// slag som aldrig slås.
+const SIKT_ETT_SLAG_M = 280;   // längre hållinje ⇒ siktet kräver ett valt slag
+const SIKT_MIN_M = 0.5;        // under en halvmeter är korrigeringen brus
+const SIKT_FARG = 0x6fc9ff;
+let siktObjs = [];
+
+/* Vad siktet räknar på: start, mål, vind och apex. Apexen tas ur `slagTal` när
+   ett slag är valt — samma tal som ritade bågen, inte en omräkning som kan
+   glida ifrån den. */
+function siktUnderlag() {
+  if (valtSlag != null && slagTal[valtSlag] && slagTal[valtSlag].pts) {
+    const t = slagTal[valtSlag], p = t.pts, sist = p[p.length - 1];
+    return { a: { x: p[0].x, z: p[0].z }, b: { x: sist.x, z: sist.z },
+             v: t.eff.vind, apex: t.apex, vad: `Slag ${t.nr}` };
+  }
+  if (!meta || !meta.line || meta.line.length < 2) return null;
+  const f = meta.line[0], s = meta.line[meta.line.length - 1];
+  return { a: { x: f[0], z: f[2] }, b: { x: s[0], z: s[2] },
+           v: vindNu(), apex: null, vad: 'Hållinjen' };
+}
+
+/* Siktet skrivs i BÅDA panelerna: vindpanelen och slagpanelen delar
+   bottenplats och visas aldrig samtidigt, så en enda rad hade varit osynlig i
+   precis det läge där siktet betyder mest (ett valt slag). */
+function siktText(html) {
+  document.querySelectorAll('.siktrad').forEach(d => { d.innerHTML = html; });
+}
+
+function ritaSikte() {
+  siktObjs.forEach(o => { scene.remove(o); o.geometry?.dispose?.(); o.material?.dispose?.(); });
+  siktObjs = [];
+  const u = siktUnderlag();
+  if (!u) { siktText(''); return; }
+  // Två olika sanningar som inte får slås ihop: att vi INTE VET vad det blåser
+  // är något annat än att det är vindstilla. Den första är en lucka i datan,
+  // den andra ett svar på frågan.
+  if (!u.v) { siktText('Ingen vind hämtad — inget sikte att visa.'); return; }
+  if (!u.v.ms) { siktText('Vindstilla — ingen korrigering behövs.'); return; }
+  const dist = Math.hypot(u.b.x - u.a.x, u.b.z - u.a.z);
+  if (dist < 1) { siktText(''); return; }
+  if (valtSlag == null && dist > SIKT_ETT_SLAG_M) {
+    siktText(`Hållinjen är ${Math.round(dist)} m — längre än ett slag. ` +
+             'Välj ett slag för att se siktet.');
+    return;
+  }
+  const vind = slagVind(u.a, u.b, u.v);
+  if (!vind) { siktText(''); return; }
+  // Utan valt slag finns ingen ritad båge att ärva apexen ur — då är det
+  // modellens egen apex för längden, med vindens W1-faktor på, precis som
+  // buildShots räknar den.
+  let apex = u.apex;
+  if (apex == null)
+    apex = Bollbana.shotTrajectory(dist).apex * Vind3D.windApexFactor(vind.along, dist);
+  const adv = Vind3D.aimAdvice({ along_ms: vind.along, cross_ms: vind.cross, side: vind.side },
+                               apex, dist);
+  const across = Math.abs(adv.dAcross), along = Math.abs(adv.dAlong);
+  if (across < SIKT_MIN_M && along < SIKT_MIN_M) {
+    siktText(`${u.vad}: vinden kräver ingen korrigering att tala om.`);
+    return;
+  }
+  // Uppvinds = MOT den sida vinden trycker. Samma härledning som bågens W2 —
+  // om de två någonsin pekar åt olika håll är en av dem fel.
+  const langd = Math.hypot(u.b.x - u.a.x, u.b.z - u.a.z);
+  const hoger = [-(u.b.z - u.a.z) / langd, (u.b.x - u.a.x) / langd];
+  const upp = vind.side === 'H' ? [-hoger[0], -hoger[1]]
+            : vind.side === 'V' ? hoger : [0, 0];
+  const mx = u.b.x + upp[0] * adv.dAcross, mz = u.b.z + upp[1] * adv.dAcross;
+
+  // Streckad, så den aldrig förväxlas med hållinjen: den vita linjen är var
+  // hålet går, den streckade är vart du ska sikta. Följer terrängen med samma
+  // densifiering som buildLine, annars skär den genom kullar.
+  const pts = [];
+  const n = Math.max(2, Math.round(dist / LINE_STEP));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n, x = u.a.x + (mx - u.a.x) * t, z = u.a.z + (mz - u.a.z) * t;
+    pts.push(new THREE.Vector3(x, surfaceYAt(x, z, 0) + LINE_OFFSET * 2, z));
+  }
+  const linje = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineDashedMaterial({ color: SIKT_FARG, dashSize: 4, gapSize: 3,
+                                   transparent: true, opacity: 0.95 }));
+  linje.computeLineDistances();
+  linje.name = 'sikt-linje';
+  scene.add(linje); siktObjs.push(linje);
+
+  const mal = new THREE.Mesh(new THREE.SphereGeometry(1.4, 12, 10),
+    new THREE.MeshLambertMaterial({ color: SIKT_FARG, emissive: 0x123a4d }));
+  mal.position.set(mx, surfaceYAt(mx, mz, 0) + LINE_OFFSET * 2, mz);
+  mal.name = 'sikt-mal';
+  scene.add(mal); siktObjs.push(mal);
+
+  // Metrarna OCH orden. Talen är för den som vill räkna, orden för den som står
+  // på teen — och orden kommer ur samma `aimAdvice`, inte ur en egen if-sats.
+  const delar = [];
+  if (across >= SIKT_MIN_M && adv.lateralSide)
+    delar.push(`sikta <b>${across.toFixed(1)} m ${adv.lateralSide}</b>`);
+  if (along >= SIKT_MIN_M && adv.distWord)
+    delar.push(`spela <b>${along.toFixed(1)} m ${adv.distWord}</b>`);
+  siktText(`${u.vad} · ${Math.round(dist)} m: ${delar.join(' · ')}`);
+}
+
+/* Val och avmarkering. Samma slag igen = av — samma "andra trycket stänger"
+   som verktygsradens lägen (U4). */
+/* Vilket slag ligger under fingret? INTE en raycast mot röret: bågen är 0,4 m
+   tjock och kan stå 400 m bort, alltså under en pixel bred — en raycast mot den
+   kräver pixelprecision av en tumme. Vi mäter i stället avståndet PÅ SKÄRMEN
+   till bågens punkter och tar närmaste inom en tumbredd. Samma tal (44 px) som
+   en normal träffyta i appen. Ingen träff = avmarkering. */
+const TAP_PX = 44;
+const _proj = new THREE.Vector3();
+
+function slagVidSkarm(px, py) {
+  camera.updateMatrixWorld();
+  let bast = null, bastD = TAP_PX;
+  slagTal.forEach((t, i) => {
+    if (!t || !t.pts) return;
+    for (const p of t.pts) {
+      _proj.copy(p).project(camera);
+      if (_proj.z > 1) continue;                       // bakom kameran
+      const d = Math.hypot((_proj.x + 1) / 2 * innerWidth - px,
+                           (-_proj.y + 1) / 2 * innerHeight - py);
+      if (d < bastD) { bastD = d; bast = i; }
+    }
+  });
+  return bast;
+}
+
+function valjSlag(i) {
+  valtSlag = (i === valtSlag) ? null : i;
+  buildShots();
+}
+
+/* Vilken rundas slag? Aktiv runda först — det är vad 2D-kartan visar. Har den
+   inget på hålet tas den SENASTE rundan i telefonen som har det, och då står
+   datumet i vyn: att visa en gammal rundas slag utan att säga vilken vore
+   samma fel som en cachad vindsiffra som ser färsk ut (§5c-familjen).
+   Utan loggade slag alls står knappen avstängd med angiven anledning. */
+async function hittaSlag() {
+  shotRec = null; shotKalla = '';
+  const knapp = el('vSlag');
+  knapp.disabled = true;
+  knapp.title = 'Inga loggade slag på det här hålet';
+  // U17 delar grind med U9: utan loggade slag finns inget att skruva på.
+  el('vSlaget').disabled = true;
+  el('vSlaget').title = 'Inga loggade slag på det här hålet';
+  if (!meta || typeof Store === 'undefined' || typeof SGRound === 'undefined') return;
+  await Store.ready();          // rundorna hydreras ur IndexedDB först
+  await laddaSpridning();       // GP1: profilens ellips (tyst om filen saknas)
+  const bas = SGRound.GLOBAL_BASE || {};
+  if (!(meta.loop in bas)) return;
+  const rel = SGRound.globalToRel(bas[meta.loop] + meta.hole);
+  if (!rel) return;
+  const harSlag = r => r && (r.shots || []).some(s => s && s.lat != null);
+  const aktiv = Store.holeIn(Store.active(), rel);
+  if (harSlag(aktiv)) {
+    shotRec = aktiv; shotKalla = 'denna runda';
+  } else {
+    for (const rad of await Store.list({ limit: 12 })) {
+      if (Store.activeId() && rad.id === Store.activeId()) continue;
+      const rec = Store.holeIn(await Store.get(rad.id), rel);
+      if (harSlag(rec)) {
+        shotRec = rec;
+        shotKalla = String(rad.startedAt || '').slice(5, 10).replace('-', '/');
+        break;
+      }
+    }
+  }
+  if (!shotRec) return;
+  const n = (shotRec.shots || []).filter(s => s && s.lat != null).length;
+  knapp.disabled = false;
+  knapp.title = `${n} loggade slag (${shotKalla})`;
+  knapp.setAttribute('aria-pressed', String(shotVisa));
+  el('vSlaget').disabled = false;
+  el('vSlaget').title = 'Välj ett slag och ändra apex, vind och spridning';
+  shotKalla = `${n} slag · ${shotKalla}`;
+}
+
+// U17: Slaget-läget. Knappen slår bara PÅ valbarheten — panelen öppnas först
+// när ett slag är valt, för en tom panel med sex reglage som inte gör något
+// vore precis den avstängda-knapp-lögnen U4 ville bort ifrån.
+el('vSlaget').addEventListener('click', () => {
+  if (lage === 'slaget') { setLage(null); return; }
+  if (!shotVisa) {          // slagen måste synas för att kunna väljas
+    shotVisa = true;
+    el('vSlag').setAttribute('aria-pressed', 'true');
+    buildShots();
+  }
+  setLage('slaget');
+  status('tryck på ett slag för att ändra det');
+  setTimeout(() => { if (lage === 'slaget' && valtSlag === null) status(''); }, 2600);
+});
+
+el('vSlag').addEventListener('click', () => {
+  shotVisa = !shotVisa;
+  el('vSlag').setAttribute('aria-pressed', String(shotVisa));
+  buildShots();
+});
+
+el('vVind').addEventListener('click', () => {
+  const p = el('vindpanel'), oppen = p.classList.toggle('dold');
+  el('vVind').setAttribute('aria-pressed', String(!oppen));
+  if (!oppen) ritaVindPanel();
+});
+
+for (const id of ['vMs', 'vGust', 'vDir'])
+  el(id).addEventListener('input', () => {
+    // Spelarens egen vind ersätter den hämtade tills hen återställer. Panelen
+    // säger "egen vind" så ingen tror att siffran kommer från nätet.
+    vindEgen = { ms: +el('vMs').value, gust: +el('vGust').value, dir: +el('vDir').value };
+    ritaVindPanel();
+    buildShots();
+  });
+
+el('vindater').addEventListener('click', () => {
+  vindEgen = null;
+  ritaVindPanel();
+  buildShots();
+});
 
 function applyExag(forra) {
   if (!meta) return;
   if (ground) ground.scale.y = exag;
+  if (wide) wide.scale.y = exag;      // kjolen följer marken, annars glider den
   buildTrees();
   buildLine();
+  buildShots();      // slagen ligger på marken → måste räknas om med den
   if (!forra || forra === exag) return;
   // Marken flyttar sig lodrätt när överdriften ändras. Gör inte kameran samma
   // resa hamnar den under terrängen (eller svävande högt över den) utan att
@@ -560,8 +1302,17 @@ let lage = null;
 
 function setLage(nytt) {
   lage = nytt;
-  for (const [id, namn] of [['vFlyover', 'flyover'], ['vTeevy', 'teevy'], ['vHojd', 'hojd']])
+  for (const [id, namn] of [['vFlyover', 'flyover'], ['vTeevy', 'teevy'],
+                            ['vHojd', 'hojd'], ['vSlaget', 'slaget']])
     el(id).setAttribute('aria-pressed', String(lage === namn));
+  // U17: lämnar man slag-läget lämnar man också det valda slaget (panelen
+  // stängs av ritaSlagPanel när inget är valt). Justeringarna ligger kvar —
+  // de hör till hålet, inte till läget, och rensas när hålet byts.
+  if (lage !== 'slaget' && valtSlag !== null) valjSlag(null);
+  if (lage === 'slaget') {
+    el('vindpanel').classList.add('dold');       // de delar bottenplats
+    el('vVind').setAttribute('aria-pressed', 'false');
+  }
   // U6: panelen och 3D-markören visas bara i höjd-läget — enda stället som
   // styr synligheten, så de två aldrig kan hamna ur synk med knappen.
   const visarHojd = lage === 'hojd';
@@ -746,12 +1497,17 @@ function setHojdS(s) {
   });
   renderer.domElement.addEventListener('pointerup', e => {
     const d0 = down; down = null;
-    if (lage !== 'hojd' || !d0 || !meta || !ground) return;
+    if (!d0 || !meta || !ground) return;
+    if (lage !== 'hojd' && lage !== 'slaget') return;
     const moved = Math.hypot(e.clientX - d0.x, e.clientY - d0.y);
     if (moved > 6 || performance.now() - d0.t > 600) return;   // det var en gest, inte ett tryck
     const ndc = new THREE.Vector2(
       (e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     _tapRay.setFromCamera(ndc, camera);
+    // U17: i slag-läget träffar trycket ett SLAG (röret eller kulan), inte
+    // marken. Bommar man allt betyder det avmarkering — samma "tryck utanför
+    // stänger" som resten av appen.
+    if (lage === 'slaget') { valjSlag(slagVidSkarm(e.clientX, e.clientY)); return; }
     const hit = _tapRay.intersectObject(ground, true);
     if (hit.length) setHojdS(HP.xzToS(meta.line, hit[0].point.x, hit[0].point.z));
   });
@@ -775,9 +1531,35 @@ async function loadHole(slug) {
     buildHojdPanel();    // bygger om profil-SVG:n och nollställer hojdS
     el('fakta').textContent = `${fmtDh(meta.delta_h)} · ${meta.length_m} m`;
     status('');
+    if (meta.wide) loadWide(meta.slug, meta.wide);   // U15, efter hålet
+    hittaSlag().then(buildShots);                    // U9, efter hålet
+    hamtaVind();                                     // U16, kräver nät (§1 p3)
   } catch (e) {
     status('kunde inte ladda hålet — är det exporterat? (' + e.message + ')');
   }
+}
+
+// U15 vidvinkeln. Laddas EFTER hålets glb och inväntas aldrig: hålet ska vara
+// synligt först (§2 noll eftersläpning), omgivningen fyller i sig. Saknas
+// filen degraderar vyn rent till dagens korridor, utan fel i konsolen.
+//
+// Kjolen sänks INTE i geometrin utan med en konstant världsoffset, så steget
+// mot finmeshen förblir 0,3 m oavsett höjdöverdrift (`scale.y = exag` skulle
+// annars göra det till 0,9 m vid 3×). Delade noder har identisk höjd —
+// decimeringen plockar finrutans sampel (tools/hole_gltf.py build_wide_glb).
+const SKIRT_DROP_M = 0.3;
+
+async function loadWide(slug, file) {
+  try {
+    const gltf = await loader.loadAsync(`data/holes3d/${file}`);
+    if (!meta || meta.slug !== slug) return;      // användaren bytte hål under laddningen
+    wide = gltf.scene;
+    wide.name = 'u15-wide';                       // scengraf-verifiering, ?dbg=1
+    wide.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    wide.scale.y = exag;
+    wide.position.y = -SKIRT_DROP_M;
+    scene.add(wide);
+  } catch { /* ingen kjol för hålet — dagens vy gäller */ }
 }
 
 // ---------------------------------------------------------------- UI-yta ---

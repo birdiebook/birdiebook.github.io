@@ -21,14 +21,26 @@
  * Beroenden: SGRound (hålnumrering) och SGScore (score-härledning). Båda är
  * fristående moduler utan egna beroenden.  */
 const Store = (() => {
-  const DB_NAME = "golfsg", DB_VER = 1;
+  // DB_VER 2 (GP1): lagret `profile` tillkom. onupgradeneeded skapar bara det
+  // som saknas, så en telefon med v1-databas får profillagret utan att röra
+  // rundorna.
+  const DB_NAME = "golfsg", DB_VER = 2;
   const ROUNDS = "rounds", DOCS = "roundDocs", MATCHES = "matches";
+  const PROFILE = "profile";
+  // Profilen är EN post. Id:t är konstant med avsikt: GP1 beslutade att
+  // profilen ska sparas som ett enda serialiserbart objekt, så AS6:s
+  // enhetssynk blir en kopiering och inte en omskrivning.
+  const PROFILE_ID = "me";
 
   // Gamla nycklar: läses vid migrering, skrivs ALDRIG mer, raderas ALDRIG här.
   const LEGACY_ACTIVE = "sg-rundlogg-v1";
   const LEGACY_LAST = "sg-rundlogg-sist";
   const LEGACY_LIVE = "sg-live-v1";
   const MIGRATED_FLAG = "sg-store-migrated";
+  // AS4 la spelarens hcp/kön direkt i localStorage. GP1 äger dem nu; nycklarna
+  // läses en gång och lämnas kvar som säkerhetsnät.
+  const LEGACY_HCP = "sg_hcp", LEGACY_KON = "sg_kon";
+  const PROFILE_MIGRATED = "sg-profil-migrerad";
 
   const DOC_VERSION = 2;
 
@@ -54,7 +66,8 @@ const Store = (() => {
      vidare på samma API i stället för att vitna. Datan är då lika flyktig som
      förut — inte sämre. */
   function memoryBackend() {
-    const m = { [ROUNDS]: new Map(), [DOCS]: new Map(), [MATCHES]: new Map() };
+    const m = { [ROUNDS]: new Map(), [DOCS]: new Map(), [MATCHES]: new Map(),
+                [PROFILE]: new Map() };
     return {
       kind: "memory",
       get: (s, k) => Promise.resolve(clone(m[s].get(k)) || null),
@@ -95,6 +108,7 @@ const Store = (() => {
         }
         if (!db.objectStoreNames.contains(DOCS)) db.createObjectStore(DOCS, { keyPath: "id" });
         if (!db.objectStoreNames.contains(MATCHES)) db.createObjectStore(MATCHES, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(PROFILE)) db.createObjectStore(PROFILE, { keyPath: "id" });
       };
       req.onsuccess = () => res(idbBackend(req.result));
       req.onerror = () => rej(req.error);
@@ -105,6 +119,7 @@ const Store = (() => {
   let be = null;          // backend
   let doc = null;         // AKTIVT runddokument (synkront läsbart)
   let match = null;       // aktiv match | null
+  let profil = null;      // spelarens profil (synkront läsbar, som doc)
   let readyP = null;
   let dirty = false, flushing = null;
 
@@ -324,6 +339,33 @@ const Store = (() => {
     lsSet(MIGRATED_FLAG, "1");
   }
 
+  /* ---------- profilen (GP1) ----------
+     Spelprofil är den RENA modulen: den äger hinkarna och vet vad de betyder.
+     Store äger bara persistensen. Saknas modulen (en sida som inte laddar den)
+     körs appen vidare utan profil i stället för att vitna — samma hållning som
+     minnesbackenden. */
+  const harProfilmodul = () => typeof Spelprofil !== "undefined" && Spelprofil;
+
+  /* Migrering av AS4:s `sg_hcp`/`sg_kon`. Körs en gång och rör aldrig
+     nycklarna. Villkoret är avsiktligt "finns ingen profil ÄN": har spelaren
+     redan svarat i guiden ska ett gammalt localStorage-värde inte kunna skriva
+     över svaret vid nästa boot. */
+  async function migreraProfil() {
+    if (!harProfilmodul() || lsGet(PROFILE_MIGRATED)) return;
+    try {
+      const fanns = await be.get(PROFILE, PROFILE_ID);
+      if (!fanns) {
+        const hcp = lsGet(LEGACY_HCP), kon = lsGet(LEGACY_KON);
+        if ((hcp && hcp.trim() !== "") || kon) {
+          const p = Spelprofil.franLegacy(hcp, kon);
+          p.updatedAt = nowIso();
+          await be.put(PROFILE, Object.assign({ id: PROFILE_ID }, p));
+        }
+      }
+    } catch (e) { console.warn("[Store] migrering av profilen misslyckades", e); }
+    lsSet(PROFILE_MIGRATED, "1");
+  }
+
   /* ---------- persistens ---------- */
   function write(d) {
     normalize(d);
@@ -371,6 +413,13 @@ const Store = (() => {
         if (doc) normalize(doc);
         if (doc && doc.matchId) match = await be.get(MATCHES, doc.matchId);
       } catch (e) { console.warn("[Store] kunde inte hydrera aktiv runda", e); }
+      // Profilen hydreras som rundan: läses en gång, lever synkront. Sidor som
+      // renderar i Store.ready() ska kunna fråga efter den utan await.
+      try {
+        await migreraProfil();
+        const rad = await be.get(PROFILE, PROFILE_ID);
+        if (rad && harProfilmodul()) profil = Spelprofil.normalisera(rad);
+      } catch (e) { console.warn("[Store] kunde inte hydrera profilen", e); }
       return true;
     })();
     return readyP;
@@ -547,6 +596,40 @@ const Store = (() => {
 
   const markers = () => ((match && match.participants) || []).filter(p => p && p.marker);
 
+  /* ---------- profilens API (GP1) ----------
+     `profile()` är synkron av samma skäl som `active()`: renderingsvägar ska
+     inte behöva bli async för att fråga vem spelaren är. Returnerar alltid ett
+     helt objekt — en tom profil är ett giltigt svar, `null` vore ett tredje
+     tillstånd som varje anropare skulle behöva hantera. */
+  function profile() {
+    if (profil) return clone(profil);
+    return harProfilmodul() ? Spelprofil.tom() : null;
+  }
+
+  /* Patch, inte ersättning: guiden sparar ett steg i taget, och Profil-fliken
+     ett fält i taget. Normaliseringen körs på HELA resultatet, så ett okänt
+     värde aldrig kan smyga in via en delvis skrivning. */
+  function setProfile(patch) {
+    if (!harProfilmodul()) return null;
+    const nu = Spelprofil.normalisera(Object.assign(profile(), patch || {}));
+    nu.updatedAt = nowIso();
+    profil = nu;
+    const rad = Object.assign({ id: PROFILE_ID }, nu);
+    Promise.resolve()
+      .then(() => be.put(PROFILE, rad))
+      .catch(e => console.warn("[Store] kunde inte spara profilen", e));
+    return clone(nu);
+  }
+
+  /* Handicap för netto — med sin källa. Genvägen finns för att varje anropare
+     annars måste komma ihåg att fråga Spelprofil om skillnaden mellan ett
+     inmatat och ett härlett tal, och den som glömmer visar en gissning som ett
+     mätvärde (§GP1 beslut 3). */
+  function hcpForBerakning() {
+    return harProfilmodul() ? Spelprofil.hcpForBerakning(profile())
+                            : { value: null, kalla: "saknas" };
+  }
+
   /* Lägg till en markörspelare. `tee` och `kon` behövs för NETTO: course rating
      och slope slås upp per kombination × tee × kön (§7.1-notan: slå aldrig upp
      rating utan att veta kön). Saknas de går netto inte att räkna för spelaren,
@@ -648,6 +731,7 @@ const Store = (() => {
     mutate, touch, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
     addShot, addEvent,
     list, get, remove, export: toWire,
+    profile, setProfile, hcpForBerakning,
     // Sammanfattning av ETT dokument (samma form som indexraden) — det vyerna
     // använder för ärlig täckningsredovisning.
     summary: indexRow,

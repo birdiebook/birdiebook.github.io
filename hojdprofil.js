@@ -104,6 +104,19 @@ export function xzToLatLon(ll2xz, x, z) {
 }
 
 /**
+ * Framåtriktningen: [lat, lon] → lokal (x, z) med samma `ll2xz`-affin
+ * (`tools/hole_gltf.py` skriver den; formen är [lon0, lat0, a, b, c, d]).
+ * Identisk med `ll2local` i playas.js, men den är privat där — och affinen
+ * ska bo på ETT ställe, bredvid sin invers, så de inte kan glida isär.
+ * Används av hal3d.html för att lägga loggade slag i 3D-scenen.
+ */
+export function latLonToXz(ll2xz, lat, lon) {
+  const [lon0, lat0, a, b, c, d] = ll2xz;
+  return [(lon - lon0) * a + (lat - lat0) * b,
+          (lon - lon0) * c + (lat - lat0) * d];
+}
+
+/**
  * Nettohöjd tee→green att visa i panelen: vald tees dh om metan har den
  * tee:n (localStorage "sg_tee", samma konvention som playas.js:dh3dToGreen),
  * annars hålets delta_h. Båda fälten läses OFÖRÄNDRADE ur samma holes3d-JSON
