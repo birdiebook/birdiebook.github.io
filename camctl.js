@@ -219,6 +219,75 @@ export function shortestHeadingDelta(from, to) {
   return d;
 }
 
+/**
+ * ÖVERBLICKEN: tillståndet som visar HELA hålet, i 3D-vinkelns lutning.
+ *
+ * Startvyn ska vara densamma i 2D och 3D — annars hoppar bilden varje gång man
+ * byter vinkel eller hål, och det var precis vad den gjorde: 2D ramar in hålet
+ * med `fitBounds(green + line + tee).pad(0.12)` medan 3D stod på en fast regel
+ * (0,45·längden bakom teen, 0,18·längden upp) som varken följde hålets form,
+ * skärmens format eller 2D:s ram.
+ *
+ * Här räknas ramen i stället ut som en INPASSNING, samma sak som Leaflets
+ * fitBounds gör: sök det minsta avståndet där varje punkt i hålet projiceras
+ * innanför bilden med `pad` av halva bilden fri runtom. Då fungerar den för ett
+ * kort par-3 lika väl som för ett långt par-5, i stående som liggande format.
+ *
+ * Sökningen är en halvering, inte en formel: projektionen är perspektivisk och
+ * marken lutar, så en sluten formel hade behövt anta att hålet är en rät linje
+ * i ett plan. Predikatet "ryms vid avståndet R" är monotont i R (större R drar
+ * allt mot bildens mitt), och 40 halveringar ger millimeter — det är billigt en
+ * gång per hål.
+ *
+ * @param pts   hålets punkter i scenkoordinater, y REDAN överdriftsskalad
+ * @param opts  {fovDeg, aspect, tilt, pad, rangeMax}
+ */
+export function overviewState(pts, opts = {}) {
+  if (!pts || pts.length < 2) return null;
+  const fovDeg = opts.fovDeg ?? 55;
+  const aspect = opts.aspect || 1;
+  const tilt = clampTilt(opts.tilt ?? 55 * DEG);
+  const pad = opts.pad ?? 0.12;
+
+  const a = pts[0], b = pts[pts.length - 1];
+  /* Blicken går från tee mot green. Ur poseFromState är den vågräta
+     framåtriktningen (sin h, −cos h) — lös ut h ur hålets riktning. */
+  const heading = wrapHeading(Math.atan2(b.x - a.x, -(b.z - a.z)));
+
+  let lo = Infinity, hi = -Infinity, target = { x: 0, y: 0, z: 0 };
+  for (const p of pts) {
+    target.x += p.x / pts.length;
+    target.y += p.y / pts.length;
+    target.z += p.z / pts.length;
+    if (p.y < lo) lo = p.y;
+    if (p.y > hi) hi = p.y;
+  }
+  /* Målpunktens HÖJD är hålets mitt i höjdled, inte medelhöjden av punkterna:
+     en tät punktsvärm kring teen skulle annars dra ramen nedåt på ett hål som
+     stiger, och greenen hamna utanför bild. */
+  target.y = (lo + hi) / 2;
+
+  const ryms = R => {
+    const st = { target, range: R, heading, tilt };
+    const graf = 1 - pad;
+    for (const p of pts) {
+      const s = screenOf(st, p, fovDeg, aspect, 2, 2);   // width/height 2 → ndc·(+1)
+      if (!s) return false;                              // bakom kameran
+      if (Math.abs(s.x - 1) > graf || Math.abs(s.y - 1) > graf) return false;
+    }
+    return true;
+  };
+
+  let hiR = Math.min(opts.rangeMax ?? LIMITS.rangeMax, LIMITS.rangeMax);
+  if (!ryms(hiR)) return { target, range: hiR, heading, tilt };  // ryms inte ens längst bort
+  let loR = LIMITS.rangeMin;
+  for (let i = 0; i < 40; i++) {
+    const mid = (loR + hiR) / 2;
+    if (ryms(mid)) hiR = mid; else loR = mid;
+  }
+  return { target, range: clampRange(hiR), heading, tilt };
+}
+
 export class CameraController {
   /**
    * @param camera  three.js PerspectiveCamera (används bara via position.set /

@@ -79,7 +79,11 @@ const SlopeOverlay = (() => {
   // Trogen lutnings-heatmap (green-book-stil) som imageOverlay, ur det TÄTA slope-
   // rutnätet (green_slope.geojson:s `grids`). Rutnätet är norr-upp lat/lon; en canvas
   // nx×ny målas cell-för-cell och klipps till green-polygonen.
-  function slopeHeatOverlay(h) {
+  /* U13: canvasen och dess lat/lon-ram, utan Leaflet. 2D lägger den som
+     `imageOverlay`, 3D som textur på ett draperat rutnät — men PIXLARNA är
+     desamma. Två paletter kunde ha glidit isär, och då hade samma lutning haft
+     två färger i samma app (princip 4). */
+  function heatCanvas(h) {
     const grid = SLOPE_GRIDS && SLOPE_GRIDS[h.loop + "|" + h.hole];
     if (!grid || !h.green || h.green.length < 3) return null;
     const nx = grid.nx, ny = grid.ny, sl = grid.slope;
@@ -109,8 +113,14 @@ const SlopeOverlay = (() => {
       i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
     });
     cx.closePath(); cx.fillStyle = "#000"; cx.fill();
+    return { canvas: cv, latMin, latMax, lonMin, lonMax };
+  }
+
+  function slopeHeatOverlay(h) {
+    const c = heatCanvas(h);
+    if (!c) return null;
     // Nästan opak → green-book-färgerna slår igenom rent (matchar datorbilden).
-    return L.imageOverlay(cv.toDataURL(), [[latMin, lonMin], [latMax, lonMax]],
+    return L.imageOverlay(c.canvas.toDataURL(), [[c.latMin, c.lonMin], [c.latMax, c.lonMax]],
       { opacity: 0.95, interactive: false });
   }
 
@@ -225,7 +235,13 @@ const SlopeOverlay = (() => {
     slopeHole = null; slopeCells = null;
   }
 
-  return { load, show, drawArrows, hide,
+  /* U13: fall-features för ett hål ({slope_pct, bearing} + startpunkt), så
+     3D-vyn kan rita SAMMA pilar ur samma data. Kräver att `load()` körts. */
+  function fallFor(h) {
+    return (h && SLOPE_IDX && SLOPE_IDX[h.loop + "|" + h.hole]) || null;
+  }
+
+  return { load, show, drawArrows, hide, heatCanvas, fallFor,
            activeHole: () => slopeHole, lastZoom: () => lastArrowZoom,
            arrowDist: () => slopeArrowDist, slopeRGB, slopeColor,
            // Exporterad sedan U12: `vybro.js` räknar kameraavstånd ur samma

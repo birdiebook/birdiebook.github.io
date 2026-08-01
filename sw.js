@@ -37,7 +37,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-01-bytet";
+const VERSION = "2026-08-01-planslag";
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -66,6 +66,7 @@ const SHELL_ASSETS = [
   "spelformer.js",
   "sg.js",
   "coursemap.js",
+  "bildfilter.js",
   "mapcore.js",
   "playas.js",
   "slopeoverlay.js",
@@ -75,6 +76,8 @@ const SHELL_ASSETS = [
   "spelprofil.js",
   "vylage.js",
   "vybro.js",
+  "planslag.js",
+  "kompass.js",
   "store.js",
   "live.js",
   "offline-download.js",

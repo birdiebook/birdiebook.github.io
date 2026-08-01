@@ -22,6 +22,7 @@
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
 <script src="./coursemap.js"></script>
+<script src="./bildfilter.js"></script>
 <script src="./mapcore.js"></script>
 <script src="./bollbana.js"></script>
 <script src="./playas.js"></script>
@@ -30,6 +31,8 @@
 <script src="./slopeoverlay.js"></script>
 <script src="./vylage.js"></script>
 <script src="./vybro.js"></script>   <!-- U12: bron Leaflet ↔ camctl -->
+<script src="./planslag.js"></script> <!-- U19: EN beräkning av planens slag -->
+<script src="./kompass.js"></script>  <!-- U22: norr och vinden -->
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
@@ -75,10 +78,6 @@
   #bottom2d { position:fixed; left:0; right:0; z-index:1000;
     bottom:calc(env(safe-area-inset-bottom) + 10px);
     display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 12px; }
-  #slopeBtn { background:var(--framebg); border:1px solid var(--accent); color:var(--accent);
-    font-weight:800; font-size:14px; padding:12px 20px; border-radius:14px;
-    box-shadow:0 2px 8px #0007; }
-  #slopeBtn.on { background:rgba(55,176,107,.85); color:var(--accent-ink); }
   .hint { color:var(--dim); font-size:12px; background:var(--framebg);
     border:1px solid var(--line); border-radius:10px; padding:6px 12px; }
   #legs { max-width:min(92vw, 420px); max-height:22vh; overflow-y:auto;
@@ -88,6 +87,10 @@
   #legs .leg { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
   #legs .leg b { color:var(--ink); }
   #legs .leg span { color:var(--dim); display:flex; align-items:center; gap:6px; }
+  /* U19: samma val som i 3D, markerat på samma sätt som scenen markerar bågen. */
+  #legs .leg { border-radius:6px; padding:2px 4px; margin:0 -4px; cursor:pointer; }
+  #legs .leg.vald { background:rgba(55,176,107,.22); }
+  #legs .leg i { font-style:normal; color:#9fc4ae99; font-weight:400; }
   #legs .legX { background:transparent; border:1px solid var(--line); color:var(--dim);
     font-size:11px; line-height:1; width:18px; height:18px; border-radius:50%; padding:0; }
   #legRow { display:flex; gap:8px; }
@@ -115,8 +118,22 @@
     display:flex; align-items:center; gap:10px; }
   #botten label { font-size:13px; color:var(--dim); white-space:nowrap; }
   #exag { flex:1; accent-color:var(--accent); }
-  #verktyg { position:fixed; right:10px; z-index:6;
+  /* U22: kompassen ligger överst i högerkolumnen och verktygen under den —
+     samma kolumn, så blicken har ETT ställe att gå till för "var är jag och
+     vad kan jag göra". Finns i båda vinklarna. */
+  #kompass { position:fixed; right:10px; z-index:6;
     top:calc(env(safe-area-inset-top) + 54px);
+    width:64px; padding:6px 4px 5px; text-align:center;
+    background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
+    backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px #0000006b; cursor:pointer; }
+  #kompass svg { width:40px; height:40px; display:block; margin:0 auto; }
+  #kompassText { font:600 8.5px/1.2 inherit; color:var(--dim);
+    letter-spacing:.04em; text-transform:uppercase; margin-top:2px; }
+  #kompass.tom #kompassText { color:#9fc4ae88; }
+  #verktyg { position:fixed; right:10px; z-index:6;
+    top:calc(env(safe-area-inset-top) + 128px);
     display:flex; flex-direction:column; gap:8px; }
   #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
     display:flex; flex-direction:column; align-items:center; gap:3px;
@@ -135,7 +152,7 @@
     text-align:center; letter-spacing:.02em; }
   @media (prefers-reduced-motion: reduce) { #verktyg button { transition:none; } }
   #hojdpanel { position:fixed; left:10px; right:82px; z-index:5;
-    top:calc(env(safe-area-inset-top) + 54px);
+    top:calc(env(safe-area-inset-top) + 128px);
     background:#0e2b3ad2; border:1px solid #ffffff26; border-radius:14px;
     padding:10px 12px 8px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
@@ -208,15 +225,32 @@
   </div>
 </div>
 
-<!-- 2D-vinkelns botten -->
+<!-- 2D-vinkelns botten. Green-lutningen flyttade härifrån till verktygsraden
+     (U20) — den hör till vad man kan SE på hålet, inte till kedjan. -->
 <div id="bottom2d">
   <div id="legs"></div>
   <div id="legRow">
-    <button id="slopeBtn">⛳ Green-lutning</button>
     <button id="undoBtn" disabled>↩ Ångra</button>
   </div>
   <div class="hint" id="hint">Tappa på kartan för att lägga ett slag</div>
 </div>
+
+<!-- U22: kompassen. Ringen bär norr, nålen bär vinden — två olika saker, och
+     de ska inte se ut som ett. Ett tryck öppnar vindpanelen. -->
+<button id="kompass" type="button" title="Vindriktning · tryck för vindpanelen">
+  <svg viewBox="0 0 40 40" aria-hidden="true">
+    <circle cx="20" cy="20" r="17" fill="none" stroke="#ffffff2e" stroke-width="1.4"/>
+    <g id="kompassRing">
+      <text x="20" y="9.6" text-anchor="middle" font-size="8" font-weight="700"
+            fill="#9fc4ae" font-family="-apple-system,Segoe UI,Roboto,sans-serif">N</text>
+      <line x1="20" y1="31" x2="20" y2="34.5" stroke="#ffffff2e" stroke-width="1.4"/>
+    </g>
+    <g id="kompassNal">
+      <path d="M20 6 L25 24 L20 20.5 L15 24 Z" fill="#7fe0aa"/>
+    </g>
+  </svg>
+  <div id="kompassText">vind saknas</div>
+</button>
 
 <!-- 3D-vinkelns chrome. Samma markup som hal3d.html — motorn i hal3d.js slår
      upp exakt de här id:na, och det är hela skälet att de heter likadant. -->
@@ -232,16 +266,20 @@
   <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
 </div>
 <button id="undo3d" class="chrome3d" type="button" disabled>↩ Ångra slaget</button>
-<div id="verktyg" class="chrome3d" role="group" aria-label="Verktyg">
-  <button id="vFlyover" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
-  <button id="vTeevy" type="button" title="Vyn fran teen, blicken mot green"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M12 3l7 2.5L12 8"/><ellipse cx="12" cy="18" rx="6" ry="2.2"/></svg><span>Tee-vy</span></button>
-  <button id="vHojd" type="button" title="Hojdprofil och spelar som"><svg viewBox="0 0 24 24"><path d="M3 18h18"/><path d="M3 14l6-7 5 5 3-3 4 5"/></svg><span>Hojd</span></button>
+<!-- Verktygsraden finns i BÅDA vinklarna (U19/U20). `bara3d` märker de verktyg
+     som handlar om KAMERAN — de har ingen mening i 2D. Resten (lutningen,
+     slagen, slaget, vinden) hör till modellen och gäller båda. -->
+<div id="verktyg" role="group" aria-label="Verktyg">
+  <button id="vFlyover" class="bara3d" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
+  <button id="vTeevy" class="bara3d" type="button" title="Vyn fran teen, blicken mot green"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M12 3l7 2.5L12 8"/><ellipse cx="12" cy="18" rx="6" ry="2.2"/></svg><span>Tee-vy</span></button>
+  <button id="vHojd" class="bara3d" type="button" title="Hojdprofil och spelar som"><svg viewBox="0 0 24 24"><path d="M3 18h18"/><path d="M3 14l6-7 5 5 3-3 4 5"/></svg><span>Hojd</span></button>
+  <button id="vSlope" type="button" title="Green-lutningen"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="13" rx="8.5" ry="5.5"/><path d="M7 11l5 4 5-4"/><path d="M12 3.5v4"/></svg><span>Lutning</span></button>
   <button id="vSlaget" type="button" disabled title="Valj ett slag och andra apex, vind och spridning"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
-  <button id="vSlag" type="button" disabled title="Dina loggade slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
+  <button id="vSlag" type="button" disabled title="Planens slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
   <button id="vVind" type="button" title="Vindens verkan pa bollbanan"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 13h15a3 3 0 1 1-3 3"/><path d="M3 18h8"/></svg><span>Vind</span></button>
   <div id="slaginfo" hidden></div>
 </div>
-<div id="vindpanel" class="dold chrome3d">
+<div id="vindpanel" class="dold">
   <div id="vindrad"><b id="vindNu">–</b><span id="vindalder"></span></div>
   <div class="reg"><label for="vMs">medel</label>
     <input id="vMs" type="range" min="0" max="20" step="0.5" value="0">
@@ -255,7 +293,7 @@
   <button id="vindater" type="button">Återställ till hämtad vind</button>
   <div class="siktrad"></div>
 </div>
-<div id="slagpanel" class="dold chrome3d">
+<div id="slagpanel" class="dold">
   <div id="slagrubrik"><b id="slagnr">Slaget</b><span id="slagandrad" hidden>ändrad</span>
     <button id="slagstang" type="button" aria-label="stäng">×</button></div>
   <div id="slagtal"></div>
@@ -284,8 +322,9 @@
     <button id="sAterAlla" type="button">Återställ alla</button>
   </div>
   <div class="siktrad"></div>
-  <div id="slaghjalp">Justeringarna ändrar bara vyn — rundan är loggad data och rörs
-    aldrig. Spridningen kommer <span id="sprkalla">ur din spelprofil</span>.</div>
+  <div id="slaghjalp">Justeringarna gäller det här slaget i den här planen —
+    de sparas inte och rör aldrig en spelad runda. Spridningen kommer
+    <span id="sprkalla">ur din spelprofil</span>.</div>
 </div>
 <button id="flyavbryt" class="chrome3d" style="display:none; position:fixed; z-index:6;
   left:50%; transform:translateX(-50%);
@@ -328,22 +367,33 @@ let H3 = null;              // 3D-motorn, importeras först när 3D efterfrågas
 let h3dIndex = null;        // data/holes3d/index.<slug>.json, eller null
 let h3dLaddat = null;       // slug som ligger i scenen just nu
 
+/* U20: kan 3D-vinkeln rita lutningen? Motorn svarar (den äger scenen och vet
+   om hålet har data); tills den är laddad antar vi nej, för en knapp som lovar
+   något den inte kan hålla är sämre än en avstängd knapp. */
+let U13 = false;
+
 const halNu = () => ROUND[hi] || null;
+/** Har 3D-motorn AKTUELLT hål laddat? (Inte bara "finns motorn".) */
+const h3Klar = () => !!(H3 && h3dLaddat && h3dLaddat === slugFor(halNu()));
 const slugFor = h => h ? `${(h.loop || "").replace(" Course", "").toLowerCase()}_${h.hole}` : null;
 const finns3d = h => !!(h3dIndex && h3dIndex.holes.some(x => x.slug === slugFor(h)));
 
 // ------------------------------------------------------------ hålets text ---
+/* Rubrikens "m till green" — tee→green som ETT slag, räknat med samma modell
+   som allt annat i vyn.
+   Det stod förut här som en egen uträkning (`dh3dToGreen` + `playAsRange`) och
+   svarade 358 där listan sa 360 på samma hål: samma sträcka, två tal, alltså
+   precis vad princip 4 kallar värre än inget svar. Nu är det en `Planslag`-kedja
+   utan landningspunkter, och skillnaden kan inte uppstå. */
 function teeToGreenText(h) {
-  const teePt = MapCore.teePoint(h) || (h.line && h.line[0]);
-  if (!teePt || !h.green_center) return "";
-  const geo = Math.round(hav(teePt, h.green_center));
-  const dh = PlayAs.dh3dToGreen({ fromTee: true, pt: teePt }, h);
-  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
-  const pa = WIND ? PlayAs.playAsRange(teePt, h.green_center, WIND, slope) : null;
-  const shown = pa ? pa.mean : Math.round(geo + slope);
-  const dhTxt = (dh != null && Math.abs(dh) >= 1)
-    ? ` · ${dh > 0 ? "↗" : "↘"} ${Math.abs(dh).toFixed(0)} m` : "";
-  return `${shown} m till green${dhTxt}`;
+  // Ligger hålet i scenen är det MOTORNS kedja som gäller, av samma skäl som
+  // listan läser den: höjden kommer då ur scenens egen mark och inte ur en
+  // andra uppslagning som svarar en meter annorlunda.
+  const rad = (h3Klar() ? H3.kedjaFor([]) : kedjaFor(h, []))[0];
+  if (!rad) return "";
+  const dhTxt = (rad.dh != null && Math.abs(rad.dh) >= 1)
+    ? ` · ${rad.dh > 0 ? "↗" : "↘"} ${Math.abs(rad.dh).toFixed(0)} m` : "";
+  return `${rad.spelarSom} m till green${dhTxt}`;
 }
 
 function updateHeader() {
@@ -358,12 +408,18 @@ function updateHeader() {
   $("next").disabled = hi >= ROUND.length - 1;
 }
 
+/* Vinden har EN ägare (§5 U19). Finns 3D-motorn är det den som hämtar och som
+   bär spelarens övertäckning — 2D läser samma svar. Saknas motorn (banan har
+   ingen 3D) hämtar vi själva, med samma funktion. Två hämtningar för samma hål
+   kunde ha gett två vindar, och då hade 2D och 3D sagt olika om samma slag. */
 async function loadWind() {
   const h = halNu();
+  if (H3) { WIND = H3.vindenNu(); uppdateraKompass(); return; }
   const loc = (h && h.green_center) || [55.618, 13.07];
   WIND = await PlayAs.fetchWind(loc[0], loc[1]);
   updateHeader();
   drawLegs();
+  uppdateraKompass();
 }
 
 // ------------------------------------------------------ 2D: kartan och kedjan ---
@@ -382,15 +438,46 @@ function frameHole() {
   requestAnimationFrame(() => map && map.invalidateSize({ pan: false }));
 }
 
+/* U20: EN toggle, två vinklar. Tillståndet bor i Vylage; här ritas bara
+   konsekvensen — i Leaflet när kartan syns, i scenen när scenen gör det. */
 function syncSlope() {
   const h = halNu();
-  $("slopeBtn").classList.toggle("on", VY.slope);
+  const knapp = $("vSlope");
+  knapp.setAttribute("aria-pressed", String(VY.slope));
+  // Banor utan green_slope-data ska inte ha någon knapp alls (U20:s klart-när).
+  const finns = !!(SlopeOverlay.heatCanvas && h && SlopeOverlay.heatCanvas(h));
+  knapp.classList.toggle("doldvy", !finns);
   if (VY.slope && VY.vinkel === "2d" && h) {
     SlopeOverlay.show(map, slopeLayer, slopeArrowLayer, h, null, () => true);
   } else {
     SlopeOverlay.hide(slopeLayer, slopeArrowLayer);
   }
+  if (H3) H3.sattSlope(VY.slope && VY.vinkel === "3d", h);
 }
+
+// -------------------------------------------------------- U22: kompassen ---
+/* Ett rent visningslager: ringen bär norr, nålen bär vinden. I 2D drivs den av
+   kartans bearing (Leaflet äger den och ändrar den bara vid rotation), i 3D av
+   kamerans heading i renderloopens egen tick (§2:s ritregel). */
+function ritaKompass(vyBaring) {
+  const v = H3 ? H3.vindenNu() : WIND;
+  const a = Kompass.vinklar(vyBaring, v ? v.dir : null);
+  $("kompassRing").setAttribute("transform", `rotate(${a.norr.toFixed(1)} 20 20)`);
+  const nal = $("kompassNal");
+  nal.style.display = a.vind == null ? "none" : "";
+  if (a.vind != null) nal.setAttribute("transform", `rotate(${a.vind.toFixed(1)} 20 20)`);
+  $("kompass").classList.toggle("tom", !v);
+  // Utan nät finns ingen vind, och då SÄGER kompassen det (§1 princip 3).
+  $("kompassText").textContent = v
+    ? `${v.ms.toFixed(0)} m/s ${Kompass.streck(v.dir)}` : "vind saknas";
+}
+
+/** Bäringen som pekar uppåt i bild, i den vinkel som visas just nu. */
+function vyBaring() {
+  if (VY.vinkel === "3d" && H3) return H3.baringNu();
+  return Kompass.vyBaringAvLeaflet(map && map.getBearing ? map.getBearing() : 0);
+}
+const uppdateraKompass = () => ritaKompass(vyBaring());
 
 function legIcon(n) {
   return L.divIcon({ className: "legpin", iconSize: [26, 26], iconAnchor: [13, 13],
@@ -399,17 +486,10 @@ function legIcon(n) {
       + `display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0007;">${n}</div>` });
 }
 
-// "Spelar som" a→b (PLANERA_RUNDA_PLAN §PR2): punkt→punkt-Δh ur 3D-metan.
-function legPlaysAs(a, b) {
-  const h = halNu();
-  const m = h && PlayAs.meta(h);
-  const y1 = m && PlayAs.elev3dAt(m, a[0], a[1]);
-  const y2 = m && PlayAs.elev3dAt(m, b[0], b[1]);
-  const dh = (y1 != null && y2 != null) ? y2 - y1 : null;
-  const slope = dh != null ? PlayAs.slopeEffect(dh) : 0;
-  const pa = WIND ? PlayAs.playAsRange(a, b, WIND, slope) : null;
-  return pa ? pa.mean : Math.round(hav(a, b) + slope);
-}
+/* U19: `legPlaysAs` bodde här och räknade "spelar som" per ben — en andra
+   beräkning bredvid 3D-scenens, som varken kände till spelarens
+   vindövertäckning eller slagets egen justering. Den är borta. `kedjan()` nedan
+   är enda vägen till ett sådant tal, i båda vinklarna. */
 
 /* Ritar kedjan i BÅDA vinklarna ur samma källa (VY.legs()). Att 3D-sidan får
    samma lista är hela beviset för "en punkt satt i 2D finns i 3D". */
@@ -418,7 +498,10 @@ function drawLegs() {
   const h = halNu();
   $("undoBtn").disabled = legs.length === 0;
   $("undo3d").disabled = legs.length === 0;
-  if (H3) H3.sattPlanLegs(legs, h && h.green_center);
+  // U19: 3D-motorn får hela planen — tee, kedjan och green — och räknar EN
+  // gång. Talen nedan hämtas sedan ur just den beräkningen (`ritaLista`).
+  if (H3) H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h && h.line && h.line[0]),
+                            legs, green: h && h.green_center });
 
   legLayer.clearLayers();
   const box = $("legs");
@@ -427,34 +510,97 @@ function drawLegs() {
   const origin = MapCore.teePoint(h) || (h.line && h.line[0]);
   if (!origin) return tomt();
 
-  L.marker(origin, { icon: legIcon(1) }).addTo(legLayer);
+  // Tee-pinnen väljer slag 1; landningspunkt i väljer slag i+2 — precis som
+  // kulan gör i 3D (`userData.slagIdx`), så samma tryck betyder samma sak.
+  L.marker(origin, { icon: legIcon(1) }).addTo(legLayer)
+    .on("click", () => valjSlag2d(0));
   legs.forEach((p, i) => {
     const mk = L.marker(p, { icon: legIcon(i + 2), draggable: true }).addTo(legLayer);
     mk.on("dragend", () => {
       const ll = mk.getLatLng();
       VY.flyttaPunkt(i, [ll.lat, ll.lng]);
     });
+    mk.on("click", () => valjSlag2d(i + 1));
   });
   const solid = [origin, ...legs];
   if (solid.length > 1) L.polyline(solid, { color: "#37b06b", weight: 3 }).addTo(legLayer);
   const last = legs.length ? legs[legs.length - 1] : origin;
   L.polyline([last, h.green_center], { color: "#37b06b", weight: 3, dashArray: "4,6" }).addTo(legLayer);
 
-  let rows = "", prev = origin;
-  legs.forEach((p, i) => {
-    const d = legPlaysAs(prev, p);
-    const rem = Math.round(hav(p, h.green_center));
-    rows += `<div class="leg"><b>Slag ${i + 1}: ${d} m</b><span>${rem} m kvar `
-      + `<button class="legX" data-i="${i}" aria-label="ta bort slag ${i + 1}">✕</button></span></div>`;
-    prev = p;
+  ritaLista();
+}
+
+/* 2D-listan. Talen kommer ur `H3.kedjanNu()` — SAMMA rader som ritade bågarna
+   i 3D-scenen (§5 U19). Det är därför en U17-justering av ett slags vind eller
+   apex ändrar den här listan också: det finns bara ett svar, och båda vinklarna
+   läser det. Utan 3D-motorn (banan saknar 3D) räknar vi kedjan här i stället,
+   med samma `Planslag` och samma modeller — samma kod, inte en andra modell. */
+/* Kedjan för ett hål och en given uppsättning landningspunkter, räknad HÄR.
+   Används när 3D-motorn inte har hålet i scenen (under laddning, eller på en
+   bana utan 3D) och av rubriken, som frågar efter tee→green utan kedja. Samma
+   modul och samma modeller som motorn använder — det är inte en andra modell,
+   bara en andra anropsplats. Höjden kommer ur `PlayAs.elev3dAt` (hålets meta)
+   i stället för ur scenens markindex; samma DEM, samma meter. */
+function kedjaFor(h, legs) {
+  if (!h || !h.green_center) return [];
+  const m = PlayAs.meta(h);
+  return Planslag.kedja(
+    { tee: MapCore.teePoint(h) || (h.line && h.line[0]), legs,
+      green: h.green_center, vind: WIND, just: {} },
+    { hav, bearing: MapCore.bearing, relWind: PlayAs.relWind,
+      windAlongShift: PlayAs.windAlongShift, slopeEffect: PlayAs.slopeEffect,
+      hojd: (lat, lon) => (m ? PlayAs.elev3dAt(m, lat, lon) : null),
+      spridning: dist => Spelprofil.spridning(Store.profile(), dist),
+      effektiv: SlagJust.effektiv, bollbana: Bollbana, vind3d: Vind3D });
+}
+
+function kedjan() {
+  // Motorn svarar först när DET HÅLET ligger i scenen. Under laddningen (och på
+  // en bana utan 3D) räknar vi här i stället — annars stod listan tom i någon
+  // sekund vid varje hålbyte, vilket ser ut som "ingen plan" och inte som
+  // "laddar". Samma modul, samma modeller: talen är desamma.
+  return h3Klar() ? H3.kedjanNu() : kedjaFor(halNu(), VY.legs());
+}
+
+function ritaLista() {
+  const h = halNu();
+  const box = $("legs");
+  const rader = kedjan();
+  if (!h || !rader.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
+  const valt = H3 ? H3.valtNu() : null;
+  let rows = "";
+  rader.forEach(r => {
+    const kvar = Planslag.kvarEfter(r, h.green_center, { hav });
+    const geo = Math.round(r.dist);
+    // "Spelar som" är talet spelaren agerar på; det geometriska står bredvid
+    // bara när vind eller höjd faktiskt skilt dem åt.
+    const namn = r.tillGreen ? `Slag ${r.nr} (green)` : `Slag ${r.nr}`;
+    rows += `<div class="leg${valt === r.idx ? " vald" : ""}" data-slag="${r.idx}">`
+      + `<b>${namn}: ${r.spelarSom} m${geo !== r.spelarSom ? ` <i>(${geo})</i>` : ""}`
+      + `${r.andrad ? " ✎" : ""}</b><span>`
+      + (r.tillGreen ? "" : `${kvar} m kvar `)
+      + (r.tillGreen ? "" : `<button class="legX" data-i="${r.idx}" aria-label="ta bort slag ${r.nr}">✕</button>`)
+      + `</span></div>`;
   });
-  const dGreen = legPlaysAs(prev, h.green_center);
-  rows += `<div class="leg"><b>${legs.length ? `Slag ${legs.length + 1} (green)` : "Slag 1 (green)"}: ${dGreen} m</b><span></span></div>`;
   box.innerHTML = rows;
   box.classList.add("show");
   box.querySelectorAll(".legX").forEach(btn => {
-    btn.onclick = () => VY.taBortPunkt(parseInt(btn.dataset.i, 10));
+    btn.onclick = ev => { ev.stopPropagation(); VY.taBortPunkt(parseInt(btn.dataset.i, 10)); };
   });
+  // U19: slaget går att välja i BÅDA vinklarna. I 3D genom att trycka på bågen,
+  // i 2D genom att trycka på benet i listan eller på dess pin på kartan.
+  box.querySelectorAll(".leg[data-slag]").forEach(rad => {
+    rad.onclick = () => valjSlag2d(parseInt(rad.dataset.slag, 10));
+  });
+}
+
+/* Valet bor i 3D-motorn (den äger `SlagJust` och panelen), men det är PLANENS
+   val och inte kamerans — därför överlever det ett vinkelbyte, och därför får
+   2D sätta det. Utan motor finns ingen panel att öppna och valet vore tomt. */
+function valjSlag2d(i) {
+  if (!H3) return;
+  H3.valjFran2d(i);
+  ritaLista();
 }
 
 // ------------------------------------------------------------- vinkelbytet ---
@@ -504,10 +650,14 @@ function sattChrome(tre) {
   // aldrig kommit tillbaka.
   $("bottom2d").classList.toggle("doldvy", tre);
   document.querySelectorAll(".chrome3d").forEach(e => e.classList.toggle("doldvy", !tre));
-  // Green-lutningen är 2D:s i U11 — U13 tar den till 3D. En knapp som är på men
-  // inte visar något vore värre än en som säger varför den är av.
-  $("slopeBtn").disabled = tre;
-  $("slopeBtn").title = tre ? "Green-lutningen visas i 2D-vinkeln" : "";
+  // U19/U20: verktygsraden lever i BÅDA vinklarna. Bara de verktyg som styr
+  // KAMERAN är 3D-bara — lutningen, slagen, slaget och vinden hör till modellen
+  // och gäller lika i en karta som i en scen.
+  document.querySelectorAll(".bara3d").forEach(e => e.classList.toggle("doldvy", !tre));
+  // U20: lutningen i 3D är U13:s ritning. Tills den står säger knappen ärligt
+  // varför den inte gör något här i stället för att se klickbar ut.
+  $("vSlope").disabled = tre && !U13;
+  if (tre && !U13) $("vSlope").title = "Green-lutningen visas i 2D-vinkeln än så länge";
 }
 
 /* Övertoningen. Scenen ligger ÖVER kartan i dokumentet, så ett byte åt båda
@@ -639,12 +789,22 @@ async function sakerstall3d() {
   H3.paTapp(ll => VY.laggPunkt(ll));           // tapp-kontraktet, 3D-sidan
   H3.paExag(v => VY.sattExag(v));
   H3.paLage(l => VY.sattLage(l));              // verktygsradens läge → Vylage
+  // U19: räknar motorn om kedjan (vind hämtad, reglage draget) skriver
+  // 2D-listan om sig ur SAMMA rader. Ingen andra beräkning, inget att synka.
+  H3.paKedja(() => { WIND = H3.vindenNu(); ritaLista(); updateHeader(); uppdateraKompass(); });
+  H3.paBildruta(() => { if (VY.vinkel === "3d") uppdateraKompass(); });
+  U13 = true;                                  // motorn kan rita lutningen (U13)
   return H3;
 }
 
 /* `posefri` = bytet äger kameran (U12). Hålets ihågkomna vinkel gäller när man
    byter HÅL inne i 3D, men inte när man byter VINKEL: då är kontinuiteten med
    kartbilden hela poängen, och en sparad pose skulle rycka bilden i sömmen. */
+/* Hålet läggs i 3D-scenen även när spelaren står i 2D. Två skäl, och det första
+   är det viktiga: `Planslag`-kedjan räknas av motorn, och båda vinklarna ska
+   läsa SAMMA rader (§5 U19). Det andra är att vinkelbytet då blir omedelbart.
+   Kostnaden är hålets glb, som ändå hämtas vid första bytet och ligger i
+   sw-cachen efteråt. */
 async function visaHalI3d(opt) {
   const h = halNu();
   if (!H3 || !h || !finns3d(h)) return;
@@ -656,7 +816,10 @@ async function visaHalI3d(opt) {
     const p = (opt && opt.posefri) ? null : VY.pose();
     if (p) H3.sattPosen(p);
   }
-  H3.sattPlanLegs(VY.legs(), h.green_center);
+  // Hela planen, inte bara punkterna: motorn räknar kedjan och behöver tee och
+  // green för att veta var slag 1 börjar och var sista slaget tar vägen (U19).
+  H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h.line && h.line[0]),
+                    legs: VY.legs(), green: h.green_center });
 }
 
 // -------------------------------------------------------------- hålbytet ---
@@ -695,7 +858,7 @@ function rita(vad) {
     loadWind();
     visaHalI3d();
   }
-  if (vad === "slope") { syncSlope(); frameHole(); }
+  if (vad === "slope") { syncSlope(); if (VY.vinkel === "2d") frameHole(); }
   // Ett VINKELBYTE animeras (U12). En batch är sidans första uppställning —
   // där finns ingen bild att tona från, så den klipper hårt.
   if (vad === "vinkel") visaVinkel();
@@ -704,7 +867,9 @@ function rita(vad) {
   // Åt andra hållet: ändras läget i Vylage (t.ex. nollställt av ett vinkelbyte)
   // ska scenen följa. Bara vid FAKTISK skillnad — annars ekar de två.
   if (H3 && H3.lageNu() !== VY.lage) H3.sattLage(VY.lage);
+  if (vad === "vinkel" || vad === "batch") syncSlope();
   drawLegs();
+  uppdateraKompass();
 }
 
 async function init() {
@@ -723,7 +888,13 @@ async function init() {
 
   $("prev").onclick = () => goTo(hi);
   $("next").onclick = () => goTo(hi + 2);
-  $("slopeBtn").onclick = () => VY.sattSlope(!VY.slope);
+  $("vSlope").onclick = () => VY.sattSlope(!VY.slope);
+  // U22: kompassen är en genväg till vindpanelen — vinden är det den visar, och
+  // det man vill göra åt den är att titta närmare på den.
+  $("kompass").onclick = () => $("vVind").click();
+  // Leaflet äger 2D-bäringen; den ändras bara av en rotation, så en lyssnare är
+  // rätt här (kompassen är chrome och inte något som sitter fast i marken).
+  map.on("rotate move zoomend", uppdateraKompass);
   $("undoBtn").onclick = () => VY.angra();
   $("undo3d").onclick = () => VY.angra();
   $("v2d").onclick = () => VY.sattVinkel("2d");
@@ -748,6 +919,16 @@ async function init() {
     const idx = r.ok ? await r.json() : null;
     if (idx && (idx.holes || []).length) h3dIndex = idx;
   } catch (e) { h3dIndex = null; }
+
+  /* Motorn laddas när banan HAR 3D — även om vi står i 2D. Skälet är att
+     verktygsraden lever i båda vinklarna sedan U19: vinden, slaget och
+     spridningen ägs av motorn, och en panel som är död tills man varit i 3D en
+     gång vore precis den sortens osynliga tillståndsberoende U11 städade bort.
+     Inväntas inte — 2D ska vara uppe direkt. */
+  if (h3dIndex) sakerstall3d().then(async () => {
+    await visaHalI3d();      // scenen får hålet även i 2D — se visaHalI3d
+    syncSlope(); drawLegs(); updateHeader();
+  });
 
   if (params.get("slope") === "1") VY.sattSlope(true);
   if (params.get("vinkel") === "3d" || params.get("vy") === "3d") VY.sattVinkel("3d");

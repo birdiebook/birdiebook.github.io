@@ -21,7 +21,10 @@
      scripts (inte moduler) FÖRE modulen nedan — samma mönster som
      karta.html/planera-karta.html. mapcore.js rör Leaflets `L` bara INNE i
      funktioner som aldrig anropas här, så den går att ladda utan Leaflet. -->
+<script src="./coursemap.js"></script>  <!-- MAP_FILTER: 2D-kartans ortofoto-look, som 3D-marken matchar -->
+<script src="./bildfilter.js"></script> <!-- efter coursemap.js: räknar korrigeringen ur dess filter -->
 <script src="./mapcore.js"></script>
+<script src="./vybro.js"></script>      <!-- TILT_3D: överblickens lutning ägs av bron, inte av motorn -->
 <script src="./bollbana.js"></script>
 <script src="./playas.js"></script>
 <script src="./vind3d.js"></script>   <!-- efter playas.js: delegerar dit -->

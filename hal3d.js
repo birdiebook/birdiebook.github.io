@@ -17,7 +17,8 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { CameraController, screenOf } from './camctl.js';
+import { CameraController, screenOf,
+         overviewState as camOverviewState } from './camctl.js';
 import * as HP from './hojdprofil.js';
 
 const el = id => document.getElementById(id);
@@ -38,9 +39,13 @@ const EMBED = !!(typeof window !== 'undefined' && window.__VY_EMBED);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-// Samma ljus-filter som 2D-kartan (CourseMap.MAP_FILTER) på canvasen så
-// ortofoto-marken i 3D matchar 2D:s ljusare/friskare look (rå textur = mörk).
-renderer.domElement.style.filter = "brightness(1.35) saturate(1.20) contrast(0.96)";
+/* Canvas-filtret ligger på HELA vyn — himmel, dis, träd, siktlinje, markörer.
+   Det är därför det inte kan vara 2D-kartans filter: `brightness(1.60)
+   sepia(0.05)` på dis-himlen bränner ut den och gulnar laserträdens
+   vertexfärger. Strängen är oförändrad sedan U7 och ska så förbli; det som
+   ändras är att MARKEN inte längre nöjer sig med den (se MARK_KORR). */
+const FILTER_3D_CANVAS = "brightness(1.35) saturate(1.20) contrast(0.96)";
+renderer.domElement.style.filter = FILTER_3D_CANVAS;
 el('scen').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -51,6 +56,56 @@ scene.add(new THREE.HemisphereLight(0xdfeaf2, 0x3a4a38, 0.9));
 const sol = new THREE.DirectionalLight(0xfff2dd, 1.6);   // NV, som hillshaden
 sol.position.set(-0.5, 0.8, -0.6);
 scene.add(sol);
+
+/* ---- ortofotot ska se LIKADANT ut i 2D och 3D (ORTOFOTO_FARG.md) ----------
+ *
+ * 2D-looken är tiles × `CourseMap.MAP_FILTER`. 3D-looken var textur ×
+ * canvas-filtret ovan — två olika filter på samma ortofoto, alltså två looker
+ * på samma gräs. Lösningen är inte att byta canvas-filtret (det rör hela
+ * scenen) utan att låta MARKEN bära skillnaden: en korrigering i markens egen
+ * shader, vald så att
+ *
+ *     canvasfilter( korrigering( markpixel ) )  ≈  MAP_FILTER( tilepixel )
+ *
+ * Allt annat i scenen går genom exakt samma canvas-filter som förut och ser
+ * därför ut som förut. Korrigeringen räknas ut ur de två strängarna — ingen
+ * handknådad andra uppsättning tal som kan glida ifrån 2D när MAP_FILTER
+ * ändras. `tests/js/test_bildfilter.mjs` bevisar likheten numeriskt.
+ *
+ * Saknas `CourseMap` (en värdsida som inte laddat coursemap.js) hoppas
+ * korrigeringen över: vyn blir dagens, utan konsolfel. */
+const MAP_FILTER = typeof CourseMap !== 'undefined' ? CourseMap.MAP_FILTER : null;
+const BF = typeof Bildfilter !== 'undefined' ? Bildfilter : null;
+const MARK_KORR = (BF && MAP_FILTER)
+  ? BF.correction(BF.parse(MAP_FILTER), BF.parse(FILTER_3D_CANVAS)) : null;
+
+/* Träden: ORTOFOTO_FARG:s princip (mot rent grönt, inte mot gult) på
+   laserkronorna. Kronfärgen kommer ur ortofotot och ärver dess varma ton; en
+   liten ljushöjning och en vridning mot grönt gör dem lite ljusare gröna utan
+   att lämna den mätta färgen. Ligger PÅ trädmaterialen, inte på canvasen —
+   marken har sin egen korrigering och ska inte röras av den här. */
+const TRAD_FILTER = "brightness(1.10) saturate(1.06) hue-rotate(6deg)";
+const TRAD_OPS = BF ? BF.parse(TRAD_FILTER) : null;
+
+/* Lägger en filterkedja i ett materials fragment-shader, EFTER
+   <colorspace_fragment>. Där är gl_FragColor sRGB — samma färgrum som CSS-
+   filtren verkar i — så matten blir identisk med webbläsarens. Läggs den före
+   färgrumskonverteringen räknar den på linjärt ljus och ger fel ton. */
+function filtrera(mat, ops, namn) {
+  if (!mat || !ops || mat.userData.__bildfilter) return;
+  mat.userData.__bildfilter = namn;
+  const fn = BF.glsl(ops, namn);
+  mat.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <colorspace_fragment>',
+      `#include <colorspace_fragment>\n  gl_FragColor.rgb = ${namn}(gl_FragColor.rgb);`
+    ).replace('void main() {', `${fn}\nvoid main() {`);
+  };
+  mat.needsUpdate = true;
+}
+
+const filtreraMark = obj => obj?.traverse(c => filtrera(c.material, MARK_KORR, 'markKorr'));
+const filtreraTrad = obj => filtrera(obj?.material, TRAD_OPS, 'tradTon');
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 4000);
 // U1: kartgester i stället för orbit — ett finger panorerar, nyp zoomar, två
@@ -113,11 +168,14 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
       return h.length ? h[0].point.y : NaN;
     },
     valj: i => valjSlag(i),
-    slag: () => ({ kalla: shotKalla, visa: shotVisa, objekt: shotObjs.length,
-                   antal: shotRec ? (shotRec.shots || []).length : null,
-                   punkter: shotRec && meta && meta.ll2xz
-                     ? (shotRec.shots || []).filter(s => s && s.lat != null)
-                         .map(s => shotXZ(s.lat, s.lon).map(v => Math.round(v)))
+    slag: () => ({ visa: shotVisa, objekt: shotObjs.length, antal: KEDJA.length,
+                   // U19: raderna ÄR beviset — samma tal som 2D-listan skriver ut.
+                   kedja: KEDJA.map(r => ({ nr: r.nr, dist: Math.round(r.dist),
+                     spelarSom: r.spelarSom, apex: r.traj ? +r.traj.apex.toFixed(2) : null,
+                     andrad: r.andrad })),
+                   punkter: meta && meta.ll2xz
+                     ? [planTeeLL(), ...planLegs].filter(Boolean)
+                         .map(ll => shotXZ(ll[0], ll[1]).map(v => Math.round(v)))
                      : null }),
     // U6: höjdprofilens tillstånd + möjligheten att driva EN tick för hand.
     // rAF tickar INTE i en dold browser-panel (läxa i §10), så utan detta går
@@ -141,13 +199,17 @@ function resize() {
 }
 addEventListener('resize', resize); resize();
 
-// Inbäddad ÄR plan-läget — planvy.html är den plan-ingång ?from=plan pekade på.
-const fromPlan = EMBED || new URLSearchParams(location.search).get('from') === 'plan';
-
 // -------------------------------------------------------- fly-through (PR4) ---
-// Gated helt på ?from=plan (hård invariant: utan den flaggan körs INGET av detta).
+// FLYGNINGEN ÄR ETT VAL, INTE ETT STARTLÄGE. Den startade förut automatiskt vid
+// varje hålbyte i plan-läget (`?from=plan`/inbäddad), och eftersom den skriver
+// kamerans läge varje bildruta åt den upp posen som vinkelbytet just satt — så
+// bilden "hoppade runt" i stället för att ligga still på överblicken. Numera
+// startar bara verktygsradens Flyover-knapp den, på BÅDA sidorna; flaggan som
+// skilde dem åt fyllde ingen annan funktion och är borta (den gjorde dessutom
+// att avbryt-knappen aldrig kopplades in på den fristående sidan).
+//
 // Kameran glider längs meta.line (samma georef som scenen), blicken mot nästa
-// punkt på linjen. Avbryts av användarens första pekar-/hjul-interaktion.
+// punkt på linjen. Avbryts av knappen eller första pekar-/hjul-interaktionen.
 let fly = null; // { pts, cum, total, t0, dur } | null
 // Blickpunkten flygningen just nu använder. Kontrollern tar över DEN när
 // flygningen avbryts — annars hoppar scenen tillbaka till sitt gamla tillstånd.
@@ -161,6 +223,20 @@ const FLY_MIN_R  = 45;                 // m: minsta kamera-avstånd (aldrig löj
 const FLY_CLEAR_IN  = 14;              // m: träd närmare än så ger FULL sikt-klarning
 const FLY_CLEAR_OUT = 32;              // m: bortom så ingen inverkan (mjuk toning där emellan)
 const FLY_CLEAR_MARGIN = 8;            // m: kameran läggs så här mycket över kronan den behöver klara
+// U21: var flygningen BÖRJAR. Förut satt kameran `R·cos(pitch)` bakom
+// startpunkten redan vid u = 0, och `R` är det avstånd som krävs för att rymma
+// FLY_HALF_W i bredd — på en telefon i porträtt blir det över 120 m bakom teen,
+// alltså långt utanför banan och ofta bakom träd eller på en annan korridor.
+// Beställningen är spelarens egen startbild: strax bakom bakre tee. Avståndet
+// rampar därför in i stället för att gälla direkt.
+const FLY_START_BACK_M = 12;           // m bakom bakre tee vid start
+const FLY_BACK_RAMP = 0.8;             // andel av flygningen tills fullt kameraavstånd
+// Taket: kameran får aldrig hamna längre bakom fokuspunkten än en dryg tredjedel
+// av hålets längd. Utan det står den 123 m bakom en 100-metersgren — alltså
+// längre från teen än greenen är, vilket varken ser ut som golf eller går att
+// nå på den tid flygningen varar.
+const FLY_BACK_MAX_FRAC = 0.38;
+const FLY_TEE_MIN_M = 3;               // närmare hållinjens start än så = samma punkt
 
 // mjuk 0→1-ramp (Hermite) mellan två kanter — ger klarning utan pop när träd tonas in/ut
 function smoothstep(e0, e1, x) {
@@ -168,8 +244,39 @@ function smoothstep(e0, e1, x) {
   return t * t * (3 - 2 * t);
 }
 
+/* U21: BAKRE tee — den i `meta.tees` som spelar hålet längst.
+ *
+ * Det är inte samma sak som `meta.line[0]`: hållinjen börjar vid den tee hålets
+ * export utgick från, och på flera hål ligger bakre tee en bra bit bakom den
+ * (uppmätt på Burlöv: blue 7 hela 78 m, blue 4 32 m, blue 1 16 m). En flygning
+ * som startar på hållinjen börjar alltså mitt i hålet på just de hål där
+ * skillnaden syns mest.
+ *
+ * Och det är medvetet INTE spelarens valda tee: flygningen är en presentation
+ * av hålet, inte av dagens spel. */
+function flyBakreTee() {
+  const t = meta && meta.tees;
+  if (!t) return null;
+  let bast = null;
+  for (const v of Object.values(t))
+    if (v && isFinite(v.x) && (!bast || (v.len || 0) > (bast.len || 0))) bast = v;
+  return bast;
+}
+
 // Punkterna i sanna meter med höjd skalad av överdriften (markytan, ingen ögonhöjd).
-function flyGroundPts() { return meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag, z)); }
+// Ligger bakre tee bakom hållinjens start förlängs banan dit — annars börjar
+// flygningen framför den tee den påstår sig starta vid (U21).
+function flyGroundPts() {
+  const pts = meta.line.map(([x, y, z]) => new THREE.Vector3(x, y * exag, z));
+  const bak = flyBakreTee();
+  if (bak) {
+    const p0 = pts[0], gr = pts[pts.length - 1];
+    const bakom = Math.hypot(bak.x - gr.x, bak.z - gr.z) > Math.hypot(p0.x - gr.x, p0.z - gr.z);
+    const skilt = Math.hypot(bak.x - p0.x, bak.z - p0.z) > FLY_TEE_MIN_M;
+    if (bakom && skilt) pts.unshift(new THREE.Vector3(bak.x, (bak.y || 0) * exag, bak.z));
+  }
+  return pts;
+}
 
 // Trädkronornas topp i världskoordinater (fot y_mark följer överdriften, höjden är sann)
 // — används för att lyfta kameran över träd som annars skymmer hålet (t.ex. bakom teen).
@@ -189,9 +296,16 @@ function flyPose(curve, u, treeTops) {
   fwd.normalize();
   const fovV = camera.fov * Math.PI / 180;
   const fovH = 2 * Math.atan(camera.aspect * Math.tan(fovV / 2));
-  const R = Math.max(FLY_MIN_R, FLY_HALF_W / Math.tan(fovH / 2));
-  const pos = L.clone().addScaledVector(fwd, -R * Math.cos(FLY_PITCH));
-  const baseY = L.y + R * Math.sin(FLY_PITCH);
+  const R = Math.min(Math.max(FLY_MIN_R, FLY_HALF_W / Math.tan(fovH / 2)),
+                     FLY_BACK_MAX_FRAC * (curve.getLength() || 1));
+  // U21: backningen rampar från "precis bakom bakre tee" till det avstånd som
+  // rymmer hålets bredd. Höjden följer avståndet genom SAMMA pitch-vinkel, så
+  // starten blir en låg blick ner för hålet i stället för ett fågelperspektiv —
+  // och ingen knyck uppstår, för rampen är samma smoothstep som trädklarningen.
+  const back = FLY_START_BACK_M
+    + (R * Math.cos(FLY_PITCH) - FLY_START_BACK_M) * smoothstep(0, FLY_BACK_RAMP, u);
+  const pos = L.clone().addScaledVector(fwd, -back);
+  const baseY = L.y + back * Math.tan(FLY_PITCH);
   // sikt-klarning: lyft kameran mjukt över träd nära den — varje träds inverkan
   // tonas in/ut med avståndet (smoothstep) så höjden inte poppar när träd passeras.
   let need = baseY;
@@ -208,11 +322,8 @@ function flyPose(curve, u, treeTops) {
   return { pos, target };
 }
 
-function startFly(opt = {}) {
-  // Automatstarten vid hålbyte är fortfarande grindad på ?from=plan (PR4:s
-  // invariant). Verktygsradens knapp tvingar fram den — det är ett medvetet
-  // val av användaren, inte ett automatiskt beteende.
-  if ((!fromPlan && !opt.force) || !meta || !meta.line || meta.line.length < 2) return;
+function startFly() {
+  if (!meta || !meta.line || meta.line.length < 2) return;
   // centripetal Catmull-Rom: mjuk kurva genom grovpunkterna utan översläng i svängar
   const curve = new THREE.CatmullRomCurve3(flyGroundPts(), false, 'centripetal');
   const total = curve.getLength() || 1;
@@ -248,7 +359,7 @@ function updateFly() {
 // Avbryt med knappen. Första pekar-/hjulinteraktionen avbryter också, via
 // kontrollerns onUserInput — kontrollern lämnas PÅ under flygningen just för
 // att den ska kunna ta emot det greppet och överta posen sömlöst.
-if (fromPlan) el('flyavbryt').addEventListener('click', stopFly);
+el('flyavbryt').addEventListener('click', stopFly);
 
 // U4: verktygsraden. Flyover, Tee-vy och Höjd lever; Slaget lever sedan U17
 // men är avstängd på hål utan loggade slag — en knapp som ser klickbar ut men
@@ -256,7 +367,7 @@ if (fromPlan) el('flyavbryt').addEventListener('click', stopFly);
 el('vFlyover').addEventListener('click', () => {
   if (lage === 'flyover') { stopFly(); setLage(null); return; }
   setLage('flyover');
-  startFly({ force: true });
+  startFly();
 });
 el('vTeevy').addEventListener('click', () => {
   if (lage === 'teevy') { setLage(null); placeCamera(); return; }
@@ -268,8 +379,8 @@ el('vTeevy').addEventListener('click', () => {
 el('vHojd').addEventListener('click', () => {
   if (lage === 'hojd') { setLage(null); return; }
   stopFly();
-  const p = overviewPose();
-  if (p) controls.flyToEye(p.eye, p.target, 700);
+  const s = overviewState();
+  if (s) controls.flyTo(s, 700);
   setLage('hojd');
 });
 
@@ -279,6 +390,10 @@ function tick() {
   updateFly();
   if (!fly) controls.update();     // flygningen äger kameran medan den pågår
   updateHojdMarker();              // U6: markören härleds ur hojdS varje tick — aldrig i en lyssnare
+  // U22: kompassen läser kamerans bäring i SAMMA tick som scenen ritas, aldrig
+  // i en lyssnare på kamerakontrollen — §2:s ritregel gäller den precis som allt
+  // annat som ska följa vyn utan eftersläpning.
+  if (bildrutaPa) bildrutaPa();
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(tick);
@@ -297,17 +412,18 @@ const CROWN_GREENS = [0x4a6741, 0x587644, 0x405c3a, 0x62804e];
 
 function clearHole() {
   for (const o of [ground, wide, lineObj, hojdMarker, ...treeParts, ...markers,
-                   ...shotObjs, ...legObjs]) {
+                   ...shotObjs]) {
     if (!o) continue;
     scene.remove(o);
     o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
   }
   ground = null; wide = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
   markIndex = null;                       // hör till hålet, inte till vyn
-  shotObjs = []; shotRec = null; shotKalla = '';
+  shotObjs = []; KEDJA = [];
+  rensaSlope(); slopeHal = null;          // U13: lutningen hör till hålet
   // U11: planens kedja hör till hålet. Värdsidan sätter den nya direkt efter
   // laddningen; tills dess ska ingen gammal kedja stå kvar på ny mark.
-  legObjs = []; legLL = []; legGreen = null;
+  planTee = null; planLegs = []; planGreen = null;
   // U17: justeringarna hör till slagen på DET hålet. Nytt hål = tomt bord —
   // en apex-faktor från hål 5 får inte följa med till hål 6.
   slagJust = SlagJust.tom(); valtSlag = null; slagTal = [];
@@ -360,6 +476,7 @@ function buildTrees() {
     geo.computeVertexNormals();
     const hullMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
       vertexColors: true }));
+    filtreraTrad(hullMesh);
     scene.add(hullMesh);
     treeParts.push(hullMesh);
   }
@@ -390,6 +507,7 @@ function buildTrees() {
       mesh.setColorAt(slot, col);
     });
     mesh.instanceColor.needsUpdate = true;
+    filtreraTrad(mesh);          // kronorna, inte stammarna: bark ska inte bli grönare
     return mesh;
   };
   const cones = makeCrowns(new THREE.ConeGeometry(1, 1, 7), coneIdx, true);
@@ -480,7 +598,7 @@ function byggMarkindex() {
  * läser slagens tal.
  *
  * Namnet är nyckeln: två `buildShots` under samma ruta blir ETT bygge. */
-const OMBYGG_ORDNING = ['trad', 'linje', 'planlegs', 'slag', 'sikte'];
+const OMBYGG_ORDNING = ['trad', 'linje', 'slope', 'slag', 'sikte'];
 const _ombyggKo = new Map();
 let _ombyggRaf = 0;
 function schemalagg(namn, fn) {
@@ -500,7 +618,6 @@ const omTrad  = () => schemalagg('trad', buildTrees);
 const omLinje = () => schemalagg('linje', buildLine);
 const omSlag  = () => schemalagg('slag', buildShots);
 const omSikte = () => schemalagg('sikte', ritaSikte);
-const omPlanLegs = () => schemalagg('planlegs', ritaPlanLegs);   // U11
 
 function buildLine() {
   // U18: rensa RIKTIGT. Utan dispose läckte ett drag 60 geometrier i sekunden —
@@ -538,19 +655,26 @@ function buildLine() {
   omSikte();     // siktet ligger på samma mark — ny linje, nytt sikte (U18: köad)
 }
 
-// -------------------------------------------- U9: dina slag på hålet i 3D ---
-// Numrering och färg är 2D:s: `MapCore.accColor` — SAMMA funktion som
-// `MapCore.drawShots` anropar, inte kopierade hex-koder, så vyerna inte kan
-// glida isär (princip 4: en sanning per siffra).
+// ------------------------------ U19: PLANENS slag på hålet, i 3D ------------
+// Slagen här är de PLANERADE slagen och inga andra (§5 U19). Fram till U19 kom
+// de ur `Store` — en gammal rundas loggade slag — och det var fel plats: i
+// planeringsvyn är ett facit inte det man planerar, och ett facit med sex
+// reglage under sig är den förfalskning U17 själv förbjöd. Loggade slag bor i
+// analysen; jämförelsen plan mot utfall är PC_ANALYS_PLAN §P6:s jobb.
 //
-// Men FORMEN är PC-vyns, inte kartans. Kartan ritar en rak linje mellan två
-// loggade punkter för att den bara har två dimensioner; i 3D finns höjdleden,
-// och då är en båge det sanna svaret. Modellen är `Bollbana` — speglad ur
-// rundor3d.js och låst av tests/js/test_bollbana.mjs, så telefonen och skärmen
-// visar samma slag med samma båge.
-const SHOT_GREEN = 0x7ee2a8;
-const SHOT_PIN = 0xe23b3b;
-let shotObjs = [], shotRec = null, shotVisa = true, shotKalla = '';
+// FORMEN är oförändrad och fortfarande PC-vyns: en båge, inte ett streck på
+// marken. Kartan ritade streck för att den bara har två dimensioner; i 3D finns
+// höjdleden, och då är bågen det sanna svaret.
+//
+// Och TALEN räknas inte här. `Planslag` äger hela kedjan — sträcka, Δh, vind,
+// "spelar som", apex, spridning — och den här filen ritar det den får. Det är
+// hela skälet till att 2D-listan och 3D-bågen inte kan säga olika saker om
+// samma slag (princip 4).
+const PLAN_FARG = 0x37b06b;        // samma gröna som 2D-kartans plan-pins
+const PLAN_FARG_HEX = '#37b06b';
+let shotObjs = [], shotVisa = true;
+let planTee = null, planLegs = [], planGreen = null;   // lat/lon, satt av värdsidan
+let KEDJA = [];                    // Planslag-raderna som just ritades
 
 function nummerSprite(n, hex) {
   const c = document.createElement('canvas');
@@ -666,108 +790,121 @@ function ritaEllips(a, b, aCross, aAlong, farg, opacity, namn) {
   return ring;
 }
 
+/* Kedjans punkter i scenens ram. `Planslag` arbetar i lat/lon (samma valuta som
+   2D-kartan och som Vylage lagrar); scenen arbetar i hålets lokala meter. Här
+   är ENDA stället som växlar mellan dem, via `hojdprofil.js` där affinen bor. */
+function planPunkt(ll) {
+  const [x, z] = HP.latLonToXz(meta.ll2xz, ll[0], ll[1]);
+  return { x, z };
+}
+
+/* Tee-punkten för planen. Värdsidan skickar den (`MapCore.teePoint` — spelarens
+   valda tee, T1:s sanning); saknas den faller vi tillbaka på hållinjens start,
+   som är samma punkt hålets egen linje ritas från. Aldrig en gissning. */
+function planTeeLL() {
+  if (planTee) return planTee;
+  if (!meta || !meta.line || !meta.line.length) return null;
+  const t = meta.line[0];
+  return xzLL(t[0], t[2]);
+}
+
+/* Vad `Planslag` behöver för att räkna: allt som rör omvärlden, injicerat.
+   Höjden kommer ur markindexet (U18) och INTE ur `PlayAs.elev3dAt` — vi står i
+   scenen och har den exakta ytan här; ett andra höjduppslag hade kunnat svara
+   något annat om samma punkt. Överdriften delas bort: Δh ska vara sanna meter,
+   inte ritade. */
+function planDeps() {
+  return {
+    hav: MapCore.hav, bearing: MapCore.bearing,
+    relWind: PlayAs.relWind, windAlongShift: PlayAs.windAlongShift,
+    slopeEffect: PlayAs.slopeEffect,
+    hojd: (lat, lon) => {
+      const p = planPunkt([lat, lon]);
+      const y = surfaceYAt(p.x, p.z, NaN);
+      return isFinite(y) ? y / (exag || 1) : null;
+    },
+    spridning: dist => Spelprofil.spridning(Store.profile(), dist),
+    effektiv: SlagJust.effektiv,
+    bollbana: Bollbana, vind3d: Vind3D,
+  };
+}
+
+/* Kedjan för en godtycklig uppsättning landningspunkter. Utan argument är det
+   PLANEN som den står — det är den formen scenen ritar och 2D-listan skriver ut.
+   Med `[]` blir det hålet som ett enda slag, tee→green, vilket är exakt frågan
+   vyns rubrik ställer. Att rubriken går genom SAMMA funktion är hela poängen:
+   den räknade förut själv och svarade 358 där listan sa 360. */
+function planKedja(legsOverride) {
+  if (!meta || !meta.ll2xz) return [];
+  return Planslag.kedja(
+    { tee: planTeeLL(), legs: legsOverride || planLegs, green: planGreen,
+      vind: vindNu(), just: legsOverride ? {} : slagJust }, planDeps());
+}
+
 function buildShots() {
   shotObjs.forEach(o => { scene.remove(o); o.geometry?.dispose?.();
     o.material?.map?.dispose?.(); o.material?.dispose?.(); });
   shotObjs = [];
-  el('slaginfo').hidden = !(shotVisa && shotRec && shotKalla);
-  el('slaginfo').textContent = shotKalla;
-  if (!meta || !meta.ll2xz || !shotRec || !shotVisa) {
+  KEDJA = planKedja();
+  el('slaginfo').hidden = !(shotVisa && KEDJA.length);
+  el('slaginfo').textContent = KEDJA.length ? `${KEDJA.length} planerade slag` : '';
+  if (!KEDJA.length || !shotVisa) {
     // U17: finns inga bågar finns inget valt slag — annars kan panelen stå kvar
     // och visa tal för ett slag som inte längre är ritat.
-    valtSlag = null; slagTal = []; ritaSlagPanel(); omSikte();
+    valtSlag = null; slagTal = []; ritaSlagPanel(); ritaKedjeknapp();
+    if (kedjaPa) kedjaPa(KEDJA);
+    omSikte();
     return;
   }
   if (ground) ground.updateMatrixWorld(true);
-  const punkter = (shotRec.shots || [])
-    .filter(s => s && s.lat != null && s.lon != null)
-    .map(s => { const [x, z] = shotXZ(s.lat, s.lon); return { x, z, acc: s.acc }; });
-  if (!punkter.length) { valtSlag = null; slagTal = []; ritaSlagPanel(); omSikte(); return; }
 
-  const bana = [...punkter];
-  if (shotRec.green && shotRec.green.lat != null) {
-    const [x, z] = shotXZ(shotRec.green.lat, shotRec.green.lon);
-    bana.push({ x, z, acc: null });
-  }
-  // Ett rör per slag, längs slagets BÅGE — inte en linje på marken. Formen
-  // kommer ur `Bollbana`, som är PC-vyns modell (rundor3d.js, C2) speglad hit
-  // och låst av tests/js/test_bollbana.mjs: apex-platån ~25–29 m, apex förbi
-  // mitten, brantare landning än utgång. Samma slag ska se likadant ut i
-  // telefonen som på skärmen.
-  //
-  // Bågens höjd läggs på i SANNA meter ovanpå kordan mellan ändpunkterna, som
-  // själva sitter på den överdrifts-skalade marken. Apex skalas alltså ALDRIG
-  // med överdriften — samma princip som träden: en boll som gick 27 m upp gick
-  // 27 m upp, hur mycket vi än överdriver terrängen.
   slagTal = [];
-  for (let i = 0; i < bana.length - 1; i++) {
-    const a = bana[i], b = bana[i + 1];
-    const dist = Math.hypot(b.x - a.x, b.z - a.z);
-    if (dist < 1) continue;
+  for (const rad of KEDJA) {
+    const i = rad.idx;
+    const a = planPunkt(rad.a), b = planPunkt(rad.b);
+    const langd = Math.hypot(b.x - a.x, b.z - a.z);
+    if (langd < 1) continue;
     const y0 = surfaceYAt(a.x, a.z, 0) + LINE_OFFSET;
     const y1 = surfaceYAt(b.x, b.z, 0) + LINE_OFFSET;
-    const traj = Bollbana.shotTrajectory(dist);
-    // U17: slagets egen vind/apex vinner över hålets — utan justering ÄR
-    // effektiv() basen, så raden nedan är oförändrad semantik för orörda slag.
-    // GP1: profilens spridning är UTGÅNGSLÄGET för slagets ellips. Den slås
-    // upp per avstånd (`Spelprofil.spridning`) och skickas IN i SlagJust, som
-    // därmed förblir ren. Saknas profil eller tabell blir svaret null och
-    // ellipsen är av — samma läge som före GP1, men nu av brist på svar och
-    // inte av princip.
-    const eff = SlagJust.effektiv(
-      { vind: vindNu(), spr: Spelprofil.spridning(Store.profile(), dist) },
-      SlagJust.get(slagJust, i));
-    // W1: along-vinden formar bågen. Ändpunkterna är MÄTTA och rörs aldrig —
-    // medvind plattar, motvind ballongar, men bollen landade där den landade.
-    const vind = slagVind(a, b, eff.vind);
-    if (vind) traj.apex *= Vind3D.windApexFactor(vind.along, dist);
-    traj.apex = Math.max(0.4, traj.apex * eff.apexFaktor);
-    const arc = Bollbana.arcHeights(dist, traj);
-    // W2: sidvinden. Bollen siktades uppvinds och drevs till nedslaget, så
+    // Bågens höjd läggs på i SANNA meter ovanpå kordan mellan ändpunkterna, som
+    // själva sitter på den överdrifts-skalade marken. Apex skalas alltså ALDRIG
+    // med överdriften — samma princip som träden: en boll som gick 27 m upp gick
+    // 27 m upp, hur mycket vi än överdriver terrängen.
+    const arc = Bollbana.arcHeights(rad.dist, rad.traj);
+    // W2: sidvinden. Bollen siktas uppvinds och drivs mot nedslaget, så
     // flygvägen ligger UPPVINDS om kordan — noll i båda ändar, störst i mitten.
-    const drift = vind ? Vind3D.crossDrift(vind.cross, traj.apex) : 0;
+    const vind = rad.vind;
     let sido = [0, 0];
-    if (drift && vind.side) {
-      const langd = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    if (rad.drift && vind && vind.side) {
       const hoger = [-(b.z - a.z) / langd, (b.x - a.x) / langd];   // 90° medsols
-      // uppvinds = MOT den sida vinden trycker
-      sido = vind.side === 'H' ? [-hoger[0], -hoger[1]] : hoger;
+      sido = vind.side === 'H' ? [-hoger[0], -hoger[1]] : hoger;   // uppvinds
     }
     const pts = arc.map((h, k) => {
       const t = k / (arc.length - 1);
-      const off = drift * Vind3D.crossBowShape(t);
+      const off = rad.drift * Vind3D.crossBowShape(t);
       return new THREE.Vector3(a.x + (b.x - a.x) * t + sido[0] * off,
                                y0 + (y1 - y0) * t + h,
                                a.z + (b.z - a.z) * t + sido[1] * off);
     });
     // W3: byigheten gör nedslaget till en fördelning, inte en punkt.
-    let gustE = null;
-    if (vind && vind.gust) {
-      const e = Vind3D.gustEllipse(vind.ms, vind.gust, vind.along, vind.cross,
-                                   traj.apex, dist);
-      if (e.gustDelta > 0.05 && (e.aCross > Vind3D.GPS_FLOOR_M + 0.2 ||
-                                 e.aAlong > Vind3D.GPS_FLOOR_M + 0.2)) {
-        gustE = e;
-        ritaEllips(a, b, e.aCross, e.aAlong, 0x9fc4ae, 0.7, `slag-by-${i}`);
-      }
-    }
+    if (rad.gustE)
+      ritaEllips(a, b, rad.gustE.aCross, rad.gustE.aAlong, 0x9fc4ae, 0.7, `slag-by-${i}`);
     // U17 + GP1: spridningsellipsen. Två olika saker med samma form, och de
     // får inte se likadana ut: profilens tal är en MODELL (spelprofilens hink),
     // spelarens egen siffra ett ANTAGANDE. Färgen och namnet i scengrafen
     // skiljer dem, och panelen skriver ut vilket det är.
+    const eff = rad.eff;
     if (eff.sprCross > 0 || eff.sprAlong > 0)
       ritaEllips(a, b, eff.sprCross || 0.1, eff.sprAlong || 0.1,
                  eff.sprKalla === "egen" ? 0xffcf4d : 0x8fd6ff, 0.75,
                  `slag-spridning-${eff.sprKalla}-${i}`);
-    // Färgen är START-punktens: bågen tillhör slaget som slogs DÄRIFRÅN, så
-    // röret får samma färg som kulan det lämnar.
     // U17: ett ändrat slag ska SE ändrat ut (annars tror spelaren att den
-    // skruvade bågen är den uppmätta), och det valda ska synas som valt. Det
+    // skruvade bågen är modellens svar), och det valda ska synas som valt. Det
     // första är en ärlighetsregel, det andra bara UI — därför olika medel:
     // genomskinlighet för "ändrad", självlysning för "vald".
     const vald = valtSlag === i;
     const mat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(MapCore.accColor(a.acc)),
+      color: new THREE.Color(PLAN_FARG),
       transparent: eff.andrad, opacity: eff.andrad ? 0.55 : 1,
       emissive: new THREE.Color(vald ? 0x445511 : 0x000000) });
     const ror = new THREE.Mesh(
@@ -776,41 +913,190 @@ function buildShots() {
     ror.name = `slag-ror-${i}${eff.andrad ? '-andrad' : ''}${vald ? '-vald' : ''}`;
     ror.userData.slagIdx = i;
     scene.add(ror); shotObjs.push(ror);
-    // Panelens tal kommer HÄRIFRÅN, ur samma variabler som just ritade bågen.
-    const vinklar = Bollbana.trajAngles(traj.apex, traj.fa, dist);
-    slagTal[i] = { nr: i + 1, dist, apex: traj.apex, ...vinklar, vind, drift,
-                   gustE, andrad: eff.andrad, eff, pts };
+    // Panelens tal kommer ur SAMMA rad som just ritade bågen — inte ur en
+    // andra beräkning.
+    slagTal[i] = { ...rad, apex: rad.traj.apex, launch: rad.vinklar.launch,
+                   desc: rad.vinklar.desc, pts };
   }
 
-  punkter.forEach((p, i) => {
+  // Punkterna: tee är slag 1 och kan inte flyttas; landningspunkterna är
+  // spelarens egna. Samma numrering och samma gröna som 2D-kartans pins —
+  // en punkt satt i den ena vinkeln ska vara igenkännlig i den andra.
+  const punkter = [planTeeLL(), ...planLegs].filter(Boolean);
+  punkter.forEach((ll, i) => {
+    const p = planPunkt(ll);
     const y = surfaceYAt(p.x, p.z, 0);
-    const hex = MapCore.accColor(p.acc);          // SAMMA färgfunktion som 2D
-    const kula = new THREE.Mesh(new THREE.SphereGeometry(valtSlag === i ? 2.2 : 1.5, 12, 10),
-      new THREE.MeshLambertMaterial({ color: new THREE.Color(hex),
+    const kula = new THREE.Mesh(new THREE.SphereGeometry(valtSlag === i ? 2.4 : 1.7, 12, 10),
+      new THREE.MeshLambertMaterial({ color: new THREE.Color(PLAN_FARG),
         emissive: new THREE.Color(valtSlag === i ? 0x445511 : 0x000000) }));
     kula.position.set(p.x, y + LINE_OFFSET, p.z);
-    kula.name = `slag-kula-${i}`;
-    kula.userData.slagIdx = i;    // kulan väljer slaget som slogs DÄRIFRÅN
+    kula.name = `plan-punkt-${i}`;
+    kula.userData.slagIdx = i;    // kulan väljer slaget som slås DÄRIFRÅN
     scene.add(kula); shotObjs.push(kula);
-    const nr = nummerSprite(i + 1, hex);
+    const nr = nummerSprite(i + 1, PLAN_FARG_HEX);
     nr.position.set(p.x, y + 7, p.z);
+    nr.name = `plan-nummer-${i}`;
     scene.add(nr); shotObjs.push(nr);
   });
 
-  for (const [k, färg] of [['green', SHOT_GREEN], ['pin', SHOT_PIN]]) {
-    const q = shotRec[k];
-    if (!q || q.lat == null) continue;
-    const [x, z] = shotXZ(q.lat, q.lon);
-    const m = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 10),
-      new THREE.MeshLambertMaterial({ color: färg }));
-    m.position.set(x, surfaceYAt(x, z, 0) + LINE_OFFSET, z);
-    scene.add(m); shotObjs.push(m);
-  }
   ritaSlagPanel();     // U17: panelen läser slagTal som just fylldes i
+  ritaKedjeknapp();
+  if (kedjaPa) kedjaPa(KEDJA);   // U19: 2D-listan skriver om sig ur samma rader
   // U16 steg 4: siktet ärver apexen ur slagTal ovan — och U18:s kö garanterar
   // ordningen (linje → slag → sikte) och att det bara sker EN gång per ruta,
   // även när både linjen och slagen byggts om i samma bildruta.
   omSikte();
+}
+
+/* Slag-knappen speglar planen: finns en kedja går den att stänga av och på,
+   annars står den avstängd med skälet utskrivet. En knapp som ser klickbar ut
+   men inte gör något är sämre än en som ärligt visar varför (U4). */
+function ritaKedjeknapp() {
+  const knapp = el('vSlag');
+  if (!knapp) return;
+  const har = KEDJA.length > 0;
+  knapp.disabled = !har;
+  knapp.title = har ? `${KEDJA.length} planerade slag — tryck för att dölja`
+                    : 'Ingen plan för hålet än — tappa en landningspunkt';
+  knapp.setAttribute('aria-pressed', String(shotVisa && har));
+  const slaget = el('vSlaget');
+  if (slaget) {
+    slaget.disabled = !har;
+    slaget.title = har ? 'Välj ett slag och ändra apex, vind och spridning'
+                       : 'Ingen plan för hålet än — tappa en landningspunkt';
+  }
+}
+
+
+// -------------------------------------------- U13/U20: green-lutningen i 3D ---
+/* Samma data och samma palett som 2D-kartan: heatmapens PIXLAR kommer ur
+ * `SlopeOverlay.heatCanvas` (utbruten just för detta) och pilarna ur samma
+ * `fall`-features. Två paletter kunde ha glidit isär och gett samma lutning två
+ * färger i samma app (princip 4).
+ *
+ * DRAPERAD, inte platt. Ytan byggs som ett rutnät vars y kommer ur markens egen
+ * höjd (`surfaceYAt`) plus en liten offset, så färgen ligger PÅ greenen och
+ * följer överdriften. En platt matta hade sett rätt ut rakt uppifrån och legat i
+ * luften så fort kameran sänktes — och det är i den sänkta vinkeln lutningen
+ * betyder något.
+ *
+ * Pilarna är scenobjekt i världskoordinater (§2.2: då kan de inte släpa) och
+ * har fast METERstorlek. 2D:s skärmkonstanta storlek är fel i perspektiv — en
+ * pil 200 m bort ska se mindre ut, annars ljuger bilden om var man står.
+ */
+const SLOPE_LYFT = 0.25;      // m över marken: räcker för z-fighting, syns inte
+const SLOPE_RUTA = 1.5;       // m mellan noder i det draperade rutnätet
+const SLOPE_PIL_M = 1.6;      // m: pillängd, samma i hela scenen
+let slopeObjs = [], slopeHal = null, slopeVisa = false;
+
+function rensaSlope() {
+  slopeObjs.forEach(o => { scene.remove(o); o.geometry?.dispose?.();
+    o.material?.map?.dispose?.(); o.material?.dispose?.(); });
+  slopeObjs = [];
+}
+
+/** Är lutningen ritbar för hålet? Utan data ska knappen inte ens finnas (U20). */
+function harSlope(h) {
+  return !!(h && typeof SlopeOverlay !== 'undefined' && SlopeOverlay.heatCanvas(h));
+}
+
+function ritaSlope() {
+  rensaSlope();
+  const h = slopeHal;
+  if (!slopeVisa || !h || !meta || !meta.ll2xz) return;
+  if (typeof SlopeOverlay === 'undefined') return;
+  const c = SlopeOverlay.heatCanvas(h);
+  if (!c) return;
+
+  // --- heatmapen som draperat rutnät ---
+  // Hörnen kommer ur canvasens lat/lon-ram; noderna läggs i scenens ram och får
+  // markens höjd. UV:n är rutnätets egen (0..1), så texturen sitter fast i
+  // marken och inte i kameran.
+  const hornXZ = (lat, lon) => HP.latLonToXz(meta.ll2xz, lat, lon);
+  const h00 = hornXZ(c.latMin, c.lonMin), h10 = hornXZ(c.latMin, c.lonMax),
+        h01 = hornXZ(c.latMax, c.lonMin);
+  const bredd = Math.hypot(h10[0] - h00[0], h10[1] - h00[1]);
+  const hojd = Math.hypot(h01[0] - h00[0], h01[1] - h00[1]);
+  const nx = Math.max(2, Math.min(140, Math.round(bredd / SLOPE_RUTA)));
+  const nz = Math.max(2, Math.min(140, Math.round(hojd / SLOPE_RUTA)));
+  const pos = [], uv = [], idx = [];
+  for (let j = 0; j <= nz; j++) {
+    const fy = j / nz;
+    for (let i = 0; i <= nx; i++) {
+      const fx = i / nx;
+      const lat = c.latMin + (c.latMax - c.latMin) * fy;
+      const lon = c.lonMin + (c.lonMax - c.lonMin) * fx;
+      const [x, z] = hornXZ(lat, lon);
+      pos.push(x, surfaceYAt(x, z, 0) + SLOPE_LYFT, z);
+      // Canvasens rad 0 är NORDLIGAST (latMax) — därför vänds v-axeln.
+      uv.push(fx, fy);
+    }
+  }
+  for (let j = 0; j < nz; j++)
+    for (let i = 0; i < nx; i++) {
+      const a = j * (nx + 1) + i, b = a + 1, d = a + nx + 1, e = d + 1;
+      idx.push(a, d, b, b, d, e);
+    }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const tex = new THREE.CanvasTexture(c.canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const matta = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: 0.95, depthWrite: false,
+    side: THREE.DoubleSide }));
+  matta.renderOrder = 2;
+  matta.name = 'slope-heat';
+  scene.add(matta); slopeObjs.push(matta);
+
+  // --- fallpilarna ---
+  // Riktningen är featurens `bearing` i SANNA grader; scenens ram bär SWEREF:s
+  // gridnorr. Skillnaden är ~1,6° här och den ska inte ätas upp av en
+  // approximation: pilspetsen räknas fram i lat/lon och växlas sedan över, precis
+  // som allt annat som kommer utifrån.
+  const fall = SlopeOverlay.fallFor(h) || [];
+  const dest = (lat, lon, brg, m) => {
+    const br = brg * Math.PI / 180;
+    return [lat + (m * Math.cos(br)) / 111320,
+            lon + (m * Math.sin(br)) / (111320 * Math.cos(lat * Math.PI / 180))];
+  };
+  const linjer = [];
+  for (const f of fall) {
+    const p = f.properties || {};
+    if (!(p.slope_pct >= 1.3)) continue;      // samma tröskel som 2D nära green
+    const lon0 = f.geometry.coordinates[0][0], lat0 = f.geometry.coordinates[0][1];
+    const [lat1, lon1] = dest(lat0, lon0, p.bearing, SLOPE_PIL_M);
+    const [x0, z0] = hornXZ(lat0, lon0), [x1, z1] = hornXZ(lat1, lon1);
+    linjer.push(new THREE.Vector3(x0, surfaceYAt(x0, z0, 0) + SLOPE_LYFT + 0.05, z0));
+    linjer.push(new THREE.Vector3(x1, surfaceYAt(x1, z1, 0) + SLOPE_LYFT + 0.05, z1));
+    // Spetsen: två korta streck bakåt från nedförs-änden. Billigare än en mesh
+    // per pil, och en green har hundratals.
+    for (const v of [110, -110]) {
+      const [lat2, lon2] = dest(lat1, lon1, p.bearing + v, SLOPE_PIL_M * 0.36);
+      const [x2, z2] = hornXZ(lat2, lon2);
+      linjer.push(new THREE.Vector3(x1, surfaceYAt(x1, z1, 0) + SLOPE_LYFT + 0.05, z1));
+      linjer.push(new THREE.Vector3(x2, surfaceYAt(x2, z2, 0) + SLOPE_LYFT + 0.05, z2));
+    }
+  }
+  if (linjer.length) {
+    const pilar = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(linjer),
+      new THREE.LineBasicMaterial({ color: 0x1b2b1f, transparent: true, opacity: 0.9 }));
+    pilar.renderOrder = 3;
+    pilar.name = 'slope-pilar';
+    scene.add(pilar); slopeObjs.push(pilar);
+  }
+}
+
+const omSlope = () => schemalagg('slope', ritaSlope);
+
+/** Värdsidan slår på/av lutningen; `h` är 2D-hålet (green-polygonen bor där). */
+function sattSlope(pa, h) {
+  slopeVisa = !!pa;
+  slopeHal = h || null;
+  omSlope();
 }
 
 /* GP1: spridningstabellen (mobile/data/dispersion.json, genererad av
@@ -840,9 +1126,16 @@ function ritaSlagPanel() {
   const t = valtSlag != null ? slagTal[valtSlag] : null;
   if (!t) { p.classList.add('dold'); return; }
   p.classList.remove('dold');
-  el('slagnr').textContent = `Slag ${t.nr} · ${Math.round(t.dist)} m`;
+  // U19: rubriken bär det tal spelaren faktiskt ska agera på — "spelar som",
+  // alltså sträckan med vind och höjd inräknad. Den geometriska står bredvid
+  // när de skiljer sig; är de lika vore två siffror bara brus.
+  const geo = Math.round(t.dist);
+  el('slagnr').textContent = `Slag ${t.nr} · spelar som ${t.spelarSom} m`
+    + (geo !== t.spelarSom ? ` (${geo} m)` : '');
   el('slagandrad').hidden = !t.andrad;
   el('slagtal').innerHTML =
+    (t.dh != null && Math.abs(t.dh) >= 1
+      ? `${t.dh > 0 ? '↗' : '↘'} <b>${Math.abs(t.dh).toFixed(0)} m</b> · ` : '') +
     `apex <b>${t.apex.toFixed(1)} m</b> · ut <b>${t.launch.toFixed(0)}°</b> · ` +
     `ned <b>${t.desc.toFixed(0)}°</b><br>${fmtVind(t)}` +
     (t.drift ? ` · drift <b>${Math.abs(t.drift).toFixed(1)} m</b>` : '') +
@@ -1038,51 +1331,6 @@ function valjSlag(i) {
   buildShots();
 }
 
-/* Vilken rundas slag? Aktiv runda först — det är vad 2D-kartan visar. Har den
-   inget på hålet tas den SENASTE rundan i telefonen som har det, och då står
-   datumet i vyn: att visa en gammal rundas slag utan att säga vilken vore
-   samma fel som en cachad vindsiffra som ser färsk ut (§5c-familjen).
-   Utan loggade slag alls står knappen avstängd med angiven anledning. */
-async function hittaSlag() {
-  shotRec = null; shotKalla = '';
-  const knapp = el('vSlag');
-  knapp.disabled = true;
-  knapp.title = 'Inga loggade slag på det här hålet';
-  // U17 delar grind med U9: utan loggade slag finns inget att skruva på.
-  el('vSlaget').disabled = true;
-  el('vSlaget').title = 'Inga loggade slag på det här hålet';
-  if (!meta || typeof Store === 'undefined' || typeof SGRound === 'undefined') return;
-  await Store.ready();          // rundorna hydreras ur IndexedDB först
-  await laddaSpridning();       // GP1: profilens ellips (tyst om filen saknas)
-  const bas = SGRound.GLOBAL_BASE || {};
-  if (!(meta.loop in bas)) return;
-  const rel = SGRound.globalToRel(bas[meta.loop] + meta.hole);
-  if (!rel) return;
-  const harSlag = r => r && (r.shots || []).some(s => s && s.lat != null);
-  const aktiv = Store.holeIn(Store.active(), rel);
-  if (harSlag(aktiv)) {
-    shotRec = aktiv; shotKalla = 'denna runda';
-  } else {
-    for (const rad of await Store.list({ limit: 12 })) {
-      if (Store.activeId() && rad.id === Store.activeId()) continue;
-      const rec = Store.holeIn(await Store.get(rad.id), rel);
-      if (harSlag(rec)) {
-        shotRec = rec;
-        shotKalla = String(rad.startedAt || '').slice(5, 10).replace('-', '/');
-        break;
-      }
-    }
-  }
-  if (!shotRec) return;
-  const n = (shotRec.shots || []).filter(s => s && s.lat != null).length;
-  knapp.disabled = false;
-  knapp.title = `${n} loggade slag (${shotKalla})`;
-  knapp.setAttribute('aria-pressed', String(shotVisa));
-  el('vSlaget').disabled = false;
-  el('vSlaget').title = 'Välj ett slag och ändra apex, vind och spridning';
-  shotKalla = `${n} slag · ${shotKalla}`;
-}
-
 // U17: Slaget-läget. Knappen slår bara PÅ valbarheten — panelen öppnas först
 // när ett slag är valt, för en tom panel med sex reglage som inte gör något
 // vore precis den avstängda-knapp-lögnen U4 ville bort ifrån.
@@ -1134,8 +1382,8 @@ function applyExag(forra) {
   if (wide) wide.scale.y = exag;      // kjolen följer marken, annars glider den
   omTrad();
   omLinje();
-  omSlag();          // slagen ligger på marken → måste räknas om med den
-  omPlanLegs();      // U11: och planens kedja ligger på samma mark
+  omSlope();         // lutningsmattan draperas på marken → likaså
+  omSlag();          // planens slag ligger på marken → räknas om med den
   if (!forra || forra === exag) return;
   // Marken flyttar sig lodrätt när överdriften ändras. Gör inte kameran samma
   // resa hamnar den under terrängen (eller svävande högt över den) utan att
@@ -1219,28 +1467,38 @@ function teeView() {
   setLage('teevy');
 }
 
-// Overblicksposen: lågt bakom teen, blick mot hålets mitt (som PC-vyn).
-// Utbruten ur placeCamera() så samma pose kan användas ANIMERAT när U6:s
-// Höjd-läge slås på (hela hållinjen + profilens markör ska rymmas i bild).
-function overviewPose() {
+/* ÖVERBLICKEN — startvyn, och SAMMA ram som 2D-kartan visar.
+ *
+ * Var: en fast regel (0,45·längden bakom teen, 0,18·längden upp) som gav tilt
+ * ~79° — nästan från sidan — medan 2D ramade in hela hålet ovanifrån och ett
+ * vinkelbyte landade på tilt 55°. Tre olika bilder av samma hål, och bytet
+ * mellan dem syntes som ett hopp.
+ *
+ * Nu: `overviewState` passar in hålets punkter i bilden precis som Leaflets
+ * `fitBounds(...).pad(0.12)` gör i 2D, med bytets egen lutning (55°). Samma
+ * ram, samma lutning, oavsett hålets längd och skärmens format.
+ *
+ * Fortfarande utbruten ur placeCamera() så samma vy kan flygas till när U6:s
+ * Höjd-läge slås på — hela hållinjen och profilens markör ska rymmas i bild.
+ */
+/* Lutningen ÄGS av Vybro (`TILT_3D` — den vinkelbytet sjunker ner till). Att
+   skriva 55° här hade varit en andra kopia som kan glida ifrån bytet, och då
+   landar man på en annan bild än den man startar i. */
+const OVERBLICK_TILT = Vybro.TILT_3D;
+
+function overviewState() {
   if (!meta || !meta.line || meta.line.length < 2) return null;
-  const a = meta.line[0], b = meta.line[meta.line.length - 1];
-  const dx = b[0] - a[0], dz = b[2] - a[2];
-  const L = Math.hypot(dx, dz) || 1;
-  const ux = dx / L, uz = dz / L;
-  const eye = { x: a[0] - ux * 0.45 * L, y: a[1] * exag + 4 + 0.18 * L,
-                z: a[2] - uz * 0.45 * L };
-  const target = { x: (a[0] + b[0]) / 2, y: ((a[1] + b[1]) / 2) * exag,
-                   z: (a[2] + b[2]) / 2 };
-  return { eye, target };
+  const pts = meta.line.map(([x, y, z]) => ({ x, y: y * exag, z }));
+  return camOverviewState(pts, {
+    fovDeg: camera.fov, aspect: camera.aspect, tilt: OVERBLICK_TILT });
 }
 
 function placeCamera() {
-  const p = overviewPose();
-  if (!p) return;
-  // Samma pose som förut, men uttryckt i kontrollerns fyra tal — så att en
-  // efterföljande gest utgår från den och inte från något annat.
-  controls.setFromEye(p.eye, p.target);
+  const s = overviewState();
+  if (!s) return;
+  // Uttryckt i kontrollerns fyra tal — så att en efterföljande gest utgår från
+  // den och inte från något annat.
+  controls.setState(s);
 }
 
 // ------------------------------------------------- U6 höjdprofil / markör ---
@@ -1418,69 +1676,21 @@ function setHojdS(s) {
   });
 }
 
-/* ------------------------------------- U11: planens slagkedja i 3D ---------
+/** Kedjan som ska ritas. Anropas av planvy.html vid varje ändring i Vylage.
  *
- * Samma kedja som 2D-vyn ritar, ur samma `sg-plan-v1` via Vylage — men här som
- * objekt i scengrafen, på marken, ombyggda i samma bildruta som allt annat
- * (§2 noll eftersläpning). Punkterna kommer in i lat/lon och räknas om med
- * hålets egen ll2xz-affin: det är DEN som gör att en punkt satt i 2D hamnar på
+ * U19: det som ritas är SLAGEN (bågar med vindens verkan), inte längre ett
+ * platt streck på marken bredvid dem. Punkterna kommer in i lat/lon — samma
+ * valuta som Vylage lagrar och som 2D-kartan använder — och räknas om med
+ * hålets egen ll2xz-affin. Det är DEN som gör att en punkt satt i 2D hamnar på
  * exakt samma gräs i 3D.
- *
- * Formen är avsiktligt 2D-kartans: grön prick med nummer, heldragen linje
- * mellan de satta punkterna och streckad sista bit till green. Samma språk i
- * båda vinklarna, annars är det inte en vy.
  */
-let legObjs = [], legLL = [], legGreen = null;
-
-function ritaPlanLegs() {
-  legObjs.forEach(o => { scene.remove(o); o.geometry?.dispose?.();
-    o.material?.map?.dispose?.(); o.material?.dispose?.(); });
-  legObjs = [];
-  if (!meta || !meta.ll2xz || !meta.line) return;
-  const xz = ([lat, lon]) => {
-    const [x, z] = HP.latLonToXz(meta.ll2xz, lat, lon);
-    return new THREE.Vector3(x, surfaceYAt(x, z, 0) + LINE_OFFSET, z);
-  };
-  // Tee är slag 1 och kommer ur hålets egen linje, inte ur kedjan — precis som
-  // i 2D, där den är fast och varken kan flyttas eller tas bort.
-  const teeRaw = meta.line[0];
-  const tee = new THREE.Vector3(teeRaw[0],
-    surfaceYAt(teeRaw[0], teeRaw[2], teeRaw[1] * exag) + LINE_OFFSET, teeRaw[2]);
-  const punkter = [tee, ...legLL.map(xz)];
-
-  punkter.forEach((p, i) => {
-    const kula = new THREE.Mesh(new THREE.SphereGeometry(1.7, 12, 10),
-      new THREE.MeshLambertMaterial({ color: 0x37b06b }));
-    kula.position.copy(p);
-    kula.name = `plan-punkt-${i}`;
-    scene.add(kula); legObjs.push(kula);
-    const nr = nummerSprite(i + 1, '#37b06b');
-    nr.position.set(p.x, p.y + 7, p.z);
-    nr.name = `plan-nummer-${i}`;
-    scene.add(nr); legObjs.push(nr);
-  });
-  const linje = (pts, dash) => {
-    const g = new THREE.BufferGeometry().setFromPoints(pts);
-    const l = new THREE.Line(g, dash
-      ? new THREE.LineDashedMaterial({ color: 0x37b06b, dashSize: 5, gapSize: 4 })
-      : new THREE.LineBasicMaterial({ color: 0x37b06b }));
-    if (dash) l.computeLineDistances();
-    l.name = dash ? 'plan-linje-green' : 'plan-linje';
-    scene.add(l); legObjs.push(l);
-  };
-  if (punkter.length > 1) linje(punkter, false);
-  const sist = punkter[punkter.length - 1];
-  const g = legGreen ? xz(legGreen)
-    : (() => { const s = meta.line[meta.line.length - 1];
-               return new THREE.Vector3(s[0], surfaceYAt(s[0], s[2], s[1] * exag) + LINE_OFFSET, s[2]); })();
-  linje([sist, g], true);
-}
-
-/** Kedjan som ska ritas. Anropas av planvy.html vid varje ändring i Vylage. */
-function sattPlanLegs(list, greenCenter) {
-  legLL = (list || []).filter(p => Array.isArray(p) && p.length === 2);
-  legGreen = greenCenter && greenCenter.length === 2 ? greenCenter : null;
-  omPlanLegs();
+function sattPlanLegs(plan) {
+  const o = plan || {};
+  const ll = p => (Array.isArray(p) && p.length === 2) ? [+p[0], +p[1]] : null;
+  planTee = ll(o.tee);
+  planLegs = (o.legs || []).map(ll).filter(Boolean);
+  planGreen = ll(o.green);
+  omSlag();
 }
 
 /* Tapp-kontraktet, 3D-sidan: ett tryck på marken → lat/lon till värdsidan, som
@@ -1497,18 +1707,18 @@ async function loadHole(slug) {
     const gltf = await loader.loadAsync(`data/holes3d/${meta.glb}`);
     ground = gltf.scene;
     ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    filtreraMark(ground);          // ortofotot ska matcha 2D-kartan
     scene.add(ground);
     byggMarkindex();     // U18: EN gång per hål, före första ombyggnaden
     applyExag();
-    placeCamera();
     stopFly();
-    startFly();
+    placeCamera();       // startvyn = överblicken, aldrig en flygning
     buildHojdMarker();   // U6: ny grupp per hål (clearHole tog bort förra)
     buildHojdPanel();    // bygger om profil-SVG:n och nollställer hojdS
     fakta(`${fmtDh(meta.delta_h)} · ${meta.length_m} m`);
     status('');
     if (meta.wide) loadWide(meta.slug, meta.wide);   // U15, efter hålet
-    hittaSlag().then(buildShots);                    // U9, efter hålet
+    laddaSpridning().then(buildShots);               // U19 + GP1, efter hålet
     hamtaVind();                                     // U16, kräver nät (§1 p3)
   } catch (e) {
     status('kunde inte ladda hålet — är det exporterat? (' + e.message + ')');
@@ -1532,6 +1742,7 @@ async function loadWide(slug, file) {
     wide = gltf.scene;
     wide.name = 'u15-wide';                       // scengraf-verifiering, ?dbg=1
     wide.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
+    filtreraMark(wide);            // samma korrigering som hålets mark — annars syns sömmen som ett färgbyte
     wide.scale.y = exag;
     wide.position.y = -SKIRT_DROP_M;
     scene.add(wide);
@@ -1637,23 +1848,72 @@ const paLage = fn => { lagePa = fn; };
 const lageNu = () => lage;
 const metaNu = () => meta;
 
+/* U19: 2D-sidan läser kedjan HÄRIFRÅN i stället för att räkna en egen. Det är
+   hela mekanismen bakom "samma tal i båda vinklarna" — inte en synkronisering
+   som kan glida, utan ett och samma svar hämtat på två ställen.
+   `paKedja` säger till när raderna ändrats (vind hämtad, reglage draget) så
+   2D-listan kan skriva om sig utan att fråga varje bildruta. */
+let kedjaPa = null;
+const paKedja = fn => { kedjaPa = fn; };
+const kedjanNu = () => KEDJA;
+/** Hålet räknat med andra landningspunkter — rubriken frågar efter `[]`. */
+const kedjaFor = legs => planKedja(legs || []);
+/* Vilket slag som är valt, och möjligheten att välja ett från 2D-sidan.
+   Valet är alltså inte kamerans utan planens — därför överlever det ett
+   vinkelbyte (§5 U19). */
+const valtNu = () => valtSlag;
+const valjFran2d = i => valjSlag(i);
+/* Vindens ägare bor här (U16), och 2D-sidan frågar samma ägare — två
+   vindhämtningar hade kunnat ge två svar om samma hål. */
+const vindenNu = () => vindNu();
+
+/* U22: den bäring som pekar UPPÅT i bild, i sanna grader. Räknas ur kamerans
+   heading via `Vybro` — samma omräkning som vinkelbytet använder, inklusive
+   gridnorr-termen. Utan den termen skulle kompassen peka 1,6° fel, vilket är
+   litet men fel på precis det sätt en kompass inte får vara. */
+function baringNu() {
+  const k = konv();
+  if (!k || typeof Vybro === 'undefined') return 0;
+  return Kompass.vyBaringAvHeading(controls.state.heading, k.gridNorr, Vybro);
+}
+let bildrutaPa = null;
+const paBildruta = fn => { bildrutaPa = fn; };
+
 export { loadHole as laddaHal, sattExag, sattSynlig, setLage as sattLage,
          sattPlanLegs, posen, sattPosen, harIndex, paTapp, paExag, paLage,
-         lageNu, metaNu, konv, markY, yRefPlan, flygTill, flygerNu, skarmAv, rita1 };
+         lageNu, metaNu, konv, markY, yRefPlan, flygTill, flygerNu, skarmAv, rita1,
+         paKedja, kedjanNu, kedjaFor, valtNu, valjFran2d, vindenNu, sattSlope, harSlope,
+         baringNu, paBildruta };
 
 if (!EMBED) (async () => {
   let idx;
   try {
     idx = await (await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`)).json();
   } catch { status('inga 3D-hål exporterade än (tools/hole_gltf.py)'); return; }
+  if (!idx.holes.length) { status('inga 3D-hål exporterade än'); return; }
   const sel = el('hal');
-  for (const h of idx.holes) {
+  /* U23: hålen listas i RUNDANS ordning och numreras 1–18 — samma numrering som
+     resten av appen. Spelar man 10–27 är globalt hål 10 spelarens hål 1, och en
+     utvecklarsida som säger "Gul 1" om samma hål säger något annat än
+     planeringsvyn gör om samma hål.
+     Bandatans namn står kvar som underrad; hål utanför vald runda listas inte.
+     Saknar banan runddefinition (eller matchar inget) faller vi tillbaka på
+     exportens ordning — och det står i etiketten, så listan aldrig påstår en
+     numrering den inte har. */
+  const bas = SGRound.GLOBAL_BASE || {};
+  const relFor = h => (h.loop in bas) ? SGRound.globalToRel(bas[h.loop] + h.hole) : null;
+  const iRunda = idx.holes.filter(h => relFor(h) != null)
+                          .sort((a, b) => relFor(a) - relFor(b));
+  const lista = iRunda.length ? iRunda : idx.holes;
+  for (const h of lista) {
     const o = document.createElement('option');
+    const rel = relFor(h);
+    const namn = `${h.loop.replace(' Course', '')} ${h.hole}`;
     o.value = h.slug;
-    o.textContent = `${h.loop.replace(' Course', '')} ${h.hole}  (Δh ${h.delta_h >= 0 ? '+' : '−'}${Math.abs(h.delta_h)} m)`;
+    o.textContent = (rel != null ? `Hål ${rel} · ${namn}` : `${namn} (utanför rundan)`)
+      + `  (Δh ${h.delta_h >= 0 ? '+' : '−'}${Math.abs(h.delta_h)} m)`;
     sel.appendChild(o);
   }
-  if (!idx.holes.length) { status('inga 3D-hål exporterade än'); return; }
   sel.addEventListener('change', () => loadHole(sel.value));
   const want = new URLSearchParams(location.search).get('hal');
   if (want && idx.holes.some(h => h.slug === want)) sel.value = want;
