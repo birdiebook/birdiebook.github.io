@@ -21,12 +21,12 @@
  * Beroenden: SGRound (hålnumrering) och SGScore (score-härledning). Båda är
  * fristående moduler utan egna beroenden.  */
 const Store = (() => {
-  // DB_VER 2 (GP1): lagret `profile` tillkom. onupgradeneeded skapar bara det
-  // som saknas, så en telefon med v1-databas får profillagret utan att röra
-  // rundorna.
-  const DB_NAME = "golfsg", DB_VER = 2;
+  // DB_VER 2 (GP1): lagret `profile` tillkom. DB_VER 3 (GP3): `plans`.
+  // onupgradeneeded skapar bara det som saknas, så en telefon med en äldre
+  // databas får de nya lagren utan att rundorna rörs.
+  const DB_NAME = "golfsg", DB_VER = 3;
   const ROUNDS = "rounds", DOCS = "roundDocs", MATCHES = "matches";
-  const PROFILE = "profile";
+  const PROFILE = "profile", PLANS = "plans";
   // Profilen är EN post. Id:t är konstant med avsikt: GP1 beslutade att
   // profilen ska sparas som ett enda serialiserbart objekt, så AS6:s
   // enhetssynk blir en kopiering och inte en omskrivning.
@@ -67,7 +67,7 @@ const Store = (() => {
      förut — inte sämre. */
   function memoryBackend() {
     const m = { [ROUNDS]: new Map(), [DOCS]: new Map(), [MATCHES]: new Map(),
-                [PROFILE]: new Map() };
+                [PROFILE]: new Map(), [PLANS]: new Map() };
     return {
       kind: "memory",
       get: (s, k) => Promise.resolve(clone(m[s].get(k)) || null),
@@ -109,6 +109,7 @@ const Store = (() => {
         if (!db.objectStoreNames.contains(DOCS)) db.createObjectStore(DOCS, { keyPath: "id" });
         if (!db.objectStoreNames.contains(MATCHES)) db.createObjectStore(MATCHES, { keyPath: "id" });
         if (!db.objectStoreNames.contains(PROFILE)) db.createObjectStore(PROFILE, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(PLANS)) db.createObjectStore(PLANS, { keyPath: "id" });
       };
       req.onsuccess = () => res(idbBackend(req.result));
       req.onerror = () => rej(req.error);
@@ -639,6 +640,55 @@ const Store = (() => {
                             : { value: null, kalla: "saknas" };
   }
 
+  /* ---------- rundplanens API (GP3) ----------
+     Planerna är till skillnad från profilen INTE synkront läsbara: de är en
+     lista, de kan vara många, och ingen renderingsväg behöver dem för att rita
+     ett slag. De läses med await när plan-vyn öppnas, precis som rundlistan.
+
+     `plans` är ett eget objektlager och inte ett fält på rundan, av samma skäl
+     som `matches` är det: en plan lever FÖRE rundan och kan användas om igen.
+     Formen är ETT serialiserbart dokument (Plan.normalisera), så AS6:s synk
+     blir en kopiering — samma villkor som §GP1 beslut 2 satte för profilen. */
+  const harPlanmodul = () => typeof Plan !== "undefined" && Plan;
+
+  function plans() {
+    if (!harPlanmodul()) return Promise.resolve([]);
+    return ready()
+      .then(() => be.all(PLANS))
+      .then(rows => (rows || [])
+        .map(r => Plan.normalisera(r))
+        .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))))
+      .catch(e => { console.warn("[Store] kunde inte läsa planerna", e); return []; });
+  }
+
+  function plan(id) {
+    if (!harPlanmodul() || !id) return Promise.resolve(null);
+    return ready()
+      .then(() => be.get(PLANS, id))
+      .then(r => (r ? Plan.normalisera(r) : null))
+      .catch(e => { console.warn("[Store] kunde inte läsa planen", e); return null; });
+  }
+
+  /* Sparar och returnerar det normaliserade dokumentet SYNKRONT, medan
+     skrivningen går async — samma kontrakt som setProfile, och med samma
+     `ready()`-väntan: `be` är null tills backend valts, och en plan sparad
+     strax efter sidladdning försvann annars tyst (§GP1 del 1:s mätning). */
+  function savePlan(p) {
+    if (!harPlanmodul()) return null;
+    const doc = Plan.normalisera(p);
+    doc.updatedAt = nowIso();
+    ready()
+      .then(() => be.put(PLANS, clone(doc)))
+      .catch(e => console.warn("[Store] kunde inte spara planen", e));
+    return doc;
+  }
+
+  function removePlan(id) {
+    if (!id) return Promise.resolve(false);
+    return ready().then(() => be.del(PLANS, id)).then(() => true)
+      .catch(e => { console.warn("[Store] kunde inte ta bort planen", e); return false; });
+  }
+
   /* Lägg till en markörspelare. `tee` och `kon` behövs för NETTO: course rating
      och slope slås upp per kombination × tee × kön (§7.1-notan: slå aldrig upp
      rating utan att veta kön). Saknas de går netto inte att räkna för spelaren,
@@ -741,6 +791,8 @@ const Store = (() => {
     addShot, addEvent,
     list, get, remove, export: toWire,
     profile, setProfile, hcpForBerakning,
+    // rundplaner (GP3)
+    plans, plan, savePlan, removePlan,
     // Sammanfattning av ETT dokument (samma form som indexraden) — det vyerna
     // använder för ärlig täckningsredovisning.
     summary: indexRow,

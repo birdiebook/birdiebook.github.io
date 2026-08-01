@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#16221e"><!-- = --bg i tokens.css; meta läser inte CSS-variabler -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Min plan">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Min plan</title>
+<link rel="stylesheet" href="./tokens.css">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation; overscroll-behavior: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #app { max-width: 480px; margin: 0 auto; padding: 12px 14px 40px; }
+  .top { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+  .top a.back { color: var(--ink); text-decoration: none; font-size: 22px;
+    padding: 4px 10px 4px 2px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0 0 14px; line-height: 1.45; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          padding: 13px 14px; margin: 10px 0; }
+  .hint { color: var(--dim); font-size: 13px; line-height: 1.5; }
+  .banner { background: var(--amber-yta); border: 1px solid var(--amber-kant);
+    color: var(--amber-ink); border-radius: 10px; padding: 10px 12px; font-size: 13.5px;
+    margin: 10px 0; line-height: 1.45; }
+
+  .knappar { display: flex; gap: 10px; margin: 12px 0 4px; }
+  .btn { flex: 1; appearance: none; border: 0; border-radius: 12px; min-height: 48px;
+    background: var(--accent); color: var(--accent-ink); font: 800 15px inherit; cursor: pointer; }
+  .btn.ghost { background: none; border: 1px solid var(--line); color: var(--dim);
+    font-weight: 600; }
+  .btn[disabled] { opacity: .55; }
+
+  /* HÅLKORTET. Målscore är det enda talet som får vara stort: det är svaret på
+     frågan spelaren ställde. Allt annat är hur man kommer dit. */
+  .hal { padding: 0; overflow: hidden; }
+  .halhuv { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+    background: var(--panel-svag); border-bottom: 1px solid var(--line); }
+  .halhuv .tx { flex: 1; min-width: 0; }
+  .halhuv .rub { font-size: 16px; font-weight: 800; }
+  .halhuv .fak { color: var(--dim); font-size: 12.5px; margin-top: 1px; }
+  .mal { flex: none; text-align: center; min-width: 46px; }
+  .mal b { display: block; font-size: 26px; line-height: 1; font-weight: 800; }
+  .mal span { display: block; color: var(--dim); font-size: 10.5px; letter-spacing: .04em;
+    text-transform: uppercase; margin-top: 3px; }
+  .mal.egen b { color: var(--accent); }
+  .halkropp { padding: 11px 14px 13px; }
+
+  .slag { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .slag:last-of-type { border-bottom: 0; }
+  .slag .nr { flex: none; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--panel-svag); border: 1px solid var(--line); color: var(--dim);
+    font-size: 12px; font-weight: 700; display: flex; align-items: center;
+    justify-content: center; margin-top: 1px; }
+  .slag .tx { flex: 1; min-width: 0; font-size: 14px; line-height: 1.45; }
+  .slag .tx .et { color: var(--dim); font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .04em; }
+  .slag .tx .egen { color: var(--accent); }
+  .slag a.sikt { flex: none; align-self: flex-start; text-decoration: none;
+    color: var(--ink); background: var(--panel-svag); border: 1px solid var(--line);
+    border-radius: 9px; font-size: 12px; font-weight: 700; padding: 7px 9px;
+    min-height: 32px; display: flex; align-items: center; }
+
+  .rad-info { font-size: 13px; line-height: 1.5; margin: 8px 0 0; }
+  .rad-info.risk { color: var(--amber-ink); }
+  .anteckning { margin-top: 9px; padding: 9px 11px; border-radius: 10px;
+    background: var(--panel-svag); border: 1px solid var(--line);
+    font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
+
+  .verktyg { display: flex; gap: 8px; margin-top: 10px; }
+  .verktyg button { appearance: none; background: none; border: 1px solid var(--line);
+    color: var(--dim); border-radius: 10px; min-height: 38px; padding: 0 12px;
+    font: 600 13px inherit; cursor: pointer; }
+
+  label.f { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+  input.f, textarea.f { width: 100%; background: var(--panel-svag); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px;
+    font: 400 15px inherit; min-height: 44px; }
+  textarea.f { min-height: 72px; resize: vertical; }
+
+  .lista { display: flex; flex-direction: column; gap: 2px; }
+  .yard { display: flex; gap: 10px; font-size: 13px; padding: 6px 0;
+    border-bottom: 1px solid var(--line); }
+  .yard:last-child { border-bottom: 0; }
+  .yard .h { flex: none; width: 52px; color: var(--dim); }
+  .yard .p { flex: 1; }
+  .yard .m { flex: none; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="app"><p class="hint" style="padding:20px 14px">Laddar …</p></div>
+
+<script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./plan.js"></script>
+<script src="./store.js"></script>
+<script>
+"use strict";
+/* MIN PLAN — den läsbara rundplanen (UPPGRADERING_3D.md §GP3).
+ *
+ * Motorn är `planner.py`, orden är `plan_text.py`, dokumentet är `plan.js` och
+ * lagringen `store.js`. Den här filen är DOM och ingenting annat: den räknar
+ * inte ut ett enda tal, och den får inte heller göra det. §GP3 säger rakt ut att
+ * varje siffra i planen ska ha en motsvarighet i planner.py-svaret — den regeln
+ * upprätthålls av att den här sidan saknar aritmetik att bryta den med.
+ *
+ * TVÅ SAKER SIDAN ÄGER, OCH BARA DE:
+ *   1. Hämtningen. Planen räknas EN gång, mot analys-servern, och sparas sedan i
+ *      Store. Ute på banan finns inget nät — planen läses ur telefonen, och det
+ *      är hela poängen med att den är ett sparat dokument och inte en vy mot
+ *      ett API.
+ *   2. Redigeringen. Spelarens text går till `Plan.satt*`, aldrig direkt in i
+ *      dokumentet, så motorns svar står orört kvar under.
+ *
+ * Att generera kräver nät + analys-koppling (samma `sg_base`/`sg_token` som
+ * uppladdningen). Att LÄSA kräver ingenting — och sidan säger vilket läge den
+ * är i i stället för att låta en tom vy se ut som en tom plan.
+ */
+const app = document.getElementById("app");
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const komma = v => String(v).replace(".", ",");
+
+let P = null;              // aktuellt plandokument (null = ingen plan än)
+let redigerar = null;      // hålets rel-nummer som är öppet för redigering
+let banmeta = {};          // globalt hål → {loop, hole, par, length_m}
+let jobbar = false;
+
+const spec = () => SGRound.roundName();
+const kombination = () => {
+  const p = Store.profile();
+  return (p && typeof Spelprofil !== "undefined") ? Spelprofil.kombination(p) : null;
+};
+
+/* ---------- hämtning ---------- */
+function analysKoppling() {
+  const base = (localStorage.getItem("sg_base") || "").trim().replace(/\/+$/, "");
+  const token = (localStorage.getItem("sg_token") || "").trim();
+  return base ? { base, token } : null;
+}
+
+/* Bandatan behövs för den TOMMA planen (par och längd per hål). Saknas den blir
+   listan tom — en tom plan med påhittade par vore sämre än ingen. */
+async function laddaBanmeta() {
+  try {
+    const d = await (await fetch("data/" + SGRound.mobileJson(), { cache: "force-cache" })).json();
+    for (const h of d.holes || []) {
+      banmeta[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
+    }
+  } catch (e) { /* offline utan cachad bandata — tom plan går då inte att göra */ }
+}
+
+function halMetaForRunda() {
+  const seq = SGRound.ROUND_SEQ[spec()] || SGRound.ROUND_SEQ["1-18"];
+  return seq.map(g => {
+    const h = banmeta[g];
+    return h ? { hole_global: g, loop: h.loop, hole_number: h.hole, par: h.par,
+                 hole_dist: h.length_m != null ? h.length_m : null } : null;
+  }).filter(Boolean);
+}
+
+async function generera() {
+  const k = analysKoppling();
+  if (!k) {
+    alert("Planen räknas på analys-servern. Ange adress och token under " +
+          "⚙ Analys-koppling på startsidan först.");
+    return;
+  }
+  const komb = kombination();
+  if (!komb) { alert("Profilen kunde inte läsas — fyll i den under Profil först."); return; }
+  jobbar = true; render();
+  try {
+    const p = Store.profile();
+    const q = new URLSearchParams({
+      holes: spec(), drive: komb.drive, approach: komb.approach,
+      baseline: komb.baseline,
+    });
+    if (p && p.stil) q.set("stil", p.stil);
+    const r = await fetch(`${k.base}/api/plan/kort?${q}`,
+                          k.token ? { headers: { "X-Auth-Token": k.token } } : {});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+    P = Store.savePlan(Plan.franKort(d, { fore: P, courseName: SGRound.courseName ? SGRound.courseName() : null }));
+  } catch (e) {
+    alert("Kunde inte hämta planen: " + e.message +
+          "\n\nEn redan sparad plan är orörd — du kan fortsätta läsa den.");
+  }
+  jobbar = false; render();
+}
+
+function tomPlan() {
+  const hal = halMetaForRunda();
+  if (!hal.length) {
+    alert("Bandata saknas i telefonen — en tom plan kan inte veta vilka hål rundan har.");
+    return;
+  }
+  P = Store.savePlan(Plan.tom({
+    spec: spec(), holes: hal, profil: kombination(),
+  }));
+  render();
+}
+
+/* ---------- rendering ---------- */
+function huvudHtml() {
+  const komb = kombination();
+  const stammer = P ? Plan.stammerMedProfil(P, komb) : null;
+  const tid = P ? new Date(P.updatedAt).toLocaleString("sv-SE",
+    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const rader = [];
+  if (P.summary) rader.push(`<p class="sub" style="margin:0">${esc(P.summary)}</p>`);
+  if (P.kind === "tom") {
+    rader.push(`<p class="hint" style="margin:0">Tom plan — skriv in den själv.
+      Du kan generera en när du är uppkopplad; dina egna rader följer med.</p>`);
+  }
+  rader.push(`<p class="hint" style="margin:8px 0 0">${esc(P.spec)} ·
+    sparad ${esc(tid)}${P.profil && P.profil.drive ? " · profil " + esc(P.profil.drive) : ""}</p>`);
+  const varning = stammer === false
+    ? `<div class="banner">Planen är räknad på en annan profil än den du har nu.
+       Talen är inte fel — men de är inte dina. Räkna om när du har nät.</div>` : "";
+  return `<div class="card">${rader.join("")}</div>${varning}`;
+}
+
+function slagHtml(kort, s) {
+  const t = Plan.slagtext(kort, s);
+  const lank = Plan.siktLank(kort, s);
+  return `<div class="slag">
+    <span class="nr">${s.nr}</span>
+    <span class="tx"><span class="et">${esc((s.rubrik || "").split("·").pop().trim())}</span><br>
+      <span class="${t.kalla === "egen" ? "egen" : ""}">${esc(t.text)}</span></span>
+    ${lank ? `<a class="sikt" href="${esc(lank)}" title="Öppna siktet i planeringsvyn">3D ›</a>` : ""}
+  </div>`;
+}
+
+function redigeraHtml(kort) {
+  const e = kort.egen;
+  const slagfalt = kort.shots.map(s => `
+    <label class="f">Slag ${s.nr} — egen text</label>
+    <input class="f" data-slag="${s.nr}" value="${esc(e.slagtext[String(s.nr)] || "")}"
+      placeholder="${esc(s.text)}">`).join("");
+  return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px">
+    <label class="f">Målscore</label>
+    <input class="f" id="mal" type="number" inputmode="numeric" min="1" max="15"
+      value="${e.mal != null ? e.mal : ""}"
+      placeholder="${kort.expected_score != null ? Math.round(kort.expected_score) : ""}">
+    <label class="f">Anteckning</label>
+    <textarea class="f" id="ant" placeholder="Vad du vill komma ihåg på teen">${esc(e.anteckning)}</textarea>
+    ${slagfalt}
+    <div class="verktyg">
+      <button data-klar="1">Klar</button>
+      <button data-ater="1">Återställ hålet</button>
+    </div>
+  </div>`;
+}
+
+function halHtml(kort) {
+  const m = Plan.mal(kort);
+  const oppen = redigerar === kort.rel;
+  const kropp = [];
+  if (kort.malscore) kropp.push(`<p class="rad-info">${esc(kort.malscore)}</p>`);
+  if (kort.shots.length) {
+    kropp.push(`<div style="margin-top:4px">${kort.shots.map(s => slagHtml(kort, s)).join("")}</div>`);
+  } else if (!oppen) {
+    kropp.push(`<p class="hint" style="margin:6px 0 0">Inga slag ännu — tryck Ändra
+      och skriv din egen plan för hålet.</p>`);
+  }
+  if (kort.i_spel) kropp.push(`<p class="rad-info risk">${esc(kort.i_spel)}</p>`);
+  if (kort.undvik) kropp.push(`<p class="rad-info risk">${esc(kort.undvik)}</p>`);
+  if (kort.stil) kropp.push(`<p class="rad-info">${esc(kort.stil)}</p>`);
+  if (kort.egen.anteckning) {
+    kropp.push(`<div class="anteckning">${esc(kort.egen.anteckning)}</div>`);
+  }
+  kropp.push(oppen ? redigeraHtml(kort)
+    : `<div class="verktyg"><button data-red="${kort.rel}">Ändra</button></div>`);
+
+  return `<div class="card hal" data-hal="${kort.rel}">
+    <div class="halhuv">
+      <span class="tx"><span class="rub">${esc(kort.rubrik)}</span>
+        <span class="fak">${esc(kort.fakta)}</span></span>
+      <span class="mal ${m.kalla === "egen" ? "egen" : ""}">
+        <b>${m.value != null ? esc(m.value) : "–"}</b><span>mål</span></span>
+    </div>
+    <div class="halkropp">${kropp.join("")}</div>
+  </div>`;
+}
+
+/* Yardage-guiden: hela rundan på en skärm, som en banguide. Talen är hålkortens
+   egna — listan är en annan LÄSNING av samma plan, inte en andra uträkning. */
+function yardageHtml() {
+  const rader = P.holes.map(k => {
+    const m = Plan.mal(k);
+    return `<div class="yard"><span class="h">Hål ${k.rel}</span>
+      <span class="p">${esc(k.par != null ? "par " + k.par : "–")}${
+        k.hole_dist != null ? " · " + Math.round(k.hole_dist) + " m" : ""}</span>
+      <span class="m">${m.value != null ? esc(m.value) : "–"}</span></div>`;
+  }).join("");
+  return `<div class="card"><p class="hint" style="margin:0 0 6px">Yardage-guide</p>
+    <div class="lista">${rader}</div></div>`;
+}
+
+function tomtHtml() {
+  const komb = kombination();
+  return `<div class="card">
+      <p class="sub" style="margin:0 0 6px">Du har ingen plan för ${esc(spec())} än.</p>
+      <p class="hint" style="margin:0">En genererad plan räknas på din profil
+        ${komb ? `(<b>${esc(komb.drive)}</b>)` : ""} och kräver nät en gång.
+        Sedan lever den i telefonen.</p>
+    </div>
+    <div class="knappar">
+      <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${jobbar ? "Räknar …" : "Generera plan"}</button>
+    </div>
+    <div class="knappar">
+      <button class="btn ghost" id="tom">Tom plan att fylla i själv</button>
+    </div>
+    <p class="hint">Planen påverkar aldrig en pågående runda eller din score.</p>`;
+}
+
+function render() {
+  const huvud = `<div class="top">
+      <a class="back" href="./planera.html" aria-label="tillbaka">‹</a>
+      <div><h1 class="identitet">📋 Min plan</h1></div>
+    </div>`;
+  if (!P) { app.innerHTML = huvud + tomtHtml(); koppla(); return; }
+  app.innerHTML = huvud + huvudHtml()
+    + P.holes.map(halHtml).join("")
+    + yardageHtml()
+    + `<div class="knappar">
+        <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${jobbar ? "Räknar …" : "Räkna om"}</button>
+      </div>
+      <div class="knappar"><button class="btn ghost" id="bort">Ta bort planen</button></div>
+      <p class="hint">Dina egna rader följer med när planen räknas om.</p>`;
+  koppla();
+}
+
+function koppla() {
+  const on = (id, fn) => { const e = document.getElementById(id); if (e) e.onclick = fn; };
+  on("gen", generera);
+  on("tom", tomPlan);
+  on("bort", async () => {
+    if (!confirm("Ta bort planen? Dina anteckningar försvinner med den.")) return;
+    await Store.removePlan(P.id);
+    P = null; redigerar = null; render();
+  });
+
+  app.querySelectorAll("[data-red]").forEach(b => {
+    b.onclick = () => { redigerar = +b.dataset.red; render(); };
+  });
+
+  /* Redigeringen sparas när fältet lämnas, inte vid varje tangenttryck: en
+     skrivning per bokstav hade betytt en IndexedDB-skrivning per bokstav. */
+  const rel = redigerar;
+  if (rel == null) return;
+  const spara = fn => { P = Store.savePlan(fn(P)); };
+  const el = id => document.getElementById(id);
+  if (el("mal")) el("mal").onchange = e => spara(p => Plan.sattMal(p, rel, e.target.value));
+  if (el("ant")) el("ant").onchange = e => spara(p => Plan.sattAnteckning(p, rel, e.target.value));
+  app.querySelectorAll("[data-slag]").forEach(i => {
+    i.onchange = () => spara(p => Plan.sattSlagtext(p, rel, +i.dataset.slag, i.value));
+  });
+  app.querySelectorAll("[data-klar]").forEach(b => {
+    b.onclick = () => { redigerar = null; render(); };
+  });
+  app.querySelectorAll("[data-ater]").forEach(b => {
+    b.onclick = () => {
+      if (!confirm("Ta bort det du skrivit på hålet? Planens egna rader står kvar.")) return;
+      spara(p => Plan.aterstall(p, rel));
+      render();
+    };
+  });
+}
+
+/* ---------- start ---------- */
+(async () => {
+  await Store.ready();
+  await laddaBanmeta();
+  // Senast sparade plan för DAGENS slingkombination. En plan för 10–27 är inte
+  // svaret på "vad är min plan för 1–18", och att visa den vore att svara på en
+  // annan fråga än den som ställdes.
+  const alla = await Store.plans();
+  P = alla.find(x => x.spec === spec()) || null;
+  render();
+})();
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone) — samma som övriga sidor. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>

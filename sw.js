@@ -37,7 +37,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-01-u2";
+const VERSION = "2026-08-01-gp3";
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -52,6 +52,7 @@ const SHELL_ASSETS = [
   "karta.html",
   "planera.html",
   "planvy.html",
+  "plan.html",
   "planera-karta.html",
   "redigera.html",
   "oversikt.html",
@@ -78,6 +79,7 @@ const SHELL_ASSETS = [
   "markhojd.js",
   "spelprofil.js",
   "vylage.js",
+  "plan.js",
   "vybro.js",
   "planslag.js",
   "kompass.js",

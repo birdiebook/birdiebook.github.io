@@ -1063,7 +1063,75 @@ async function init() {
   if (params.get("vinkel") === "3d" || params.get("vy") === "3d") VY.sattVinkel("3d");
   VY.batch(s => { s.sattHal(s.startRel(params.get("hal"), ROUND.length), null); });
   goTo(VY.rel);
+  planSikte();                      // GP3: ?sikte= från "Min plan"
   visaVinkel({ forsta: true });     // första uppställningen: inget att tona från
+}
+
+/* GP3: ETT SIKTE ÖPPNAT UR PLANEN.
+ *
+ * "Min plan" länkar hit med `?hal=<rel>&sikte=<lat>,<lon>[;<lat>,<lon>…]` —
+ * planens siktepunkter för hålet. §GP3 kräver att varje siktepunkt går att
+ * öppna här och SE LIKADAN UT, och i den här vyn är en siktepunkt en
+ * landningspunkt i `Vylage.legs` — samma sak som 2D och 3D redan ritar likadant
+ * (U19). Därför skrivs de dit, och inte till ett fjärde ställe.
+ *
+ * MEN INTE ÖVER SPELARENS EGNA PUNKTER. Har hålet redan en kedja spelaren lagt
+ * själv är den hens arbete, inte något planen får kasta. Då frågar vi i stället,
+ * och den frågan är hela poängen med funktionen: skillnaden mellan planens linje
+ * och den man tänkt själv är information.
+ */
+function planSikte() {
+  const raw = (params.get("sikte") || "").trim();
+  if (!raw) return;
+  const punkter = raw.split(";").map(s => {
+    const d = s.split(",").map(Number);
+    return (d.length === 2 && isFinite(d[0]) && isFinite(d[1])) ? [d[0], d[1]] : null;
+  }).filter(Boolean);
+  if (!punkter.length) return;
+
+  // Sista punkten är inspelets sikte kring pin — den är ett MÅL, inte en
+  // landning, och att lägga den som leg hade gjort greenen till en mellanstation.
+  const legs = punkter.slice(0, Math.max(1, punkter.length - 1));
+
+  const satt = () => {
+    VY.batch(s => {
+      while (s.antalLegs()) s.taBortPunkt(s.antalLegs() - 1);
+      legs.forEach(p => s.laggPunkt(p));
+    });
+    frameHole();
+  };
+
+  if (VY.antalLegs() === 0) { satt(); planBanner("Planens sikte", null); return; }
+  planBanner("Planens sikte skiljer sig från dina punkter.",
+             () => { satt(); planBanner("Planens sikte", null); });
+}
+
+/* Remsan som säger var punkterna kom ifrån. Byggs här och inte i markup:t för
+   att den bara finns när man kom hit från planen. */
+function planBanner(text, onErsatt) {
+  let b = document.getElementById("plansikte");
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "plansikte";
+    b.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);" +
+      "top:calc(var(--topphojd, 54px) + 8px);z-index:900;max-width:min(94vw,440px);" +
+      "background:var(--amber-yta);border:1px solid var(--amber-kant);" +
+      "color:var(--amber-ink);border-radius:10px;padding:8px 10px;font-size:13px;" +
+      "display:flex;gap:8px;align-items:center;line-height:1.35";
+    document.body.appendChild(b);
+  }
+  b.innerHTML = `<span style="flex:1">${text}</span>`;
+  const knapp = (etikett, fn) => {
+    const k = document.createElement("button");
+    k.textContent = etikett;
+    k.style.cssText = "appearance:none;background:none;border:1px solid var(--amber-kant);" +
+      "color:var(--amber-ink);border-radius:8px;min-height:32px;padding:0 10px;" +
+      "font:700 12px inherit;cursor:pointer";
+    k.onclick = fn;
+    b.appendChild(k);
+  };
+  if (onErsatt) knapp("Visa planens", onErsatt);
+  knapp("✕", () => b.remove());
 }
 
 /* U3: högerkolumnen ska börja där toppremsan slutar, inte vid ett handräknat
