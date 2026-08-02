@@ -88,23 +88,12 @@
   .total td { font-weight:800; border-bottom:none; }
   .hint { color:var(--dim); font-size:13px; text-align:center; margin-top:10px; }
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:4px;
-    background:var(--card); border-top:1px solid var(--line);
-    padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
-  .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
-    font-size:11px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
-  .tabs a .ico { display:block; font-size:20px; }
-  .tabs a.active { color:var(--ink); background:#1a4c38; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<nav class="tabs">
-  <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
-  <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
-  <a href="./oversikt.html" class="active"><span class="ico">📋</span>Översikt</a>
-  <a href="./profil.html"><span class="ico">👤</span>Profil</a>
-</nav>
+<nav class="tabs" id="tabs"></nav>
+<script src="./nav.js"></script>
 <script src="./round.js"></script>
 <!-- Live-scoring (additivt): samma tre script som Logga slag. Ger leaderboarden. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -188,7 +177,7 @@ function holeScore(S, n) {
 function goToHole(n) {
   try { localStorage.setItem("sg_hole", n); } catch (e) {}
   Store.setCurrent(n);
-  location.href = "./index.html";
+  location.href = "./spela.html";
 }
 const fmtDiff = d => d === 0 ? "0" : (d > 0 ? "+" + d : String(d));
 const fmtSg = v => (v > 0 ? "+" : "") + v.toFixed(1);

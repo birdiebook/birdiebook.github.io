@@ -37,7 +37,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-01-gp3";
+const VERSION = "2026-08-03-as-ia-3";
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -48,7 +48,11 @@ const HOLES3D_CACHE = "sg-holes3d";
 // (Supabase-js laddas från CDN och faller tyst tillbaka offline — ingår ej.)
 const SHELL_ASSETS = [
   "./",
+  // index.html är HUBBEN sedan AS-IA steg 3 (§2.8.0) — appens rot och
+  // offline-fallbackens mål. Slagloggningen bor i spela.html; saknas DEN i
+  // listan fungerar appen online men inte på banan, vilket är hela poängen.
   "index.html",
+  "spela.html",
   "karta.html",
   "planera.html",
   "planvy.html",
@@ -58,10 +62,16 @@ const SHELL_ASSETS = [
   "oversikt.html",
   "oversikt-analys.html",
   "analys.html",
-  "sallskap.html",
+  "uppsattning.html",
   "profil.html",
   "tokens.css",
   "boot.js",
+  // Flikraden är delad sedan AS-IA steg 1 (APPSTORE_PLAN §2.8.1). Utan den
+  // här raden renderar sidorna offline UTAN navigation — alltså på banan.
+  "nav.js",
+  // Sidospelets vyer är delade mellan Översikt (rundhalvan) och uppsattning.html
+  // sedan AS-IA steg 2 (§2.8.2). Saknas filen offline tappar Översikt ställningen.
+  "sidospel.js",
   "round.js",
   "analys-core.js",
   "analys-lista.js",

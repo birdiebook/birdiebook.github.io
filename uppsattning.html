@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Uppsättning">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Uppsättning</title>
+<style>
+  :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
+          --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
+          --miss:#e0a64e; --danger:#e26a5a; --good:#7ee2a8; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif;
+    touch-action:manipulation; overscroll-behavior:none;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #app { max-width:480px; margin:0 auto; padding:14px 16px 96px; }
+  h1 { font-size:21px; font-weight:700; margin:8px 0 2px; letter-spacing:.2px; }
+  .sub { color:var(--dim); font-size:14px; margin:0 0 16px; }
+  .back { display:inline-block; color:var(--dim); text-decoration:none; font-size:14px;
+    padding:6px 0; margin:0 0 2px; }
+  /* Kortens CSS bor i sidospel.js, scopad under .sidospel — den delas med
+     Översikt och får inte krocka med värdsidans egna .card/table-regler. */
+  /* flik-rad: bas-CSS:en bor i nav.js (AS-IA steg 1, §2.8.1). Samma avvikelse
+     som analys.html — ingen gap, smalare sidopadding. Måste stå FÖRE
+     @supports-blocket nedan, som skriver över .tabs i app-shell-läget. */
+  .tabs { gap:0; padding:6px 8px calc(env(safe-area-inset-bottom) + 6px); }
+  @supports (height: 100lvh) {
+    @media (display-mode: standalone) {
+      body { height: 100lvh; display: flex; flex-direction: column;
+             overflow: hidden; padding: 0; }
+      #app { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+             -webkit-overflow-scrolling: touch;
+             padding: calc(env(safe-area-inset-top) + 14px)
+                      calc(env(safe-area-inset-right) + 16px) 16px
+                      calc(env(safe-area-inset-left) + 16px); }
+      .tabs { position: static; padding: 6px 8px 8px; }
+    }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <a class="back" href="./spela.html">← Logga slag</a>
+  <h1>Uppsättning</h1>
+  <p class="sub" id="sub">Vilka som är med och vad ni spelar</p>
+  <div id="sidospel"></div>
+</div>
+<nav class="tabs" id="tabs"></nav>
+<script src="./nav.js"></script>
+<script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./store.js"></script>
+<script src="./spelformer.js"></script>
+<script src="./sidospel.js"></script>
+<script>
+"use strict";
+/* Uppsättningen av ett sällskapsspel (APPSTORE_PLAN §2.1c, §2.8.2).
+ *
+ * Halva gamla sallskap.html. Den andra halvan — ställning, hål för hål och
+ * inmatning — bor i Översikt, där den hör hemma: den är en RUNDVY.
+ *
+ * DEN HÄR SIDAN KRÄVER INGEN AKTIV RUNDA, och det är hela poängen. Man sätter
+ * upp sällskapet kvällen innan eller på parkeringen, inte efter första slaget.
+ * Gamla sidan vägrade rita någonting utan `Store.active()` och skickade en
+ * tillbaka till Logga slag. Vyerna klarade det redan — det var bara vakten som
+ * hindrade dem (se sidospel.js filhuvud, regel 2). */
+function subtext(info) {
+  const el = document.getElementById("sub");
+  if (!el) return;
+  const doc = Store.active();
+  const n = info && info.players;
+  const del = [];
+  if (doc) del.push((doc.courseName || "") + " · runda " + (doc.roundSeq || ""));
+  else del.push("Ingen runda igång — uppsättningen sparas ändå");
+  if (n) del.push(n === 1 ? "bara du" : n + " spelare");
+  el.textContent = del.filter(Boolean).join(" · ");
+}
+function rita() {
+  return Sidospel.uppsattning(document.getElementById("sidospel")).then(subtext);
+}
+Store.ready().then(rita);
+window.addEventListener("pageshow", () => Store.ready().then(rita));
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone). */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>

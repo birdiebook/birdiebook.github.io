@@ -115,7 +115,7 @@ const Spelprofil = (() => {
      Decimalkomma är svenskt tangentbord, inte skräp: utan `replace` gör
      parseFloat("12,4") tyst om det till 12, alltså ett FEL handicap som ser
      inmatat ut och som netto sedan räknas på. Samma grepp som `addPlayer` i
-     sallskap.html redan använder för medspelare. Låg det på två ställen skulle
+     sidospel.js redan använder för medspelare. Låg det på två ställen skulle
      de kunna glida isär, och då gäller felet bara ibland. */
   function hcpTal(v) {
     const x = typeof v === "number" ? v : parseFloat(String(v).replace(",", "."));

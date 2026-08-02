@@ -82,29 +82,27 @@
   .falt { display:flex; gap:10px; margin-top:8px; }
   .falt input, .falt select { flex:1; min-height:44px; background:#0e3326; color:var(--ink);
     border:1px solid var(--line); border-radius:10px; padding:0 11px; font:600 15px inherit; }
+  /* namnfältet (och andra fristående fält) — samma form som .falt, full bredd */
+  #app label { display:block; color:var(--dim); font-size:13px; font-weight:600;
+    margin:0 0 6px; }
+  #app > div > input[type="text"], .card > input[type="text"] {
+    width:100%; min-height:44px; background:#0e3326; color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:0 11px;
+    font:600 15px inherit; }
 
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:4px;
-    background:var(--card); border-top:1px solid var(--line);
-    padding:6px 8px calc(env(safe-area-inset-bottom) + 6px); }
-  .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
-    font-size:11px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
-  .tabs a .ico { display:block; font-size:20px; }
-  .tabs a.active { color:var(--ink); background:#1a4c38; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<nav class="tabs">
-  <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
-  <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
-  <a href="./oversikt.html"><span class="ico">📋</span>Översikt</a>
-  <a href="./analys.html"><span class="ico">📊</span>Analys</a>
-  <a href="./profil.html" class="active"><span class="ico">👤</span>Profil</a>
-</nav>
+<nav class="tabs" id="tabs"></nav>
+<script src="./nav.js"></script>
 <script src="./round.js"></script>
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
+<!-- Offline-nedladdning av banor: inställningen bor här sedan AS-IA steg 3
+     (§2.1d). Modulen monterar sig i #offline-tools. -->
+<script src="./offline-download.js"></script>
 <script>
 /* profil.html — spelprofilens guide och översikt (UPPGRADERING_3D §GP1 del 2).
  *
@@ -222,6 +220,17 @@ function sammanfattningHtml(profil) {
   return `<h1>Profil</h1>
     <p class="sub">Den här bär din spridning: hur planen räknar, och vad
       spelformerna räknar netto på.</p>
+    <!-- Namnet bor här, inte i uppsättningen. Förut fanns det bara i
+         localStorage (sg_player) och uppsättningen VÄGRADE starta en runda utan
+         det — en spärr som slog till trots att appen redan visste vem spelaren
+         var. Samma regel som för hcp: en sanning per uppgift (§GP1 beslut 1). -->
+    <div class="card">
+      <label for="namn">Ditt namn</label>
+      <input id="namn" type="text" placeholder="Förnamn Efternamn"
+        autocomplete="name" value="${esc(profil.namn || "")}">
+      <p class="hint" style="margin-top:8px">Används på scorekortet och i
+        exportfilen. Fylls i här en gång — uppsättningen frågar inte igen.</p>
+    </div>
     <div class="card">${rader}</div>
     <p class="hint">${hcpRad}</p>
     <div class="card">
@@ -244,6 +253,12 @@ function sammanfattningHtml(profil) {
         </div>
       </details>
     </div>
+    <!-- Offline-banor bor i Profil (APPSTORE_PLAN §2.1d, beslut 2026-08-02):
+         det är en INSTÄLLNING som gäller över tid, inte ett val i ögonblicket.
+         I uppsättningen hade den blivit en fråga varje gång man ska spela; i
+         Planera hade den blandats med strategiarbetet. Här är den en lista man
+         ser över någon gång per säsong. Flyttad hit från spela.html i steg 3. -->
+    <div class="card" id="offline-tools"></div>
     <div class="knappar">
       <button class="btn ghost" id="omguide">Gå igenom guiden igen</button>
     </div>`;
@@ -259,6 +274,8 @@ function render() {
     return;
   }
   app.innerHTML = steg ? guideHtml(profil) : sammanfattningHtml(profil);
+  // Offline-banorna finns bara i sammanfattningen, inte mitt i guiden.
+  if (!steg && window.SGOffline) SGOffline.mount("offline-tools");
   koppla(profil);
 }
 
@@ -296,6 +313,9 @@ function koppla(profil) {
     render();
   });
   on("kon", "onchange", e => { Store.setProfile({ kon: e.target.value || null }); render(); });
+  /* Namnet sparas UTAN render(): en omritning mitt i inmatningen skulle rycka
+     fokus ur fältet. Spelprofil.normalisera trimmar strängen. */
+  on("namn", "onchange", e => { Store.setProfile({ namn: e.target.value }); });
 }
 
 Store.ready().then(() => {

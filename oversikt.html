@@ -94,9 +94,6 @@
   .card-tbl tbody td.sc { padding:9px 6px; }
 
   /* gemensam flik-rad (samma på alla sidor) */
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:1200; display:flex; gap:4px;
-    background:var(--card); border-top:1px solid var(--line);
-    padding:6px 10px calc(env(safe-area-inset-bottom) + 6px); }
   /* Hemskärm: app-shell med FLIK-RADEN SOM FLEX-ELEMENT i botten (inte fixed).
      Fixed-element klipps vid layout-viewportens nederkant (797) på scrollande
      sidor; ett vanligt flödes-element i en helskärmshög body (100lvh = 844) sitter
@@ -114,30 +111,22 @@
       .tabs { position: static; padding: 6px 10px 8px; }
     }
   }
-  .tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim);
-    font-size:11px; font-weight:600; padding:5px 0 3px; border-radius:10px; }
-  .tabs a .ico { display:block; font-size:20px; }
-  .tabs a.active { color:var(--ink); background:#1a4c38; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<nav class="tabs">
-  <a href="./index.html"><span class="ico">⛳</span>Logga slag</a>
-  <a href="./karta.html"><span class="ico">🗺</span>Karta</a>
-  <a href="./oversikt.html" class="active"><span class="ico">📋</span>Översikt</a>
-  <a href="./analys.html"><span class="ico">📊</span>Analys</a>
-  <a href="./profil.html"><span class="ico">👤</span>Profil</a>
-</nav>
+<nav class="tabs" id="tabs"></nav>
+<script src="./nav.js"></script>
 <script src="./round.js"></script>
 <!-- Live-scoring: samma tre script som Logga slag. Ger leaderboard-modellen. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
-<!-- spelformer.js används här BARA för formatets visningsnamn i Sällskap-kortet;
-     all uträkning ligger i sallskap.html. -->
+<!-- spelformer.js: regelkärnan. Sedan AS-IA steg 2 (§2.8.2) ritas sidospelets
+     RUNDHALVA här, via sidospel.js — uppsättningen bor i uppsattning.html. -->
 <script src="./spelformer.js"></script>
+<script src="./sidospel.js"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
@@ -214,7 +203,7 @@ function emptyView() {
       ett live-scorekort här — hur det går för dig och de andra i bollen, hål för hål.
       Ett sidospel i <b>Sällskap</b> behöver ingen live-match: där för du
       medspelarnas score själv.</p>
-    <a class="btn" href="./index.html">⛳ Gå till Logga slag</a>
+    <a class="btn" href="./spela.html">⛳ Gå till Logga slag</a>
   </div>`;
 }
 
@@ -288,11 +277,11 @@ function scorecardHtml() {
   </table></div></div>`;
 }
 
-/* Ingång till Sällskap-vyn (spelformer med medspelare, APPSTORE_PLAN §2.5, §9.4.6).
-   Kortet RÄKNAR ingenting — det visar bara vad som är igång och länkar vidare.
-   Uträkningen bor i sallskap.html/spelformer.js, så den finns på ett ställe. */
+/* Sidospelets rubrikrad + väg till uppsättningen (APPSTORE_PLAN §2.1c, §2.5).
+   Kortet RÄKNAR ingenting — själva ställningen ritas av sidospel.js i
+   #sidospel nedan. Uppsättningen (vilka som är med, spelform, ditt hcp) bor i
+   uppsattning.html och KRÄVER INGEN AKTIV RUNDA. */
 function sallskapHtml() {
-  if (!Store.active()) return "";
   const f = Store.format();
   const n = 1 + Store.markers().length;
   const namn = f && Spelformer.FORMAT[f.key] ? Spelformer.FORMAT[f.key].namn : null;
@@ -301,8 +290,16 @@ function sallskapHtml() {
     : `Köpenhamnare, Wolf, Skins och fler — lägg till medspelare och välj form.`;
   return `<div class="card"><h2>👥 Sällskap</h2>
     <p class="hint left" style="margin:0 0 10px">${rad}</p>
-    <a class="btn" href="./sallskap.html">${namn ? "Visa ställning" : "Starta ett sidospel"}</a>
+    <a class="btn" href="./uppsattning.html">${namn ? "Ändra uppsättning" : "Starta ett sidospel"}</a>
   </div>`;
+}
+
+/* Rundhalvan ritas EFTER att app.innerHTML satts, eftersom den behöver sitt
+   element. Den ritar sig själv till tomhet när sällskapet är en enda spelare,
+   så anropet är ofarligt även i en soloronda. */
+function ritaSidospel() {
+  const el = document.getElementById("sidospel");
+  if (el && window.Sidospel) Sidospel.runda(el);
 }
 
 async function render() {
@@ -320,13 +317,17 @@ async function render() {
     app.innerHTML = `<h1>Översikt</h1>
       <p class="sub">Live-scorekort under rundan</p>
       ${sallskapHtml()}
+      <div id="sidospel"></div>
       ${emptyView()}`;
+    ritaSidospel();
     return;
   }
   app.innerHTML = `<h1>Översikt</h1>
     <p class="sub">runda ${roundName} · live</p>
     ${sallskapHtml()}
+    <div id="sidospel"></div>
     ${scorecardHtml()}`;
+  ritaSidospel();
 
   startLeaderboard();   // prenumerera en gång när par-listan finns
 }

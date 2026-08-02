@@ -413,6 +413,19 @@ const Store = (() => {
         if (rows.length) doc = await be.get(DOCS, rows[0].id);
         if (doc) normalize(doc);
         if (doc && doc.matchId) match = await be.get(MATCHES, doc.matchId);
+        // Match UTAN runda (AS-IA steg 2, §2.8.2): sällskapet ska gå att sätta
+        // upp kvällen innan, innan någon runda finns. En sådan match nåddes
+        // förut BARA via doc.matchId — den skrevs alltså till IndexedDB och
+        // blev omöjlig att hitta igen efter en omladdning, så uppsättningen såg
+        // sparad ut och var borta nästa gång sidan öppnades. Id:t läggs därför
+        // undan separat och plockas upp här när ingen runda pekar ut en match.
+        if (!match) {
+          const vantande = lasVantandeMatch();
+          if (vantande) match = await be.get(MATCHES, vantande);
+        }
+        // Rundan har tagit över matchen → glöm det lösa id:t, annars kan en
+        // gammal uppsättning dyka upp igen efter att rundan avslutats.
+        if (match && doc && doc.matchId === match.id) glomVantandeMatch();
       } catch (e) { console.warn("[Store] kunde inte hydrera aktiv runda", e); }
       // Profilen hydreras som rundan: läses en gång, lever synkront. Sidor som
       // renderar i Store.ready() ska kunna fråga efter den utan await.
@@ -431,6 +444,16 @@ const Store = (() => {
 
   function startRound(opts) {
     doc = newDoc(opts);
+    /* En uppsättning gjord FÖRE rundan (AS-IA steg 2) ska följa med in i den —
+       annars hade kvällens sällskap och spelform tyst försvunnit i det ögonblick
+       spelaren tryckte på starta. Rundan adopterar matchen; pekaren behövs inte
+       längre eftersom doc.matchId nu hittar den. */
+    if (match && !match.myRoundId) {
+      match.myRoundId = doc.id;
+      doc.matchId = match.id;
+      glomVantandeMatch();
+      writeMatch();
+    }
     flush();
     return doc;
   }
@@ -580,6 +603,20 @@ const Store = (() => {
      `oversikt.html` kollar `gameId` innan de gör något, så en lokal match
      stör inte live-scoringen. */
 
+  /* En match utan runda kan inte hittas via `doc.matchId` — därför en egen,
+     pytteliten pekare i localStorage. Den är BARA en pekare: matchen själv bor
+     kvar i IndexedDB som alla andra. Se hydreringen i `ready()`. */
+  const VANTANDE_MATCH = "sg_vantande_match";
+  function lasVantandeMatch() {
+    try { return localStorage.getItem(VANTANDE_MATCH) || null; } catch (_) { return null; }
+  }
+  function minnsVantandeMatch(id) {
+    try { localStorage.setItem(VANTANDE_MATCH, id); } catch (_) {}
+  }
+  function glomVantandeMatch() {
+    try { localStorage.removeItem(VANTANDE_MATCH); } catch (_) {}
+  }
+
   function writeMatch() {
     return match ? be.put(MATCHES, clone(match)) : Promise.resolve();
   }
@@ -591,6 +628,7 @@ const Store = (() => {
               format: null, wolf: {}, myRoundId: doc ? doc.id : null,
               participants: [], createdAt: nowIso(), endedAt: null };
     if (doc) { doc.matchId = match.id; flush(); }
+    else minnsVantandeMatch(match.id);   // ingen runda att hänga den på ännu
     writeMatch();
     return match;
   }

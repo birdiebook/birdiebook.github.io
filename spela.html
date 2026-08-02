@@ -1,0 +1,1325 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rundlogg">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>SG Rundlogg</title>
+<style>
+  :root {
+    --bg: #0c2e22; --card: #123c2d; --card2: #16412f;
+    --ink: #e8f5ec; --dim: #9fc4ae; --line: #1f5540;
+    --accent: #37b06b; --accent-ink: #06180f;
+    --warn: #e8c34a; --danger: #e26a5a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation; overscroll-behavior: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #app { max-width: 480px; margin: 0 auto; padding: 12px 14px 96px; }
+  /* gemensam flik-rad (samma på alla sidor) */
+  /* Hemskärm: app-shell med FLIK-RADEN SOM FLEX-ELEMENT i botten (inte fixed).
+     Fixed-element klipps vid layout-viewportens nederkant (797) på scrollande
+     sidor; ett vanligt flödes-element i en helskärmshög body (100lvh = 844) sitter
+     däremot garanterat längst ner utan klippning eller grön remsa. #app får flex:1
+     och scrollar internt. Safari (ej standalone) behåller sin fixed-flikrad, orört. */
+  @supports (height: 100lvh) {
+    @media (display-mode: standalone) {
+      body { height: 100lvh; display: flex; flex-direction: column;
+             overflow: hidden; padding: 0; }
+      #app { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+             -webkit-overflow-scrolling: touch;
+             padding: calc(env(safe-area-inset-top) + 12px)
+                      calc(env(safe-area-inset-right) + 14px) 16px
+                      calc(env(safe-area-inset-left) + 14px); }
+      .tabs { position: static; padding: 6px 10px 8px; }
+    }
+  }
+  h1 { font-size: 22px; margin: 10px 0 2px; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0 0 14px; }
+  .card { background: #123c2d; border: 1px solid var(--line); border-radius: 14px;
+          padding: 14px; margin: 10px 0; }
+  label { display: block; font-size: 13px; color: var(--dim); margin: 10px 0 4px; }
+  input[type=text], select.field { width: 100%; font-size: 17px; padding: 12px; border-radius: 10px;
+          border: 1px solid var(--line); background: #0e332656; color: var(--ink); }
+  button { font-family: inherit; border: none; border-radius: 12px; cursor: pointer; }
+  .big { width: 100%; padding: 16px; font-size: 18px; font-weight: 700;
+         background: var(--accent); color: var(--accent-ink); margin-top: 14px; }
+  .big:disabled { opacity: .5; }
+  .shotbtn { width: 100%; padding: 30px 16px; font-size: 26px; font-weight: 800;
+         letter-spacing: 1px; background: var(--accent); color: var(--accent-ink);
+         border-radius: 18px; box-shadow: 0 4px 0 #1d7a46; }
+  .shotbtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #1d7a46; }
+  .shotbtn:disabled { opacity: .6; }
+  .ghost { background: #1a4c38; color: var(--ink); padding: 12px 14px; font-size: 15px; }
+  .ghost.on { background: var(--warn); color: #221a02; font-weight: 700; }
+  .link { background: none; color: var(--dim); text-decoration: underline;
+          font-size: 14px; padding: 10px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row > * { flex: 1; }
+  .colstack { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .colstack .ghost { flex: 1; }
+  .holehead { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
+  .holehead button { background: #1a4c38; color: var(--ink); font-size: 22px;
+          width: 52px; height: 52px; border-radius: 12px; flex: none; }
+  .holehead .nr { font-size: 30px; font-weight: 800; }
+  .gps { display: inline-block; font-size: 13px; padding: 4px 10px; border-radius: 99px;
+         background: #0e3326; border: 1px solid var(--line); color: var(--dim); }
+  .gps.good { color: #7ee2a8; } .gps.ok { color: var(--warn); } .gps.bad { color: var(--danger); }
+  ul.shots { list-style: none; margin: 8px 0 0; padding: 0; }
+  ul.shots li { display: flex; align-items: center; gap: 8px; padding: 9px 4px;
+          border-top: 1px solid var(--line); font-size: 15px; }
+  ul.shots li:first-child { border-top: none; }
+  ul.shots .meta { color: var(--dim); font-size: 13px; margin-left: auto; }
+  ul.shots .del { background: none; color: var(--danger); font-size: 18px;
+          width: 36px; height: 36px; flex: none; }
+
+  /* ---- banväljare: sökfält + lista (ersätter <select id="course">) ---- */
+  .cpick { position: relative; }
+  /* Listan är en dropdown: dold tills fältet fokuseras (öppnas via .open), och
+     absolut-positionerad som overlay så den inte trycker ner rund/tee-fälten.
+     Skalar till många banor (scroll i listan) utan att fylla skärmen i vila. */
+  .cpick-list { display: none; position: absolute; left: 0; right: 0; top: 100%;
+          z-index: 50; margin-top: 6px; max-height: 260px; overflow-y: auto;
+          border: 1px solid var(--line); border-radius: 10px; background: var(--card2);
+          box-shadow: 0 8px 24px rgba(0,0,0,.38); }
+  .cpick-list.open { display: block; }
+  .cpick-sec { color: var(--dim); font-size: 12px; font-weight: 700;
+          padding: 8px 12px 4px; text-transform: uppercase; letter-spacing: .3px; }
+  .cpick-row { display: block; width: 100%; text-align: left; background: none;
+          color: var(--ink); font-size: 15px; padding: 10px 12px; border-radius: 0;
+          border-top: 1px solid var(--line); }
+  .cpick-row:first-child, .cpick-sec:first-child + .cpick-row { border-top: none; }
+  .cpick-row.active { background: #1a4c38; font-weight: 700; }
+  .cpick-empty { color: var(--dim); font-size: 14px; padding: 10px 12px; }
+  .step { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .step button { width: 56px; height: 56px; font-size: 26px; font-weight: 700;
+          background: #1a4c38; color: var(--ink); flex: none; }
+  .step .val { font-size: 26px; font-weight: 800; min-width: 40px; text-align: center; }
+  .step .lbl { color: var(--dim); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: right; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 600; font-size: 13px; }
+  .total td { font-weight: 800; border-bottom: none; }
+  .banner { background: #4a3413; border: 1px solid #7a5a1f; color: #f0d48a;
+          border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 10px 0; }
+  .hint { color: var(--dim); font-size: 13px; line-height: 1.5; }
+  .ok-note { color: #7ee2a8; font-size: 14px; margin-top: 8px; }
+
+  /* ===== Logga slag – revamp ===== */
+  #app { display: flex; flex-direction: column; }
+  /* header med rundade pilar + GPS-undertext */
+  .holehead .htitle { text-align: center; flex: 1; }
+  .holehead .htitle .nr { font-size: 30px; font-weight: 800; line-height: 1.05; }
+  .holehead button { border-radius: 50%; font-size: 24px; background: #16412f;
+          border: 1px solid var(--line); }
+  .gpsprec { font-size: 13px; color: var(--dim); }
+  .gpsprec.good { color: #7ee2a8; } .gpsprec.ok { color: var(--warn); } .gpsprec.bad { color: var(--danger); }
+
+  /* stora logga-slag-kortet */
+  .logwrap { border: 1px solid var(--line); border-radius: 18px; background: var(--card);
+          margin: 12px 0; padding: 6px; }
+  .logcard { display: flex; flex-direction: column; align-items: center; gap: 14px;
+          width: 100%; background: none; color: var(--ink); padding: 22px 16px; }
+  .logcard .logtitle { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+  .logcard .logicon { width: 84px; height: 84px; color: var(--accent);
+          transition: height .18s, width .18s, opacity .18s; }
+  .logcard .loghint { border: 1px solid var(--line); border-radius: 99px;
+          padding: 10px 18px; color: var(--dim); font-size: 14px; }
+  .logcard:active { transform: translateY(1px); }
+  .logcard:disabled { opacity: .6; }
+  .logwrap.compact .logcard { padding: 16px; gap: 10px; }
+  .logwrap.compact .logicon { width: 44px; height: 44px; }
+  .logwrap.compact .loghint { display: none; }
+  /* avstånds-slinga (horisontell, aldrig vertikal tillväxt) */
+  .trail { display: flex; align-items: center; gap: 8px; overflow-x: auto;
+          padding: 10px 10px 12px; scrollbar-width: none; }
+  .trail::-webkit-scrollbar { display: none; }
+  .trail .node { flex: none; display: inline-flex; align-items: center; justify-content: center;
+          width: 30px; height: 30px; border-radius: 50%; background: #1a4c38;
+          border: 1px solid var(--line); font-size: 14px; font-weight: 700; position: relative; }
+  .trail .seg { flex: none; color: var(--dim); font-size: 13px; white-space: nowrap; }
+  .trail .node.last { background: var(--accent); color: var(--accent-ink); }
+  .trail .tdel { position: absolute; top: -7px; right: -9px; width: 20px; height: 20px;
+          border-radius: 50%; background: var(--danger); color: #2a0a06; font-size: 12px;
+          line-height: 1; display: flex; align-items: center; justify-content: center; }
+
+  /* 3 stat-kort */
+  .statgrid { display: flex; gap: 8px; }
+  .statgrid .stat { flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line);
+          border-radius: 14px; padding: 12px 4px 10px; text-align: center; }
+  .stat .stat-lbl { color: var(--dim); font-size: 13px; }
+  .stat .stat-ico { width: 22px; height: 22px; color: var(--dim); margin: 6px 0; }
+  .stat .stat-ctl { display: flex; align-items: center; justify-content: center; gap: 3px; }
+  .stat .stat-ctl button { width: 32px; height: 32px; font-size: 21px; font-weight: 700;
+          background: #1a4c38; color: var(--ink); flex: none; }
+  .stat .stat-ctl button:disabled { opacity: .4; }
+  .stat .stat-ctl .val { font-size: 23px; font-weight: 800; min-width: 20px; }
+  .stat .stat-sub { color: var(--dim); font-size: 11px; margin-top: 4px; height: 14px; }
+
+  /* loggningsnivå i hålvyn — diskret, det är en kontroll och ingen uppmaning */
+  .lvlpick { background: transparent; color: var(--dim); border: 0; font: inherit;
+             font-size: 12px; padding: 6px; text-align: center; }
+  /* toggles green / pin */
+  .togglerow { display: flex; gap: 10px; margin: 12px 0 4px; }
+  .toggle { flex: 1; display: flex; align-items: center; gap: 10px; text-align: left;
+          background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+          padding: 12px; color: var(--ink); font-size: 13px; font-weight: 700; line-height: 1.15; }
+  .toggle .knob { flex: none; width: 44px; height: 26px; border-radius: 99px;
+          background: #0e3326; border: 1px solid var(--line); position: relative;
+          transition: background .15s; }
+  .toggle .knob::after { content: ""; position: absolute; top: 2px; left: 2px;
+          width: 20px; height: 20px; border-radius: 50%; background: #cfe6d8;
+          transition: transform .15s; }
+  .toggle.on.green .knob { background: var(--accent); border-color: var(--accent); }
+  .toggle.on.pin .knob { background: var(--danger); border-color: var(--danger); }
+  .toggle.on.az .knob { background: var(--accent); border-color: var(--accent); }
+  .toggle.on .knob::after { transform: translateX(18px); }
+  /* auto-zoom & green-lutning: globala karta-inställningar (styr karta.html via
+     localStorage), sida vid sida på egen rad under green/pin. */
+  .toggle.on.sl .knob { background: var(--accent); border-color: var(--accent); }
+  .toggle.az, .toggle.sl { color: var(--dim); }
+  .toggle.az.on, .toggle.sl.on { color: var(--ink); }
+  .tstatus { min-height: 16px; color: var(--dim); font-size: 12px; margin: 0 2px 6px; }
+  .tstatus .ok { color: #7ee2a8; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav class="tabs" id="tabs"></nav>
+<script src="./nav.js"></script>
+<script src="./round.js"></script>
+<!-- Live-scoring (additivt): supabase-js + delad score-härledning + klient.
+     Laddas före huvudskriptet så SGScore/SGLive finns när vyerna ritas.
+     Faller tyst tillbaka till "ingen live" om CDN inte nås (t.ex. offline). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./score.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./store.js"></script>
+<script src="./live.js"></script>
+<script>
+"use strict";
+const DEFAULT_COURSE = "Malmö Burlöv Golfklubb";
+// V11: här fanns tidigare en `const` som frös SGRound.HOLES vid sidladdning
+// (18 hos Burlöv) — bytte man sen aktiv bana till en 9-håls bana (Ven) via
+// banväljaren uppdaterades SGRound.HOLES men inte den frusna konstanten, så
+// navigeringen fortsatte tillåta hål 10–18. maxHole() läser alltid AKTIV
+// banas vy-runda (SGRound.HOLES härleds ur vald runda-seq.length, se
+// round.js) — ingen frysning.
+function maxHole() { return SGRound.HOLES; }
+
+/* ---------- banväljare (B3) ----------
+   Registryn (mobile/data/courses.json) hämtas async — synkront state (SGRound)
+   är redan uppe (Burlöv-default eller cachad meta) så UI inte hoppar medan den
+   laddar. Faller tyst tillbaka till bara aktiv/cachad bana om fetchen failar
+   (offline vid första besöket). */
+let coursesRegistry = null; // array | null (ej laddad än)
+function loadCoursesRegistry() {
+  if (coursesRegistry) return Promise.resolve(coursesRegistry);
+  return fetch("./data/courses.json", { cache: "no-cache" }).then(r => r.json())
+    .then(list => (coursesRegistry = Array.isArray(list) && list.length ? list : null))
+    .catch(() => null);
+}
+function courseMetaBySlug(list, slug) {
+  return (list || []).find(c => c.slug === slug) || null;
+}
+
+/* ---------- bana-historik (senast spelade) ----------
+   Ren hjälpfunktion: lägger `slug` främst i `list`, deduplicerar, cappar till
+   MAX. Testbar utan DOM (se tests/js/test_course_history.mjs). */
+const KEY_COURSE_HIST = "sg_course_history";
+const COURSE_HIST_MAX = 5;
+function pushCourseHistory(slug, list) {
+  const out = [slug, ...(Array.isArray(list) ? list : []).filter(s => s !== slug)];
+  return out.slice(0, COURSE_HIST_MAX);
+}
+function loadCourseHistory() {
+  try {
+    const v = JSON.parse(localStorage.getItem(KEY_COURSE_HIST));
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+function saveCourseHistory(list) {
+  try { localStorage.setItem(KEY_COURSE_HIST, JSON.stringify(list)); } catch (e) {}
+}
+
+/* ---------- state ----------
+   Rundan bor i Store (APPSTORE_PLAN §9.1). S ÄR det aktiva runddokumentet:
+   Store.active() returnerar det LEVANDE objektet, så koden nedan kan fortsätta
+   mutera S rakt av och save() blir bara en flush ner i IndexedDB.
+
+   Före rundstart finns ingen runda — då är S ett UTKAST som inte lagras. Först
+   "Starta runda" skapar dokumentet (Store.startRound), precis som freshState +
+   första save() gjorde förr.
+
+   `view` är UI-läge och ligger numera i localStorage, inte i rundan (§9.1
+   beslut G: localStorage = inställningar, IndexedDB = användardata). */
+let S = null;
+let lastFinishedDoc = null;    // senast avslutade rundan, för "hämta igen"-knappen
+
+/* ---------- nivå 2 är PAUSAD (beslut 2026-07-29) ----------
+   Hela nivå 2 finns byggd och testad (APPSTORE_PLAN §9.2) men är inte valbar:
+   inmatningen — särskilt fairway/green träff-miss — behöver mer eftertanke kring
+   användarupplevelsen innan den möter en riktig runda. Datamodellen (`fir`/`gir`),
+   regeln att härlett vinner över observerat, och testerna ligger kvar orörda.
+
+   ÅTERAKTIVERA: sätt NIVA2_PAUSAD = false. Inget annat behöver ändras.
+
+   En runda som REDAN står på nivå 2 får fortsatt visa och behålla sin nivå —
+   annars hade väljaren tappat spelarens eget val mitt i en runda. */
+const NIVA2_PAUSAD = true;
+function niva2Valbar() {
+  if (!NIVA2_PAUSAD) return true;
+  const d = Store.active();
+  return !!(d && d.loggingLevel === 2);
+}
+
+/* Par per spelarhål — behövs bara för att INTE visa en fairway-kontroll på par 3
+   (nivå 2). Laddas i bakgrunden; tills den är klar är kartan tom och kontrollen
+   visas, vilket är ofarligt (analys-core ignorerar fir på par 3 ändå). */
+let PAR_BY_REL = {};
+function loadPar() {
+  return fetch("data/" + SGRound.mobileJson(), { cache: "force-cache" })
+    .then(r => r.json())
+    .then(d => {
+      const byGlobal = {};
+      for (const hh of d.holes || []) byGlobal[SGRound.GLOBAL_BASE[hh.loop] + hh.hole] = hh.par;
+      const seq = SGRound.seq() || [];
+      const out = {};
+      seq.forEach((g, i) => { if (byGlobal[g] != null) out[i + 1] = byGlobal[g]; });
+      PAR_BY_REL = out;
+    })
+    .catch(() => {});
+}
+const VIEW_KEY = "sg_view";
+/* Namnet bor i SPELPROFILEN (`Store.profile().namn`), inte här. Samma regel som
+   för hcp och kön i §GP1 beslut 1: en sanning per uppgift om spelaren. Förut
+   fanns namnet bara i `sg_player`, och uppsättningen krävde att man skrev in det
+   varje gång på en ny enhet — en spärr (`alert("Fyll i ditt namn")`) som stoppade
+   rundstarten trots att appen redan visste vem spelaren var.
+   `sg_player` läses fortfarande som fallback för den som har ett namn kvar där
+   sedan tidigare, och skrivs vidare vid start så inget går förlorat. */
+function profilNamn() {
+  try { const p = Store.profile(); return (p && p.namn) || ""; } catch (_) { return ""; }
+}
+function draftState() {
+  return { player: profilNamn() || localStorage.getItem("sg_player") || "",
+           courseName: SGRound.courseName() || DEFAULT_COURSE,
+           tee: localStorage.getItem("sg_tee") || "",
+           startedAt: null, endedAt: null, current: 1, holes: [] };
+}
+function currentView() {
+  if (!Store.active()) return "setup";
+  const v = localStorage.getItem(VIEW_KEY);
+  return v === "summary" ? "summary" : "hole";
+}
+function setView(v) { try { localStorage.setItem(VIEW_KEY, v); } catch (e) {} }
+function save() {
+  Store.touch();
+  try { localStorage.setItem("sg_hole", S.current); } catch (e) {}   // delas med hålkartan
+}
+function hole(n) { return Store.hole(n); }
+
+/* ---------- GPS ---------- */
+let lastFix = null, watching = false, busy = false, wakeLock = null;
+const fixBuf = [];              // ringbuffer av watch-fixar (senaste ~6 s)
+const FIX_WINDOW = 6000;        // hur långt bakåt bufferten sträcker sig (ms)
+const CAPTURE_COLLECT_MS = 5000; // samla fixar så här länge EFTER tryck (konvergens)
+const CAPTURE_HARD_CAP_MS = 15000; // ge upp först här om INGEN fix alls kommit (kall mottagare/behörighet)
+
+function pruneBuf(now) {
+  while (fixBuf.length && now - fixBuf[0].ts > FIX_WINDOW) fixBuf.shift();
+}
+
+// #1 Screen Wake Lock: håll skärmen tänd medan en runda är aktiv så GPS-chippet
+// förblir varmt (ingen kall uppvärmning per hål). Släpps av OS vid flikbyte/lås;
+// vi åter-begär på visibilitychange. Saknas API:t (äldre iOS) gör vi inget.
+async function requestWakeLock() {
+  if (wakeLock || !("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) { /* nekad/ej stödd — GPS funkar ändå, ignorera */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && watching) requestWakeLock();
+});
+
+function startWatch() {
+  if (watching || !("geolocation" in navigator)) return;
+  watching = true;
+  requestWakeLock();
+  navigator.geolocation.watchPosition(
+    p => { const now = Date.now();
+           lastFix = { lat: p.coords.latitude, lon: p.coords.longitude,
+                       acc: p.coords.accuracy, ts: now };
+           fixBuf.push(lastFix); pruneBuf(now); updateGpsChip(); },
+    () => {}, { enableHighAccuracy: true, maximumAge: 0 });
+}
+
+const median = arr => {
+  const s = [...arr].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// #2 Bästa fixen, inte senaste + #3 median när man står stilla. Väljer ur en
+// uppsättning fixar den bästa positionen: median av de stillastående (kastar
+// outliers) om >=3, annars den med lägst accuracy. null om tomt.
+function pickBest(fixes) {
+  if (!fixes.length) return null;
+  const best = fixes.reduce((a, b) => (b.acc < a.acc ? b : a));  // #2 lägst acc
+  if (fixes.length < 3) return best;
+
+  // #3 median: släng fixar som ligger långt från medianpunkten (brus/rörelse)
+  const centre = { lat: median(fixes.map(f => f.lat)),
+                   lon: median(fixes.map(f => f.lon)) };
+  const inliers = fixes.filter(f => hav(f, centre) <= Math.max(f.acc, 10));
+  if (inliers.length < 3) return best;
+
+  return { lat: median(inliers.map(f => f.lat)),
+           lon: median(inliers.map(f => f.lon)),
+           acc: best.acc,   // ärligt: inte lägre än bästa bidragande fixen
+           ts: Date.now() };
+}
+
+// Snabb fix för green/pin: där lämnar man platsen direkt, så ingen 5 s-väntan.
+// Tar bästa ur senaste bufferten (~6 s) om något finns, annars en enskild fix.
+function quickFix() {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    pruneBuf(Date.now());
+    const b = pickBest(fixBuf);
+    if (b) return resolve(b);
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude,
+                     acc: p.coords.accuracy, ts: Date.now() }),
+      e => reject(new Error(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
+                                         : "Fick ingen GPS-position, försök igen.")),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
+  });
+}
+
+// LOGGA SLAG: samlar GPS-fixar i ~5 s EFTER trycket (så en kall mottagare ur
+// fickan hinner konvergera) och returnerar bästa/median-positionen ur fönstret.
+// Egen watch garanterar färska fixar även om huvud-watchen strypts i bakgrunden.
+// Sömlöst — ingen nedräkning; vibrationen vid retur är kvittot på att slaget loggats.
+//
+// Viktigt: en riktigt kall mottagare (ur fickan) eller behörighetsdialogen på
+// första trycket kan äta upp hela 5 s-fönstret INNAN första fixen kommer. Då får
+// vi inte bara ge upp — kartans logShot (getCurrentPosition, timeout 15 s) klarar
+// det, så här väntar vi vidare upp till en hård gräns tills första fixen dyker upp.
+function collectFix() {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    const collected = [];
+    let wid = null, done = false, windowElapsed = false;
+    const finish = (fn, arg) => {
+      if (done) return; done = true;
+      if (wid !== null) navigator.geolocation.clearWatch(wid);
+      clearTimeout(capTimer); clearTimeout(hardTimer);
+      fn(arg);
+    };
+    const settle = () => {
+      const best = pickBest(collected);
+      finish(best ? resolve : reject, best || new Error("Fick ingen GPS-position, försök igen."));
+    };
+    wid = navigator.geolocation.watchPosition(
+      p => { const f = { lat: p.coords.latitude, lon: p.coords.longitude,
+                         acc: p.coords.accuracy, ts: Date.now() };
+             collected.push(f);
+             lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip();
+             // Fönstret redan passerat och vi väntade på första fixen? Klart nu.
+             if (windowElapsed) settle(); },
+      e => { if (e.code === 1) finish(reject, new Error("GPS nekad — tillåt platsåtkomst i webbläsaren.")); },
+      { enableHighAccuracy: true, maximumAge: 0 });
+    // Efter 5 s: har vi fixar väljer vi bästa. Har vi INGA (kall mottagare/
+    // behörighetsdialog) låter vi watchen leva vidare tills första fixen kommer.
+    const capTimer = setTimeout(() => {
+      windowElapsed = true;
+      if (collected.length) settle();
+    }, CAPTURE_COLLECT_MS);
+    // Hård gräns: ge upp om inte ens en enda fix kommit (som kartans 15 s-timeout).
+    const hardTimer = setTimeout(settle, CAPTURE_HARD_CAP_MS);
+  });
+}
+async function capture(label, collect) {
+  if (busy) return null;
+  busy = true; render();
+  try {
+    const f = await (collect ? collectFix() : quickFix());
+    if (f.acc > 25 && !confirm(`Svag GPS (±${Math.round(f.acc)} m). Spara ${label} ändå?`)) {
+      return null;
+    }
+    if (navigator.vibrate) navigator.vibrate(30);
+    return { lat: f.lat, lon: f.lon, acc: Math.round(f.acc * 10) / 10,
+             ts: new Date().toISOString() };
+  } catch (e) { alert(e.message); return null; }
+  finally { busy = false; }
+}
+function gpsChipHtml() {
+  if (!lastFix) return '<span class="gpsprec">GPS: söker …</span>';
+  const a = lastFix.acc, cls = a <= 8 ? "good" : a <= 15 ? "ok" : "bad";
+  return `<span class="gpsprec ${cls}">GPS Precision: ±${Math.round(a)} m</span>`;
+}
+function updateGpsChip() {
+  const el = document.getElementById("gpschip");
+  if (el) el.outerHTML = `<span id="gpschip">${gpsChipHtml()}</span>`;
+}
+setInterval(updateGpsChip, 3000);
+
+/* ---------- geometri ---------- */
+function hav(a, b) {
+  const R = 6371000, r = Math.PI / 180;
+  const dp = (b.lat - a.lat) * r, dl = (b.lon - a.lon) * r;
+  const x = Math.sin(dp / 2) ** 2 +
+            Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+const fmtM = m => `${Math.round(m)} m`;
+const fmtT = iso => new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+
+/* ---------- export ----------
+   Projektionen dokument → wire-format bor i Store.export (§9.1 beslut A). Den
+   är låst av golden-testet i tests/js/test_store.mjs: formatet mot
+   /api/rounds/upload får inte röra sig en byte. */
+function exportData() { return Store.export(S); }
+function exportFilename() {
+  const d = (S.startedAt || new Date().toISOString()).slice(0, 10);
+  const p = S.player.trim().replace(/[^\wåäöÅÄÖ]+/g, "_") || "runda";
+  return `mobilrunda_${d}_${p}.json`;
+}
+async function doShare() {
+  const json = JSON.stringify(exportData(), null, 1);
+  const file = new File([json], exportFilename(), { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Golfrunda" }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  doDownload();
+}
+function doDownload() {
+  const json = JSON.stringify(exportData(), null, 1);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+  a.download = exportFilename();
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function doCopy(btn) {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(exportData()));
+    btn.textContent = "Kopierad ✓";
+  } catch (e) { alert("Kunde inte kopiera — använd Ladda ner i stället."); }
+}
+// Delad pin → allas analys (PIN_SHARING_SPEC): innan uppladdning väver vi in
+// matchens delade pins i den egna rundloggen för hål man spelat men INTE själv
+// markerat pin på. Egen markerad pin vinner alltid (fyller bara tomma). Pins är
+// nycklade på globalt hålnr; rundloggen på spelarens 1–18 → översätt via SGRound.
+// Tyst och best-effort: fel/utan-match sväljs (analysen faller tillbaka på
+// kanonisk pin precis som förr). Persisteras lokalt så alla exportvägar får dem.
+async function enrichSharedPins() {
+  if (typeof SGLive === "undefined" || !Live.inGame()) return;
+  let shared;
+  try { shared = await SGLive.fetchPins(Live.state().gameId); }
+  catch (e) { SGLive.liveWarn("hämta pins", e); return; }
+  let changed = false;
+  for (const h of S.holes) {
+    if (!h || (h.pin && h.pin.lat != null)) continue;         // egen pin vinner
+    const g = h.global;
+    const sp = g != null ? shared[g] : null;
+    if (sp && sp.lat != null) {
+      h.pin = { lat: sp.lat, lon: sp.lon, acc: sp.acc, ts: new Date().toISOString() };
+      changed = true;
+    }
+  }
+  if (changed) save();
+}
+
+async function doSend(btn) {
+  const base = (localStorage.getItem("sg_base") || "").trim().replace(/\/+$/, "");
+  const token = (localStorage.getItem("sg_token") || "").trim();
+  if (!base || !token) { alert("Ange analys-adress och din token först (⚙ Analys-koppling)."); return; }
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Skickar …";
+  try {
+    await enrichSharedPins();   // väv in matchens delade pins innan export
+    const r = await fetch(base + "/api/rounds/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Auth-Token": token },
+      body: JSON.stringify(exportData()),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("Kunde inte importera: " + (d.detail || r.status)); btn.textContent = old; btn.disabled = false; return; }
+    // spara SG-analysen så översikten kan visa den (matchas på started_at)
+    try {
+      localStorage.setItem("sg_analysis", JSON.stringify({
+        started_at: S.startedAt, saved_at: new Date().toISOString(),
+        total_score: d.total_score ?? null,
+        total_sg: d.total_sg_tee_to_green ?? null,
+        by_category: d.sg_by_category || {},
+      }));
+    } catch (e) {}
+    let msg = `✓ Skickad! ${d.shots} slag, score ${d.total_score ?? "–"}.`;
+    if (d.warnings && d.warnings.length) msg += "\n\n⚠ " + d.warnings.join("\n");
+    alert(msg);
+    btn.textContent = "Skickad ✓";
+  } catch (e) {
+    alert("Nådde inte analys-servern — är datorn och tunneln igång? (" + e.message + ")");
+    btn.textContent = old; btn.disabled = false;
+  }
+}
+
+/* ---------- vyer ---------- */
+const app = document.getElementById("app");
+function esc(s) { return String(s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* ---------- tile-preload: värm hålets kartrutor medan man loggar ----------
+   Medan du loggar slag på ett hål hämtas i bakgrunden (låg prio, avdubblat) de
+   ortofoto-rutor som hålkartan kommer att visa för samma hål + nästa. Rutorna
+   hamnar i webbläsarens HTTP-cache som delas med karta.html → Karta-fliken
+   renderar direkt ur cachen i stället för att ladda/blinka grönt. Rör inget
+   annat: bara same-origin GET av samma tile-URL:er som kartan ändå begär.
+   Tile-matematiken är verifierad att ge exakt samma {z,x,y} som Leaflet. */
+const TilePreload = (() => {
+  // Värm bara den zoomnivå hålets INITIALA kartvy öppnar i (det som ska kännas
+  // direkt); zoom in/ut därifrån laddas live. Par 4/5 öppnar en nivå grundare än
+  // par 3 (längre hål → mer utzoomat). Kartan kör detectRetina → på retina-skärmar
+  // (telefoner) begär den en nivå DJUPARE, därav baseZ = 18 (retina) / 17 annars;
+  // par 3 = baseZ+1.
+  const RETINA = (self.devicePixelRatio || 1) > 1;
+  const baseZ = RETINA ? 18 : 17;
+  const zoomsFor = h => [(h.par && h.par <= 3) ? baseZ + 1 : baseZ];
+  const seen = new Set();            // avdubbling över alla anrop
+  let holesP = null, lastRel = null, cfg = { min: 13, max: 19 };
+  function loadHoles() {
+    if (holesP) return holesP;
+    holesP = Promise.all([
+      fetch("data/" + SGRound.mobileJson()).then(r => r.json()).then(d => d.holes),
+      // Bana-scopat sedan V8b; saknas manifestet används cfg-defaulten nedan.
+      fetch(`tiles/${SGRound.activeSlug()}/manifest.json`)
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([holes, man]) => {
+      if (man) cfg = { min: man.min_zoom, max: man.max_zoom };
+      const by = {};
+      for (const h of holes) by[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
+      return by;
+    }).catch(() => ({}));
+    return holesP;
+  }
+  const xtile = (lon, z) => Math.floor((lon + 180) / 360 * (1 << z));
+  const ytile = (lat, z) => { const r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z)); };
+  // Marginal runt hålet så preloaden täcker kartans ROTERADE vy (som sträcker sig
+  // utanför hål-linjen). En rutantals-marginal duger ej (krymper i meter vid djupare
+  // zoom). Marginalen skalas efter hålets storlek: kartan zoomas för att rymma hålet,
+  // så lateral overshoot ∝ hållängd. ~0,32×span + 40 m rotationskudde, klampat
+  // [80,200] → full täckning för både korta par 3 och långa par 5, minimal data
+  // (verifierat mot kartans faktiska rutor).
+  const R = 6371000, rad = x => x * Math.PI / 180;
+  function bbox(h) {
+    let s = 90, n = -90, w = 180, e = -180;
+    const eat = (la, lo) => { if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo; };
+    (h.green || []).forEach(p => eat(p[0], p[1]));
+    (h.line || []).forEach(p => eat(p[0], p[1]));
+    (h.tees || []).forEach(t => eat(t.lat, t.lon));
+    if (h.pin) eat(h.pin[0], h.pin[1]);
+    if (!(e >= w && n >= s)) return null;
+    const span = 2 * R * Math.asin(Math.sqrt(
+      Math.sin(rad(n - s) / 2) ** 2 + Math.cos(rad(s)) * Math.cos(rad(n)) * Math.sin(rad(e - w) / 2) ** 2));
+    const padM = Math.max(80, Math.min(200, 0.32 * span + 40));
+    const dLat = padM / 111320, dLon = padM / (111320 * Math.cos(rad((s + n) / 2)));
+    return { s: s - dLat, n: n + dLat, w: w - dLon, e: e + dLon };
+  }
+  function warm(url) {
+    if (seen.has(url)) return;
+    seen.add(url);
+    const im = new Image(); im.decoding = "async"; im.src = url;
+  }
+  function preload(h) {
+    const b = bbox(h); if (!b) return;
+    for (const z of zoomsFor(h)) {
+      if (z < cfg.min || z > cfg.max) continue;
+      // exakt tile-intervall för den padded bboxen (marginalen sitter i PAD_M)
+      const x0 = xtile(b.w, z), x1 = xtile(b.e, z);
+      const y0 = ytile(b.n, z), y1 = ytile(b.s, z);           // n = mindre y
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 160) continue;       // säkerhetsspärr
+      for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++)
+        warm(`tiles/${z}/${x}/${y}.webp`);
+    }
+  }
+  // preloada spelarens hål `rel` (+ nästa) när webbläsaren är ledig; bara vid byte
+  function forHole(rel) {
+    if (rel == null || rel === lastRel) return;
+    lastRel = rel;
+    const idle = window.requestIdleCallback || (cb => setTimeout(cb, 200));
+    idle(() => loadHoles().then(by => {
+      for (const r of [rel, rel + 1]) {
+        const g = SGRound.relToGlobal(r);
+        if (g && by[g]) preload(by[g]);
+      }
+    }));
+  }
+  return { forHole };
+})();
+
+function render() {
+  const view = currentView();
+  // S följer alltid Store: aktivt dokument när en runda pågår, annars utkastet
+  S = Store.active() || (S && !S.id ? S : draftState());
+  if (view === "setup") renderSetup();
+  else if (view === "hole") renderHole();
+  else renderSummary();
+  // värm hålkartans rutor för aktuellt hål (+ nästa) medan man loggar
+  if (view === "hole") TilePreload.forHole(S.current);
+}
+
+/* Live-kort på setup-vyn: skapa match / gå med (spelkod + namn) eller visa
+   aktuell match. Rör inget i rundflödet. */
+function liveCardHtml() {
+  const L = Live.state();
+  if (Live.inGame()) {
+    return `
+    <div class="card">
+      <label style="margin-top:0">Live-scoring</label>
+      <p class="hint">Du är med i matchen <b style="color:var(--ink);font-size:18px;letter-spacing:2px">${esc(L.code)}</b> som ${esc(L.displayName)}.
+        Din score skickas automatiskt medan du loggar. Dela koden med bollen.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="liveLeave">Lämna live</button>
+        <button class="ghost" id="liveFinish">Avsluta live-match</button>
+      </div>
+      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
+    </div>`;
+  }
+  return `
+    <div class="card">
+      <label style="margin-top:0">Live-scoring <span style="color:var(--dim)">(valfritt)</span></label>
+      <p class="hint">För score tillsammans med bollen i realtid. Skapa en match och dela koden, eller gå med i en befintlig. Kräver ditt namn ovan.</p>
+      <label>Gå med i match (spelkod)</label>
+      <div class="row">
+        <input type="text" id="liveCode" placeholder="T.ex. K4RT" autocomplete="off"
+          autocapitalize="characters" style="text-transform:uppercase">
+        <button class="ghost" id="liveJoin" style="flex:none;padding:12px 18px">Gå med</button>
+      </div>
+      <button class="big" id="liveCreate" style="background:#1a4c38;color:var(--ink)">Skapa ny match</button>
+      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
+    </div>`;
+}
+function wireLiveCard() {
+  const msg = document.getElementById("liveMsg");
+  const say = (t, ok) => { if (msg) msg.innerHTML = ok ? `<span class="ok">${esc(t)}</span>` : esc(t); };
+  const run = async (btn, fn, working) => {
+    const old = btn.textContent; btn.disabled = true; btn.textContent = working;
+    try { await fn(); renderSetup(); }
+    catch (e) { say(e.message || "Något gick fel."); btn.disabled = false; btn.textContent = old; }
+  };
+  const create = document.getElementById("liveCreate");
+  if (create) create.onclick = e => run(e.currentTarget, () => Live.create(), "Skapar …");
+  const join = document.getElementById("liveJoin");
+  if (join) join.onclick = e => {
+    const code = (document.getElementById("liveCode").value || "").trim();
+    if (!code) { say("Ange en spelkod."); return; }
+    run(e.currentTarget, () => Live.join(code), "Går med …");
+  };
+  const leave = document.getElementById("liveLeave");
+  if (leave) leave.onclick = () => {
+    if (!confirm("Lämna live-matchen? Din runda och score påverkas inte.")) return;
+    Live.leave(); renderSetup();
+  };
+  const finish = document.getElementById("liveFinish");
+  if (finish) finish.onclick = e => {
+    if (!confirm("Avsluta matchen för alla? Ingen mer live-score tas emot.")) return;
+    run(e.currentTarget, () => Live.finish(), "Avslutar …");
+  };
+}
+
+function renderSetup() {
+  const insecure = !window.isSecureContext;
+  // Förr låg "senaste avslutade rundan" i en egen localStorage-nyckel som skrevs
+  // över varje gång. Nu ligger ALLA rundor i Store; den senast avslutade hämtas
+  // vid boot (lastFinishedDoc) och exporteras på begäran.
+  const last = lastFinishedDoc ? JSON.stringify(Store.export(lastFinishedDoc), null, 1) : null;
+  app.innerHTML = `
+    <h1>⛳ SG Rundlogg</h1>
+    <p class="sub">Registrera slag med mobilens GPS — för Strokes Gained-analys.</p>
+    ${insecure ? '<div class="banner">⚠ Sidan är inte öppnad via HTTPS — GPS fungerar då inte i de flesta mobiler.</div>' : ""}
+    <div class="card">
+      <label>Ditt namn</label>
+      <input type="text" id="player" value="${esc(S.player)}" placeholder="Förnamn Efternamn" autocomplete="name">
+      <label>Bana</label>
+      <div class="cpick">
+        <input type="text" class="field" id="courseSearch" placeholder="Sök bana …" autocomplete="off">
+        <div class="cpick-list" id="courseList"></div>
+      </div>
+      <label>Vilken runda spelar du? <span style="color:var(--dim)">(för hålkartan)</span></label>
+      <select class="field" id="round"></select>
+      <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
+      <select class="field" id="tee"></select>
+      <label>Hur mycket vill du logga? <span style="color:var(--dim)">(går att ändra under rundan)</span></label>
+      <select class="field" id="lvl">
+        <option value="3">Full — GPS-position per slag (ger Strokes Gained)</option>
+        ${niva2Valbar() ? `<option value="2">Score + statistik — puttar, fairway, green</option>` : ""}
+        <option value="1">Bara score</option>
+      </select>
+      <button class="big" id="start">Starta runda</button>
+      <a class="big" href="./planera.html" style="display:block;text-align:center;text-decoration:none;margin-top:10px;background:#1a4c38;color:var(--ink)">🗓 Planera runda</a>
+    </div>
+    <div class="card hint">
+      <b>Så funkar det</b><br>
+      1. Stå vid bollen inför varje slag och tryck <b>SLAG</b> (även på tee).<br>
+      2. När bollen ligger på green: tryck <b>Boll på green</b>, putta klart och räkna puttarna med +/−.<br>
+      3. Vid flaggan: tryck gärna <b>Markera pin</b> (bäst data — pinnen flyttas dagligen).<br>
+      4. Plikt? Öka <b>Plikt</b>-räknaren. Chip-in? Bocka i <b>I hål utan putt</b>.<br>
+      5. Efter rundan: <b>Avsluta</b> → dela filen till den som har appen.
+    </div>
+    ${liveCardHtml()}
+    ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
+  wireLiveCard();
+  // Offline-nedladdningen flyttade till Profil i AS-IA steg 3 (§2.1d): den är
+  // en inställning som gäller över tid, inte ett val man gör inför varje runda.
+
+  // rundval (1–18/10–27/19–9 för Burlöv, annat för andra banor) delas via
+  // localStorage ('sg_round'): kartan och översikten visar rätt hål, och
+  // exporten översätter spelarens hål 1–18 till banans globala hålnummer.
+  const roundSel = document.getElementById("round");
+  const teeSel = document.getElementById("tee");
+  // Loggningsnivån minns valet från förra rundan (default full loggning).
+  // Har spelaren nivå 2 sparad medan den är pausad faller vi tillbaka på full
+  // loggning i stället för att låta <select> tyst välja första alternativet.
+  const lvlSel = document.getElementById("lvl");
+  if (lvlSel) {
+    let sparad = localStorage.getItem("sg_level");
+    if (sparad === "2" && !niva2Valbar()) sparad = "3";
+    lvlSel.value = (sparad === "1" || sparad === "2") ? sparad : "3";
+  }
+  function fillRoundAndTee(meta) {
+    const rounds = (meta && meta.rounds) || SGRound.BURLOV_DEFAULT.rounds;
+    const tees = (meta && meta.tees) || SGRound.BURLOV_DEFAULT.tees;
+    const savedRound = localStorage.getItem("sg_round");
+    const roundVal = rounds.some(r => r.value === savedRound) ? savedRound : rounds[0].value;
+    roundSel.innerHTML = rounds.map(r => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join("");
+    roundSel.value = roundVal;
+    localStorage.setItem("sg_round", roundVal);
+    // tee-val (rundnivå): förvälj senast använda om den finns i banans tee-lista;
+    // sparas vid start och delas via 'sg_tee' så det ligger kvar mellan rundor.
+    const savedTee = S.tee || localStorage.getItem("sg_tee") || "";
+    teeSel.innerHTML = '<option value="">– välj tee –</option>' +
+      tees.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    teeSel.value = tees.includes(savedTee) ? savedTee : "";
+  }
+  roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
+  teeSel.onchange = () => localStorage.setItem("sg_tee", teeSel.value);
+
+  // banväljare: sökbart fält + lista. Tills registryn laddat visas bara
+  // aktiv/cachad bana (offline-degradering). Val bygger om SGRound + rund/tee.
+  const courseSearch = document.getElementById("courseSearch");
+  const courseList = document.getElementById("courseList");
+  const activeMeta = SGRound.meta || SGRound.BURLOV_DEFAULT;
+  let selectedSlug = activeMeta.slug;
+
+  function norm(s) { return String(s || "").toLowerCase(); }
+  function matches(c, q) {
+    return norm(c.name).includes(q) || norm(c.slug).includes(q);
+  }
+  function courseRowHtml(c) {
+    const on = c.slug === selectedSlug;
+    return `<button type="button" class="cpick-row${on ? " active" : ""}" data-slug="${esc(c.slug)}">${esc(c.name)}</button>`;
+  }
+  function renderCourseList() {
+    const list = coursesRegistry;
+    if (!list) {
+      // offline vid första besöket: visa bara aktiv/cachad bana
+      courseList.innerHTML = courseRowHtml(activeMeta);
+      return;
+    }
+    // Fältet fylls med vald banas namn efter val — behandla det som TOMT sök
+    // (visa historik + alla, med den valda markerad) så "sök först, aldrig tomt"
+    // gäller även när man fokuserar fältet igen. Skriver man något annat filtreras.
+    const selMeta = courseMetaBySlug(list, selectedSlug);
+    const raw = courseSearch.value.trim();
+    const q = (selMeta && norm(raw) === norm(selMeta.name)) ? "" : norm(raw);
+    if (q) {
+      const hits = list.filter(c => matches(c, q));
+      courseList.innerHTML = hits.length
+        ? hits.map(courseRowHtml).join("")
+        : '<div class="cpick-empty">Inga banor matchar</div>';
+      return;
+    }
+    const hist = loadCourseHistory().filter(slug => list.some(c => c.slug === slug));
+    const histSet = new Set(hist);
+    const rest = list.filter(c => !histSet.has(c.slug));
+    let html = "";
+    if (hist.length) {
+      html += '<div class="cpick-sec">Senast spelad</div>';
+      html += hist.map(slug => courseRowHtml(courseMetaBySlug(list, slug))).join("");
+    }
+    html += '<div class="cpick-sec">Alla banor</div>';
+    html += rest.length ? rest.map(courseRowHtml).join("") : '<div class="cpick-empty">Inga banor</div>';
+    courseList.innerHTML = html;
+  }
+  // Dropdownen öppnas bara när man vill välja bana (fokus/klick på fältet) och
+  // stängs vid val, Esc eller klick utanför — så alla banor inte fyller skärmen
+  // i vila (skalar till många banor).
+  function openList() { courseList.classList.add("open"); renderCourseList(); wireCourseRows(); }
+  function closeList() { courseList.classList.remove("open"); }
+  function wireCourseRows() {
+    courseList.querySelectorAll("[data-slug]").forEach(btn => btn.onclick = () => {
+      const meta = courseMetaBySlug(coursesRegistry, btn.dataset.slug) ||
+        (btn.dataset.slug === activeMeta.slug ? activeMeta : null);
+      if (!meta) return;
+      selectedSlug = meta.slug;
+      SGRound.setActiveCourse(meta);
+      localStorage.removeItem("sg_round"); // nollställ till banans första runda
+      S.courseName = meta.name;
+      courseSearch.value = meta.name;
+      fillRoundAndTee(meta);
+      closeList();            // val gjort → fäll ihop
+      courseSearch.blur();
+    });
+  }
+  courseSearch.value = SGRound.courseName();   // visa aktiv bana i vila (list stängd)
+  fillRoundAndTee(activeMeta);
+  loadCoursesRegistry().then(list => {
+    if (!list) return;        // offline vid första besöket — behåll aktiv/cachad bana
+    if (courseList.classList.contains("open")) { renderCourseList(); wireCourseRows(); }
+  });
+  courseSearch.oninput = openList;   // skriva öppnar + filtrerar
+  // fokus öppnar hela listan och markerar texten så första tangenttrycket
+  // ersätter banans namn (i st.f. att söka på "namn"+bokstav).
+  courseSearch.onfocus = () => { openList(); courseSearch.select(); };
+  courseSearch.onkeydown = (e) => { if (e.key === "Escape") { closeList(); courseSearch.blur(); } };
+  // stäng när fokus lämnar väljaren (klick/tap utanför blurrar fältet); liten
+  // fördröjning så ett rad-klick hinner registreras innan vi fäller ihop.
+  courseSearch.closest(".cpick").addEventListener("focusout", () => {
+    setTimeout(() => {
+      const cp = document.querySelector(".cpick");
+      if (cp && !cp.contains(document.activeElement)) closeList();
+    }, 150);
+  });
+
+  document.getElementById("start").onclick = () => {
+    const p = document.getElementById("player").value.trim();
+    if (!p) { alert("Fyll i ditt namn."); return; }
+    const meta = courseMetaBySlug(coursesRegistry, selectedSlug) || SGRound.meta;
+    const lvlSel = document.getElementById("lvl");
+    const nivå = lvlSel ? +lvlSel.value : 3;
+    localStorage.setItem("sg_tee", teeSel.value);
+    localStorage.setItem("sg_round", roundSel.value);
+    localStorage.setItem("sg_player", p);
+    // Namnet tillhör profilen (se profilNamn ovan). Skrivs det bara i
+    // localStorage skulle Profil-sidan visa något annat än rundan gör, och
+    // nästa enhet skulle fråga igen.
+    try { Store.setProfile({ namn: p }); } catch (_) {}
+    localStorage.setItem("sg_level", String(nivå));   // kom ihåg till nästa runda
+    saveCourseHistory(pushCourseHistory((meta && meta.slug) || SGRound.activeSlug(), loadCourseHistory()));
+    // Här skapas runddokumentet. Finns redan en aktiv runda (man backade ut till
+    // setup) återanvänds den i stället för att en ny startas.
+    S = Store.active() || Store.startRound({
+      player: p, courseSlug: (meta && meta.slug) || SGRound.activeSlug(),
+      courseName: (meta && meta.name) || DEFAULT_COURSE,
+      roundSeq: roundSel.value, tee: teeSel.value, loggingLevel: nivå,
+    });
+    S.player = p;
+    S.courseName = (meta && meta.name) || DEFAULT_COURSE;
+    S.tee = teeSel.value;
+    Store.setLevel(nivå);   // även när en pausad runda återupptas med nytt val
+    setView("hole");
+    // Beständig lagring begärs vid en användargest, aldrig i onboardingen (§9.1.11)
+    Store.requestPersist();
+    startWatch(); save(); render();
+  };
+  const rl = document.getElementById("relast");
+  if (rl) rl.onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([last], { type: "application/json" }));
+    a.download = "mobilrunda_senaste.json"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+}
+
+function renderHole() {
+  const h = hole(S.current);
+  const pts = h.shots;
+  // Loggningsnivå (APPSTORE_PLAN §5, §9.2): 1 = bara score, 2 = + putts/plikt +
+  // fairway/green träff-miss, 3 = full GPS-loggning. RUNDANS nivå styr vad som
+  // går att mata in; hålets egen nivå är en efterhandsnotering om vad som
+  // faktiskt loggades. Redan loggade slag visas alltid, även om nivån sänkts,
+  // så att data aldrig blir osynlig eller oredigerbar.
+  const lvl = S.loggingLevel || 3;
+  const parNu = PAR_BY_REL[S.current] || null;
+  // Avstånds-slinga: horisontell, en rad. Visar bara avståndet mellan slagen
+  // (±precision/tid finns kvar i sparad runda/översikt). ✕ tar bort sista slaget.
+  const trail = pts.map((p, i) => {
+    const seg = i > 0 ? `<span class="seg">${fmtM(hav(pts[i - 1], p))}</span>` : "";
+    const last = i === pts.length - 1;
+    return `${seg}<span class="node${last ? " last" : ""}">${i + 1}${last ? `<button class="tdel" data-del="${i}">✕</button>` : ""}</span>`;
+  }).join("");
+  const greenDist = h.green && pts.length ? ` (${fmtM(hav(pts[pts.length - 1], h.green))} från sista slaget)` : "";
+  const gStat = h.green ? `<span class="ok">✓ Green</span>${greenDist}` : "";
+  const pStat = h.pin ? `<span class="ok">✓ Pin</span>` : "";
+  const tstatus = [gStat, pStat].filter(Boolean).join(" · ");
+  // Score = slag vid bollen (GPS-loggade + manuella via adj) + puttar + plikt.
+  // adj låter score bli rätt även om alla slag inte GPS-taggats — score-siffran
+  // väger tyngre än att varje slag har position. Samma fält som Översikt redigerar.
+  const shotsN = pts.length + (h.adj || 0);
+  const score = shotsN + h.putts + h.pen;
+  const ICO_FLAG = `<svg class="logicon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M24 11 L24 46"/><path d="M24 11 L45 17 L24 25 Z"/><ellipse cx="30" cy="50" rx="18" ry="5"/><circle cx="19" cy="47" r="4"/></svg>`;
+  const ICO_PUTT = `<svg class="stat-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3v11"/><path d="M15 14h5"/></svg>`;
+  const ICO_PEN = `<svg class="stat-ico" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18"/><path d="M6 4h11l-3 4 3 4H6"/></svg>`;
+  const ICO_SCORE = `<svg class="stat-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>`;
+  app.innerHTML = `
+    <div class="holehead">
+      <button id="prev" ${S.current <= 1 ? "disabled" : ""}>‹</button>
+      <div class="htitle">
+        <div class="nr">Hål ${S.current}</div>
+        <span id="gpschip">${gpsChipHtml()}</span>
+        ${Live.inGame() ? `<div class="gpsprec good" style="margin-top:2px">📡 Live: ${esc(Live.state().code)}</div>` : ""}
+      </div>
+      <button id="next2">›</button>
+    </div>
+
+    ${lvl >= 3 || pts.length ? `<div class="logwrap ${pts.length ? "compact" : ""}">
+      ${lvl >= 3 ? `<button class="logcard" id="shot" ${busy ? "disabled" : ""}>
+        <div class="logtitle">${busy ? "HÄMTAR GPS …" : "LOGGA SLAG"}</div>
+        ${ICO_FLAG}
+        <div class="loghint">Tryck vid bollen innan du slår.</div>
+      </button>` : ""}
+      ${pts.length ? `<div class="trail">${trail}</div>` : ""}
+    </div>` : ""}
+
+    <div class="statgrid">
+      <div class="stat">
+        <div class="stat-lbl">Puttar</div>${ICO_PUTT}
+        <div class="stat-ctl"><button id="pm">−</button><span class="val">${h.putts}</span><button id="pp">+</button></div>
+        <div class="stat-sub"></div>
+      </div>
+      ${lvl >= 2 ? `<div class="stat">
+        <div class="stat-lbl">Pliktslag</div>${ICO_PEN}
+        <div class="stat-ctl"><button id="fm">−</button><span class="val">${h.pen}</span><button id="fp">+</button></div>
+        <div class="stat-sub"></div>
+      </div>` : ""}
+      <div class="stat">
+        <div class="stat-lbl">Score</div>${ICO_SCORE}
+        <div class="stat-ctl"><button id="sm" ${shotsN <= 0 ? "disabled" : ""}>−</button><span class="val">${score}</span><button id="sp">+</button></div>
+        <div class="stat-sub">${shotsN} slag${h.adj ? ` (${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)})` : ""}</div>
+      </div>
+    </div>
+
+    ${lvl >= 3 ? `<div class="togglerow">
+      <button class="toggle green ${h.green ? "on" : ""}" id="green" ${busy ? "disabled" : ""}>
+        <span class="knob"></span><span>BOLL PÅ GREEN</span></button>
+      <button class="toggle pin ${h.pin ? "on" : ""}" id="pin" ${busy ? "disabled" : ""}>
+        <span class="knob"></span><span>MARKERA PINN</span></button>
+    </div>
+    <div class="tstatus">${tstatus}</div>` : ""}
+
+    ${lvl === 2 ? `<div class="togglerow">
+      ${parNu !== 3 ? `<button class="toggle ${h.fir === true ? "on" : ""}" id="firT">
+        <span class="knob"></span><span>FAIRWAY${h.fir === false ? " ✕" : ""}</span></button>` : ""}
+      <button class="toggle green ${h.gir === true ? "on" : ""}" id="girT">
+        <span class="knob"></span><span>GREEN${h.gir === false ? " ✕" : ""}</span></button>
+    </div>
+    <div class="tstatus">Tryck en gång = träff, två = miss, tre = inte angivet.</div>` : ""}
+
+    <div class="togglerow">
+      <button class="toggle az ${localStorage.getItem("sg_autozoom") !== "off" ? "on" : ""}"
+        id="azToggle" aria-label="Auto-zoom på hålkartan">
+        <span class="knob"></span><span>🎯 AUTO-ZOOM</span></button>
+      <button class="toggle sl ${localStorage.getItem("sg_slope") !== "off" ? "on" : ""}"
+        id="slToggle" aria-label="Green-lutning på hålkartan">
+        <span class="knob"></span><span>⛳ GREEN-LUTNING</span></button>
+    </div>
+
+    <button class="big" id="next">Nästa hål ›</button>
+    <div style="text-align:center;margin-top:2px">
+      <select class="lvlpick" id="lvlSel" aria-label="Loggningsnivå">
+        <option value="1"${lvl === 1 ? " selected" : ""}>Loggning: bara score</option>
+        ${niva2Valbar() ? `<option value="2"${lvl === 2 ? " selected" : ""}>Loggning: score + statistik</option>` : ""}
+        <option value="3"${lvl === 3 ? " selected" : ""}>Loggning: full (GPS per slag)</option>
+      </select>
+    </div>
+    <div style="text-align:center"><button class="link" id="finish">Avsluta runda</button></div>`;
+
+  // Nivåberoende kontroller kan saknas → alla handlare guardas.
+  const bind = (id, fn, ev) => { const el = document.getElementById(id); if (el) el[ev || "onclick"] = fn; };
+
+  bind("shot", async () => {
+    const p = await capture("slaget", true);   // samla 5 s (kall mottagare ur fickan)
+    if (p) { hole(S.current).shots.push(p); save(); livePush(); }
+    render();
+  });
+  bind("green", async () => {
+    if (h.green && !confirm("Green-position finns redan — ersätta?")) return;
+    const p = await capture("green-läget");
+    if (p) { h.green = p; save(); }
+    render();
+  });
+  bind("pin", async () => {
+    if (h.pin && !confirm("Pin-position finns redan — ersätta?")) return;
+    const p = await capture("pin-positionen");
+    if (p) { h.pin = p; save(); livePushPin(p); }
+    render();
+  });
+  // Observerad träff/miss (nivå 2): true → false → null, så en feltryckning
+  // går att ta tillbaka hela vägen till "inte angivet".
+  const cycle = v => (v === true ? false : v === false ? null : true);
+  bind("firT", () => { h.fir = cycle(h.fir); save(); render(); });
+  bind("girT", () => { h.gir = cycle(h.gir); save(); render(); });
+  bind("lvlSel", e => { Store.setLevel(+e.target.value); render(); }, "onchange");
+
+  app.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+    if (confirm("Ta bort senaste slaget?")) { pts.splice(+b.dataset.del, 1); save(); livePush(); render(); }
+  });
+  bind("pm", () => { h.putts = Math.max(0, h.putts - 1); save(); livePush(); render(); });
+  bind("pp", () => { h.putts++; save(); livePush(); render(); });
+  bind("fm", () => { h.pen = Math.max(0, h.pen - 1); save(); livePush(); render(); });
+  bind("fp", () => { h.pen++; save(); livePush(); render(); });
+  // score +/−: justerar antalet slag vid bollen via adj (utan GPS-position), så
+  // score kan sättas rätt även när alla slag inte loggats. − stoppar vid 0 slag.
+  document.getElementById("sp").onclick = () => { h.adj = (h.adj || 0) + 1; save(); livePush(); render(); };
+  document.getElementById("sm").onclick = () => {
+    if (pts.length + (h.adj || 0) <= 0) return;
+    h.adj = (h.adj || 0) - 1; save(); livePush(); render();
+  };
+  // vid byte av hål: pusha hålet man LÄMNAR (fångar "hål lämnas" i spec §7)
+  document.getElementById("prev").onclick = () => { livePush(); S.current--; save(); render(); };
+  document.getElementById("next2").onclick = () => nextHole();
+  document.getElementById("next").onclick = () => nextHole();
+  document.getElementById("finish").onclick = () => {
+    livePush();   // pusha sista hålets score innan sammanfattningen
+    S.endedAt = new Date().toISOString(); setView("summary"); save(); render();
+  };
+  // Auto-zoom-kill-switch: flyttad hit från karta.html. Skriver bara sg_autozoom;
+  // hålkartan läser värdet vid nästa laddning (flikbyte = full sidladdning).
+  const azBtn = document.getElementById("azToggle");
+  if (azBtn) azBtn.onclick = () => {
+    const on = localStorage.getItem("sg_autozoom") !== "off";
+    localStorage.setItem("sg_autozoom", on ? "off" : "on");
+    render();
+  };
+
+  // Green-lutnings-overlay på/av: skriver bara sg_slope; hålkartan läser det när
+  // den fasta green-vyn ritas (nästa green / nästa laddning).
+  const slBtn = document.getElementById("slToggle");
+  if (slBtn) slBtn.onclick = () => {
+    const on = localStorage.getItem("sg_slope") !== "off";
+    localStorage.setItem("sg_slope", on ? "off" : "on");
+    render();
+  };
+}
+
+function nextHole() {
+  const h = hole(S.current);
+  // Green-varningen gäller bara full loggning: på nivå 1-2 finns ingen
+  // green-markering att sakna, och varningen hade kommit på vartenda hål.
+  if ((S.loggingLevel || 3) >= 3 && h.shots.length && h.putts > 0 && !h.green &&
+      !confirm("Ingen boll-på-green-position — första puttens längd får uppskattas vid import. Gå vidare?")) return;
+  livePush();   // pusha hålet man lämnar innan vi byter
+  if (S.current < maxHole()) { S.current++; save(); render(); }
+}
+
+function renderSummary() {
+  // hålen är en array sorterad på spelarens hålnummer (§9.1 beslut A)
+  const played = S.holes.filter(h => SGScore.components(h).played);
+  const rows = played.map(h =>
+    `<tr><td>Hål ${h.n}</td><td>${h.shots.length}${h.adj ? `<span style="color:var(--warn)">${h.adj > 0 ? "+" : "−"}${Math.abs(h.adj)}</span>` : ""}</td><td>${h.putts}</td>
+            <td>${h.pen || ""}</td><td><b>${SGScore.components(h).total}</b></td></tr>`).join("");
+  const tot = played.reduce((s, h) => s + SGScore.components(h).total, 0);
+  const shots = played.reduce((s, h) => s + h.shots.length, 0);
+  const noGreen = played.filter(h => h.putts > 0 && !h.green).map(h => h.n);
+  app.innerHTML = `
+    <h1>Runda klar 🏌️</h1>
+    <p class="sub">${esc(S.player)} · ${esc(S.courseName)} · ${(S.startedAt || "").slice(0, 10)}</p>
+    <div class="card">
+      <table>
+        <tr><th>Hål</th><th>Slag</th><th>Putt</th><th>Plikt</th><th>Score</th></tr>
+        ${rows}
+        <tr class="total"><td>Totalt (${played.length} hål)</td><td>${shots}</td>
+          <td></td><td></td><td>${tot}</td></tr>
+      </table>
+      ${noGreen.length ? `<div class="banner">Hål ${noGreen.join(", ")} saknar green-position — går att importera, men första-puttens längd uppskattas.</div>` : ""}
+    </div>
+    <div class="card">
+      <a class="big" href="./redigera.html" style="display:block;text-align:center;text-decoration:none;margin-bottom:10px;background:#1a4c38;color:var(--ink)">✏️ Granska &amp; rätta slag</a>
+      <button class="big" id="send">📊 Skicka till analys</button>
+      <button class="big" id="share" style="margin-top:10px;background:#1a4c38;color:var(--ink)">📤 Dela filen</button>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="dl">Ladda ner</button>
+        <button class="ghost" id="copy">Kopiera</button>
+      </div>
+      <details style="margin-top:12px" ${localStorage.getItem("sg_base") ? "" : "open"}>
+        <summary class="hint" style="cursor:pointer">⚙ Analys-koppling (URL + token)</summary>
+        <input id="cfgBase" placeholder="https://…ts.net"
+          value="${esc(localStorage.getItem("sg_base") || "")}"
+          style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:15px">
+        <input id="cfgToken" placeholder="din token" type="password"
+          value="${esc(localStorage.getItem("sg_token") || "")}"
+          style="width:100%;box-sizing:border-box;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:15px">
+        <div class="row" style="margin-top:8px">
+          <button class="ghost" id="cfgSave">Spara koppling</button>
+          <a class="ghost" id="viewLink" href="${esc(localStorage.getItem("sg_base") || "#")}"
+             target="_blank" rel="noopener" style="text-align:center;text-decoration:none;line-height:1.6">→ Se din analys</a>
+        </div>
+        <div class="hint" style="margin-top:8px">Adressen får du av den som kör SG-appen;
+          token är din personliga. Kräver att datorn/tunneln är igång.</div>
+      </details>
+    </div>
+    <button class="big" id="back" style="background:#1a4c38;color:var(--ink)">◀ Fortsätt runda</button>
+    <div style="text-align:center"><button class="link" id="new">Ny runda</button></div>`;
+  // stashLast() är borta: varje runda ligger kvar i Store, så den behöver inte
+  // längre kopieras undan till en "sist spelad"-nyckel innan den skickas.
+  document.getElementById("send").onclick = e => doSend(e.currentTarget);
+  document.getElementById("share").onclick = () => doShare();
+  document.getElementById("dl").onclick = () => doDownload();
+  document.getElementById("copy").onclick = e => doCopy(e.target);
+  document.getElementById("cfgSave").onclick = () => {
+    const b = document.getElementById("cfgBase").value.trim().replace(/\/+$/, "");
+    const t = document.getElementById("cfgToken").value.trim();
+    localStorage.setItem("sg_base", b); localStorage.setItem("sg_token", t);
+    const vl = document.getElementById("viewLink"); if (vl) vl.href = b || "#";
+    alert("Kopplingen sparad.");
+  };
+  document.getElementById("back").onclick = () => { setView("hole"); S.endedAt = null; save(); render(); };
+  document.getElementById("new").onclick = () => {
+    // Rundan raderas inte längre — den avslutas och ligger kvar i historiken.
+    if (!confirm("Avsluta rundan och börja en ny? Rundan sparas i historiken.")) return;
+    const player = S.player, courseName = S.courseName;
+    Store.finishRound().then(() => {
+      S = draftState();
+      S.player = player; S.courseName = courseName;
+      setView("setup");
+      render();
+    });
+  };
+}
+
+/* ---------- live-scoring (additivt, LIVE_SCORING_SPEC.md §6–7) ----------
+   Matchen är ett EGET objekt i Store och refererar rundan enkelriktat
+   (APPSTORE_PLAN §1 beslut 2 / §9.1 beslut B): att lämna eller radera matchen
+   rör aldrig rundan. Modulen läser bara S.holes för att härleda score via den
+   delade SGScore.components och skickar komponenterna till molnet.
+   Allt är fire-and-forget: fel/offline sväljs, score finns kvar lokalt. */
+const Live = (() => {
+  const has = () => typeof SGLive !== "undefined";           // CDN kan saknas offline
+  const state = () => Store.match();
+  const inGame = () => { const L = Store.match(); return !!(L && L.gameId); };
+  async function create() {
+    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
+    const name = (S.player || "").trim();
+    if (!name) throw new Error("Fyll i ditt namn först.");
+    const { gameId, code } = await SGLive.createGame({
+      course: S.courseName, roundSeq: SGRound.roundName(), displayName: name });
+    await Store.setMatch({ gameId, code, displayName: name });
+    return Store.match();
+  }
+  async function join(code) {
+    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
+    const name = (S.player || "").trim();
+    if (!name) throw new Error("Fyll i ditt namn först.");
+    const { gameId } = await SGLive.joinGame(code, name);
+    await Store.setMatch({ gameId, code: String(code).toUpperCase().trim(),
+                           displayName: name });
+    return Store.match();
+  }
+  function leave() { Store.removeMatch(); }        // rör bara matchen, ej rundan
+  async function finish() {
+    const L = Store.match();
+    if (has() && L && L.gameId) { try { await SGLive.finishGame(L.gameId); } catch (e) {} }
+    leave();
+  }
+  // Skicka ett håls score till molnet. Tyst no-op om man inte är med i match.
+  function push(n) {
+    const L = Store.match();
+    if (!has() || !inGame()) return;
+    const c = SGScore.components(hole(n));
+    SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
+      .catch(e => SGLive.liveWarn("score", e));   // offline tyst (score kvar lokalt); serverfel → engångsvarning
+  }
+  // Dela markerad pin till matchen (globalt hålnr). Tyst no-op om ej i match.
+  function pushPin(rel, p) {
+    const L = Store.match();
+    if (!has() || !inGame() || !p) return;
+    const g = SGRound.relToGlobal(rel);
+    if (g == null) return;
+    SGLive.pushPin(L.gameId, g, { lat: p.lat, lon: p.lon, acc: p.acc })
+      .catch(e => SGLive.liveWarn("pin", e));   // offline tyst (pin kvar lokalt); serverfel → engångsvarning
+  }
+  return { state, inGame, create, join, leave, finish, push, pushPin };
+})();
+// bekvämt anrop från befintliga handlare: pusha aktuellt hål efter en ändring
+function livePush(n) { Live.push(n == null ? S.current : n); }
+function livePushPin(p) { Live.pushPin(S.current, p); }
+
+/* ---------- synk med hålkartan ---------- */
+// Kartans ◀/▶ skriver sg_hole; plocka upp det när man kommer tillbaka hit
+// så score-sidan och kartan alltid visar samma hål.
+function syncFromMap() {
+  const g = parseInt(localStorage.getItem("sg_hole"), 10);
+  if (currentView() === "hole" && g >= 1 && g <= maxHole() && g !== S.current) {
+    S.current = g; save(); render();
+  }
+}
+window.addEventListener("pageshow", syncFromMap);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) syncFromMap(); });
+window.addEventListener("storage", e => { if (e.key === "sg_hole") syncFromMap(); });
+
+/* ---------- init ----------
+   Rundan hydreras ur IndexedDB innan första renderingen; därefter är
+   Store.active() synkront läsbar precis som localStorage var (§9.1 beslut F). */
+window.addEventListener("beforeunload", e => {
+  if (currentView() === "hole") { e.preventDefault(); e.returnValue = ""; }
+});
+Store.ready().then(() => {
+  S = Store.active() || draftState();
+  // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
+  SGRound.migrateSgHole();
+  if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
+  if (currentView() !== "setup") startWatch();
+  render();
+  // par per hål (för att dölja fairway-kontrollen på par 3) — bakgrunden räcker
+  loadPar().then(() => { if (currentView() === "hole") render(); });
+  // senast avslutade rundan i bakgrunden → "hämta igen"-knappen på setup-vyn
+  Store.list({ limit: 20 }).then(rows => {
+    const r = rows.find(x => x.status === "finished");
+    if (!r) return;
+    return Store.get(r.id).then(d => {
+      lastFinishedDoc = d;
+      if (currentView() === "setup") render();
+    });
+  }).catch(() => {});
+});
+</script>
+<script>
+/* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
+   iOS länkar till andra sidor i en Safari-ruta (kryss + adressfält uppe, ladda
+   om/tillbaka nere). Vi fångar interna länkklick och navigerar via location,
+   vilket behåller helskärmsläget. Ingen effekt i vanlig webbläsare. */
+(function () {
+  var standalone = ("standalone" in navigator && navigator.standalone)
+    || matchMedia("(display-mode: standalone)").matches;
+  if (!standalone) return;
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    var url = new URL(a.getAttribute("href"), location.href);
+    if (url.origin !== location.origin) return;
+    e.preventDefault();
+    location.href = url.href;
+  });
+})();
+</script>
+</body>
+</html>
