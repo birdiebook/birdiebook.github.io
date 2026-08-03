@@ -59,15 +59,12 @@
       <h1 class="identitet">🗓 Planera runda</h1>
     </div>
   </div>
-  <p class="sub">Gå igenom banan i förväg — utan att starta en runda.</p>
 
   <div class="card">
+    <label for="bana">Bana</label>
+    <select class="field tee-val" id="bana"></select>
     <label for="round">Runda</label>
-    <select class="field tee-val" id="round">
-      <option value="1-18">1–18</option>
-      <option value="10-27">10–27</option>
-      <option value="19-9">19–9</option>
-    </select>
+    <select class="field tee-val" id="round"></select>
     <label for="hole">Hål</label>
     <select class="field tee-val" id="hole"></select>
   </div>
@@ -93,40 +90,77 @@
       <span class="arr">›</span></a>
   </div>
 
-  <div class="card hint">
-    Planeringen påverkar aldrig en pågående runda eller din score — den bara läser
-    bandata. Starta rundan från startsidan när du är på plats.
-  </div>
   <div id="err"></div>
 </div>
 
 <script src="./round.js"></script>
 <script>
 "use strict";
-// Plan-hub: välj runda + hål, öppna sedan ett verktyg (3D / 2D-slag / green-lutning).
-// Ingen GPS, ingen live, rör aldrig rundan (Store). Hålvalet minns i
-// sg_plan_hole; rundvalet delar sg_round med resten av appen.
+// Plan-hub: välj bana + runda + hål, öppna sedan ett verktyg (3D / 2D-slag /
+// green-lutning). Ingen GPS, ingen live, rör aldrig rundan (Store).
+//
+// Bana/runda/hål för PLANERING hålls medvetet ISÄR från Spelas motsvarande val
+// (sg_course/sg_round): att bläddra bland banor här ska inte tysta ändra vad
+// Spela är inställd på, och tvärtom. Egna nycklar: sg_plan_course, sg_plan_round,
+// sg_plan_hole. Verktygen (Öppna hålet / Min plan) läser däremot fortfarande
+// den GLOBALT aktiva banan (SGRound-singleton) — de har inget eget
+// bana-medvetande — så vi synkar singleton till plan-valet i samma ögonblick
+// man trycker sig vidare in i ett verktyg, inte tidigare.
 const $ = id => document.getElementById(id);
 
 let byGlobal = {};
+let coursesRegistry = null;
+let planMeta = null;   // aktiv PLANERING-bana (skild från SGRound:s aktiva bana)
+let planTables = null; // SGRound.tablesFor(planMeta)
+
+function loadCourses() {
+  if (coursesRegistry) return Promise.resolve(coursesRegistry);
+  return fetch("./data/courses.json", { cache: "no-cache" }).then(r => r.json())
+    .then(list => (coursesRegistry = Array.isArray(list) && list.length ? list : null))
+    .catch(() => null);
+}
+
+function planRoundName() {
+  const n = localStorage.getItem("sg_plan_round");
+  if (planTables.ROUND_SEQ[n]) return n;
+  return (planMeta.rounds && planMeta.rounds[0] && planMeta.rounds[0].value) || "1-18";
+}
 
 function currentRel() {
   const v = parseInt($("hole").value, 10);
-  return v >= 1 && v <= SGRound.HOLES ? v : 1;
+  const seq = planTables.ROUND_SEQ[planRoundName()];
+  return v >= 1 && v <= seq.length ? v : 1;
 }
 
-// Ingångens href efter valt hål. Vyn minns själv vinkel och slope-läge sedan
-// U11 — hubben skickar därför bara med hålet, inget vy-tillstånd.
+// Ingångens href efter valt hål. Synka singleton-banan till plan-valet HÄR —
+// det är först nu, när man faktiskt går in i ett verktyg, som den delade
+// aktiva banan behöver stämma (verktygen har ingen egen bana-parameter).
 function syncLinks() {
   const rel = currentRel();
-  try { localStorage.setItem("sg_plan_hole", String(rel)); } catch (e) {}
+  try {
+    localStorage.setItem("sg_plan_hole", String(rel));
+    localStorage.setItem("sg_hole", String(rel));
+  } catch (e) {}
+  SGRound.setActiveCourse(planMeta);
+  try { localStorage.setItem("sg_round", planRoundName()); } catch (e) {}
   $("topna").href = `planvy.html?hal=${rel}`;
+}
+
+// Fyll runda-väljaren för vald PLANERING-bana (kan skilja sig från Spelas).
+function fillRounds() {
+  const sel = $("round");
+  sel.innerHTML = "";
+  (planMeta.rounds || []).forEach(r => {
+    const o = document.createElement("option");
+    o.value = r.value; o.textContent = r.label;
+    sel.appendChild(o);
+  });
+  sel.value = planRoundName();
 }
 
 // Fyll hål-väljaren för vald runda (spelarens 1–18 med loop/lokalnummer + par).
 function fillHoles() {
-  const round = SGRound.roundName();
-  const seq = SGRound.ROUND_SEQ[round] || SGRound.ROUND_SEQ["1-18"];
+  const seq = planTables.ROUND_SEQ[planRoundName()] || planTables.ROUND_SEQ["1-18"];
   const sel = $("hole");
   const want = parseInt(localStorage.getItem("sg_plan_hole"), 10);
   sel.innerHTML = "";
@@ -134,30 +168,61 @@ function fillHoles() {
     const rel = i + 1, h = byGlobal[g];
     const o = document.createElement("option");
     o.value = String(rel);
-    const short = h ? (SGRound.LOOP_SHORT[h.loop] || h.loop) : "";
-    o.textContent = h ? `Hål ${rel} · ${short} ${h.hole} · Par ${h.par ?? "–"}` : `Hål ${rel}`;
+    const meter = h && h.length_m ? ` ${Math.round(h.length_m)}m` : "";
+    o.textContent = h ? `Hål ${rel} Par ${h.par ?? "–"}${meter}` : `Hål ${rel}`;
     sel.appendChild(o);
   });
   sel.value = String(want >= 1 && want <= seq.length ? want : 1);
   syncLinks();
 }
 
-(async () => {
-  // rundval: förvälj det delade sg_round och spara vid ändring
-  const roundSel = $("round");
-  roundSel.value = SGRound.roundName();
-  roundSel.onchange = () => {
-    try { localStorage.setItem("sg_round", roundSel.value); } catch (e) {}
-    fillHoles();
-  };
-  $("hole").onchange = syncLinks;
+// Ladda banans hålnamn (för vald PLANERING-bana) och fyll om hål-väljaren.
+async function loadHolesAndFill() {
+  byGlobal = {};
+  $("err").innerHTML = "";
   try {
-    const d = await (await fetch("data/" + SGRound.mobileJson())).json();
-    for (const h of d.holes) byGlobal[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
+    const d = await (await fetch("data/" + (planMeta.mobile_json || "burlov.json"))).json();
+    for (const h of d.holes) byGlobal[planTables.GLOBAL_BASE[h.loop] + h.hole] = h;
   } catch (e) {
     $("err").innerHTML = `<div class="banner">Kunde inte ladda bandata — hålval visas utan namn.</div>`;
   }
   fillHoles();
+}
+
+function fillBanor() {
+  const sel = $("bana");
+  const list = coursesRegistry || [planMeta];
+  sel.innerHTML = list.map(c =>
+    `<option value="${c.slug}"${c.slug === planMeta.slug ? " selected" : ""}>${c.name}</option>`
+  ).join("");
+}
+
+(async () => {
+  await loadCourses();
+  const storedSlug = localStorage.getItem("sg_plan_course") || SGRound.activeSlug();
+  planMeta = (coursesRegistry && coursesRegistry.find(c => c.slug === storedSlug))
+    || SGRound.meta || SGRound.BURLOV_DEFAULT;
+  planTables = SGRound.tablesFor(planMeta);
+
+  fillBanor();
+  $("bana").onchange = () => {
+    const slug = $("bana").value;
+    planMeta = (coursesRegistry && coursesRegistry.find(c => c.slug === slug)) || planMeta;
+    planTables = SGRound.tablesFor(planMeta);
+    try { localStorage.setItem("sg_plan_course", planMeta.slug || ""); } catch (e) {}
+    try { localStorage.removeItem("sg_plan_round"); } catch (e) {}
+    fillRounds();
+    loadHolesAndFill();
+  };
+
+  fillRounds();
+  $("round").onchange = () => {
+    try { localStorage.setItem("sg_plan_round", $("round").value); } catch (e) {}
+    fillHoles();
+  };
+  $("hole").onchange = syncLinks;
+
+  await loadHolesAndFill();
 })();
 </script>
 <script>

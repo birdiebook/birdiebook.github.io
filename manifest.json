@@ -1,6 +1,6 @@
 {
-  "name": "SG Rundlogg",
-  "short_name": "Rundlogg",
+  "name": "Birdiebook",
+  "short_name": "Birdiebook",
   "description": "Logga golfrundan med GPS – slag, green, puttar.",
   "lang": "sv",
   "start_url": "./",

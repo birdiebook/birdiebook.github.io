@@ -448,31 +448,11 @@ const slugFor = h => h ? `${(h.loop || "").replace(" Course", "").toLowerCase()}
 const finns3d = h => !!(h3dIndex && h3dIndex.holes.some(x => x.slug === slugFor(h)));
 
 // ------------------------------------------------------------ hålets text ---
-/* Rubrikens "m till green" — tee→green som ETT slag, räknat med samma modell
-   som allt annat i vyn.
-   Det stod förut här som en egen uträkning (`dh3dToGreen` + `playAsRange`) och
-   svarade 358 där listan sa 360 på samma hål: samma sträcka, två tal, alltså
-   precis vad princip 4 kallar värre än inget svar. Nu är det en `Planslag`-kedja
-   utan landningspunkter, och skillnaden kan inte uppstå. */
-function teeToGreenText(h) {
-  // Ligger hålet i scenen är det MOTORNS kedja som gäller, av samma skäl som
-  // listan läser den: höjden kommer då ur scenens egen mark och inte ur en
-  // andra uppslagning som svarar en meter annorlunda.
-  const rad = (h3Klar() ? H3.kedjaFor([]) : kedjaFor(h, []))[0];
-  if (!rad) return "";
-  const dhTxt = (rad.dh != null && Math.abs(rad.dh) >= 1)
-    ? ` · ${rad.dh > 0 ? "↗" : "↘"} ${Math.abs(rad.dh).toFixed(0)} m` : "";
-  return `${rad.spelarSom} m till green${dhTxt}`;
-}
-
 function updateHeader() {
   const h = halNu();
   if (!h) { $("holeName").textContent = "—"; return; }
-  const short = SGRound.LOOP_SHORT[h.loop] || h.loop;
-  const dist = teeToGreenText(h);
-  $("holeName").innerHTML =
-    `Hål ${hi + 1} <small>${short} ${h.hole} · Par ${h.par ?? "–"}` +
-    `${dist ? " · " + dist : ""}</small>`;
+  const meter = h.length_m ? ` - ${Math.round(h.length_m)}m` : "";
+  $("holeName").textContent = `Hål ${hi + 1} - Par ${h.par ?? "–"}${meter}`;
   $("prev").disabled = hi <= 0;
   $("next").disabled = hi >= ROUND.length - 1;
 }
@@ -987,6 +967,10 @@ function rita(vad) {
     loadWind();
     visaHalI3d();
   }
+  // Slag lagt/flyttat/borttaget i 2D: 3D-scenen har sin egen kopia av kedjan
+  // (planLegs) och får den bara via visaHalI3d — utan det här släpar den efter
+  // tills nästa hålbyte eller vinkelbyte råkar synka om den.
+  if (vad === "legs") visaHalI3d();
   if (vad === "slope") { syncSlope(); if (VY.vinkel === "2d") frameHole(); }
   // Ett VINKELBYTE animeras (U12). En batch är sidans första uppställning —
   // där finns ingen bild att tona från, så den klipper hårt.
@@ -1003,7 +987,8 @@ function rita(vad) {
 
 async function init() {
   map = MapCore.createMap("map");
-  MapCore.addOrthophoto(map);
+  // Inget ortofoto-banlager i planeringsvyn — bara hålets egen geometri
+  // (linje, pin, bunker/vatten) mot mörk botten.
   [layers, slopeLayer, slopeArrowLayer, legLayer, chipLayer].forEach(l => l.addTo(map));
   SlopeOverlay.load();
   map.on("zoomend", () => {

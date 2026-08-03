@@ -7,12 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rundlogg">
+<meta name="apple-mobile-web-app-title" content="Birdiebook">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
-<title>SG Rundlogg</title>
+<title>Birdiebook</title>
 <style>
   :root {
     --bg: #0c2e22; --card: #123c2d; --card2: #16412f;
@@ -753,7 +753,7 @@ function renderSetup() {
   // vid boot (lastFinishedDoc) och exporteras på begäran.
   const last = lastFinishedDoc ? JSON.stringify(Store.export(lastFinishedDoc), null, 1) : null;
   app.innerHTML = `
-    <h1>⛳ SG Rundlogg</h1>
+    <h1>⛳ Birdiebook</h1>
     <p class="sub">Registrera slag med mobilens GPS — för Strokes Gained-analys.</p>
     ${insecure ? '<div class="banner">⚠ Sidan är inte öppnad via HTTPS — GPS fungerar då inte i de flesta mobiler.</div>' : ""}
     <div class="card">

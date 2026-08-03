@@ -7,12 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rundlogg">
+<meta name="apple-mobile-web-app-title" content="Birdiebook">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
-<title>SG Rundlogg</title>
+<title>Birdiebook</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
@@ -31,7 +31,8 @@
 
   /* De tre valen. Stora tryckytor: hubben används med handske på, ute,
      ofta i solljus — och den ska aldrig kräva att man siktar. */
-  .val { display:block; text-decoration:none; color:var(--ink);
+  .val { display:flex; flex-direction:column; justify-content:center;
+    min-height:92px; text-decoration:none; color:var(--ink);
     background:var(--card); border:1px solid var(--line); border-radius:18px;
     padding:20px 20px; margin-bottom:12px; }
   .val .rad { display:flex; align-items:center; gap:14px; }
@@ -58,26 +59,22 @@
 </head>
 <body>
 <div id="app">
-  <h1>⛳ SG Rundlogg</h1>
-  <p class="sub">Strokes Gained för en spelare på riktigt</p>
+  <h1>Birdiebook</h1>
+  <p class="sub">Strokes gained-analys på riktigt</p>
 
   <div id="pagaende"></div>
 
   <a class="val primar" href="./spela.html">
     <span class="rad"><span class="ico">⛳</span><span class="namn">Spela</span></span>
-    <p class="txt">Rangefinder och slaglogg ute på banan. Här sätter du också upp
-      rundan — bana, tee, vilka som är med och spelform.</p>
+    <p class="txt">Rangefinder och slaglogg</p>
   </a>
 
   <a class="val" href="./planera.html">
     <span class="rad"><span class="ico">🗓</span><span class="namn">Planera</span></span>
-    <p class="txt">Kvällen innan: hur du ska spela varje hål. Bara du och banan.</p>
   </a>
 
   <a class="val" href="./analys.html">
     <span class="rad"><span class="ico">📊</span><span class="namn">Analysera</span></span>
-    <p class="txt">Efter rundan: var slagen gick, strokes gained, spridning i
-      utslag och inspel. Din egen historik.</p>
   </a>
 
   <div class="fot"><a href="./profil.html">👤 Profil och inställningar</a></div>
