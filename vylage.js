@@ -18,14 +18,16 @@
  *                 en plan sparad före GP2 saknar bara nyckeln)
  *   sg_plan_hole spelarens hål 1–18                              (hubben, rörs ej)
  * och två nya nycklar som bara hör till vyn:
- *   sg_plan_vy   { vinkel, slope, exag, lage }
+ *   sg_plan_vy   { vinkel, slope, exag, lage, forslag }
  *   sg_plan_pose { "<globaltHål>": {target:{x,y,z}, range, heading, tilt} }
+ *   sg_plan_pin  { "<globaltHål>": [lat, lon] }        (SP4: dagens pin)
  */
 const Vylage = (() => {
   const PLAN_KEY = "sg-plan-v1";
   const HOLE_KEY = "sg_plan_hole";
   const VY_KEY   = "sg_plan_vy";
   const POSE_KEY = "sg_plan_pose";
+  const PIN_KEY  = "sg_plan_pin";
 
   const VINKLAR = ["2d", "3d"];
   const LAGEN = ["flyover", "teevy", "hojd", "slaget"];
@@ -79,14 +81,19 @@ const Vylage = (() => {
       slope: !!vy.slope,
       exag: Number.isFinite(+vy.exag) ? klamp(+vy.exag, EXAG_MIN, EXAG_MAX) : 3,
       lage: LAGEN.includes(vy.lage) ? vy.lage : null,
+      // SP3: förslaget är PÅ tills spelaren stänger av det. Att öppna ett hål
+      // ska visa planen — en plan man måste be om är en plan man glömmer.
+      forslag: vy.forslag !== false,
       legs: [],
       slagval: {},
     };
     let plan = las(lagring, PLAN_KEY, {});
     let poser = las(lagring, POSE_KEY, {});
+    let pinnar = las(lagring, PIN_KEY, {});
 
     const sparaVy = () => skriv(lagring, VY_KEY,
-      { vinkel: st.vinkel, slope: st.slope, exag: st.exag, lage: st.lage });
+      { vinkel: st.vinkel, slope: st.slope, exag: st.exag, lage: st.lage,
+        forslag: st.forslag });
     const sparaPlan = () => skriv(lagring, PLAN_KEY, plan);
 
     let tyst = 0;
@@ -289,6 +296,41 @@ const Vylage = (() => {
       return true;
     }
 
+    // ---- SP3/SP4: förslaget och dagens pin ----
+    function sattForslag(pa) {
+      const b = !!pa;
+      if (b === st.forslag) return false;
+      st.forslag = b;
+      sparaVy();
+      meddela("forslag");
+      return true;
+    }
+
+    /* Dagens pin, per hål. Den hör till HÅLET och inte till vyn: en pin man
+       flyttat ska ligga kvar när man byter vinkel eller går ett varv i rundan.
+       `null` = bandatans pin, den som värdeytan är byggd kring — och det är
+       skillnaden planen måste kunna säga (§SP4). */
+    function pin(global) {
+      const g = global == null ? st.global : global;
+      const p = g == null ? null : punkt(pinnar[String(g)]);
+      return p;
+    }
+    function sattPin(p) {
+      const q = punkt(p);
+      if (!q || st.global == null) return false;
+      pinnar[String(st.global)] = q;
+      skriv(lagring, PIN_KEY, pinnar);
+      meddela("pin");
+      return true;
+    }
+    function aterstallPin() {
+      if (st.global == null || !pinnar[String(st.global)]) return false;
+      delete pinnar[String(st.global)];
+      skriv(lagring, PIN_KEY, pinnar);
+      meddela("pin");
+      return true;
+    }
+
     /* Flera ändringar, EN avisering. Utan detta ritar vy-sidan om sig fyra
        gånger när ett hålbyte också byter legs, läge och pose. */
     function batch(fn) {
@@ -305,14 +347,15 @@ const Vylage = (() => {
       get slope() { return st.slope; },
       get exag() { return st.exag; },
       get lage() { return st.lage; },
+      get forslag() { return st.forslag; },
       legs: () => st.legs.map(p => [p[0], p[1]]),
       antalLegs: () => st.legs.length,
       slagval, harSlagval, antalSlagval, sattSlagval,
       aterstallSlagval, aterstallAllaSlagval,
       allaSlagval: () => ({ ...st.slagval }),
-      sattHal, sattVinkel, sattSlope, sattExag, sattLage,
+      sattHal, sattVinkel, sattSlope, sattExag, sattLage, sattForslag,
       effektivExag, laggPunkt, flyttaPunkt, taBortPunkt, angra,
-      pose, sattPose, batch,
+      pose, sattPose, pin, sattPin, aterstallPin, batch,
       /* Startvärde för hålet: ?hal=<rel> vinner över det ihågkomna. */
       startRel: (fran, max) => {
         const q = parseInt(fran, 10);
@@ -325,7 +368,7 @@ const Vylage = (() => {
   }
 
   return { skapa, minneslagring, punkt, VINKLAR, LAGEN, EXAG_MIN, EXAG_MAX,
-           NYCKLAR: { PLAN_KEY, HOLE_KEY, VY_KEY, POSE_KEY } };
+           NYCKLAR: { PLAN_KEY, HOLE_KEY, VY_KEY, POSE_KEY, PIN_KEY } };
 })();
 if (typeof window !== "undefined") window.Vylage = Vylage;
 else if (typeof globalThis !== "undefined") globalThis.Vylage = Vylage;

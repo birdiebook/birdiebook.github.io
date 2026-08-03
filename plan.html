@@ -91,6 +91,34 @@
     font: 400 15px inherit; min-height: 44px; }
   textarea.f { min-height: 72px; resize: vertical; }
 
+  /* SP5: beslutsförst. Avsnittsrubrikerna delar planen i två läsningar —
+     de få hålen där banan ställer en fråga, och resten. */
+  .avsnitt { margin: 18px 2px 4px; color: var(--dim); font-size: 12px;
+    text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+  .card.hal.beslut { border-color: var(--accent-ui-kant); }
+  .card.hal.beslut .halhuv { background: var(--accent-ui-tval); }
+  .rad-info.val { color: var(--accent-ui-ljus); font-weight: 600; }
+  .verktyg a.knapplank { display: flex; align-items: center; text-decoration: none;
+    border: 1px solid var(--line); color: var(--dim); border-radius: 10px;
+    min-height: 38px; padding: 0 12px; font: 600 13px inherit; }
+
+  /* Den kompakta hålraden. Hela raden är knappen: på en teebox trycker man med
+     tummen, inte på en 12 px stor pil. */
+  .halrad { display: flex; width: 100%; gap: 10px; align-items: center;
+    text-align: left; appearance: none; cursor: pointer;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    color: var(--ink); font: inherit; padding: 9px 12px; margin: 6px 0; min-height: 48px; }
+  .halrad .h { flex: none; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--panel-svag); border: 1px solid var(--line); color: var(--dim);
+    font-size: 12.5px; font-weight: 800; display: flex; align-items: center;
+    justify-content: center; }
+  .halrad .p { flex: 1; min-width: 0; font-size: 13px; }
+  .halrad .p b { display: block; font-size: 12.5px; color: var(--dim); font-weight: 600; }
+  .halrad .p .s { display: block; margin-top: 1px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .halrad .p .egenmark { color: var(--accent); font-size: 11.5px; }
+  .halrad .m { flex: none; font-weight: 800; font-size: 17px; }
+
   .lista { display: flex; flex-direction: column; gap: 2px; }
   .yard { display: flex; gap: 10px; font-size: 13px; padding: 6px 0;
     border-bottom: 1px solid var(--line); }
@@ -108,27 +136,50 @@
 <script src="./spelprofil.js"></script>
 <script src="./plan.js"></script>
 <script src="./store.js"></script>
+<!-- SP5: planen räknas HÄR, inte på PC:n. Kedjan är densamma som hålvyns —
+     sg.js bär baslinjen, strategi.js är motorn, forslag.js vet vad som får
+     skrivas, planrunda.js sätter ihop dokumentet. mapcore.js rör Leaflets `L`
+     bara inne i kartfunktioner, så den går att ladda utan Leaflet (samma
+     upplägg som hal3d.html). Ordningen är ett beroende, inte en smak. -->
+<script src="./coursemap.js"></script>
+<script src="./mapcore.js"></script>
+<script src="./playas.js"></script>
+<script src="./kompass.js"></script>
+<script src="./vylage.js"></script>
+<script src="./sg.js"></script>
+<script src="./strategi.js"></script>
+<script src="./forslag.js"></script>
+<script src="./planrunda.js"></script>
 <script>
 "use strict";
-/* MIN PLAN — den läsbara rundplanen (UPPGRADERING_3D.md §GP3).
+/* MIN PLAN — den läsbara rundplanen (UPPGRADERING_3D §GP3, SPELPLAN_PLAN §SP5).
  *
- * Motorn är `planner.py`, orden är `plan_text.py`, dokumentet är `plan.js` och
- * lagringen `store.js`. Den här filen är DOM och ingenting annat: den räknar
- * inte ut ett enda tal, och den får inte heller göra det. §GP3 säger rakt ut att
- * varje siffra i planen ska ha en motsvarighet i planner.py-svaret — den regeln
- * upprätthålls av att den här sidan saknar aritmetik att bryta den med.
+ * SP5 KLIPPTE DEN SISTA TRÅDEN TILL PC:N. Fram till dess räknades planen av
+ * `planner.py` bakom `/api/plan/kort`, alltså krävde ett dokument som ska läsas
+ * på teen en analys-server, en token och nät. Nu räknas den här: `strategi.js`
+ * mot den skeppade värdeytan, `forslag.js` för vad som får skrivas och
+ * `planrunda.js` som sätter ihop hålkorten. Formen är API:ts oförändrad, så
+ * `plan.js` tar emot svaret med `franKort` precis som förut — och spelarens
+ * `egen`-lager och matchningen på globalt hålnummer är därmed samma kod som
+ * redan var bevisad.
+ *
+ * DOKUMENTET ÄR BESLUTSFÖRST. Tystnad är normaltillståndet (§5.2): på Burlöv
+ * ställer ett hål av 21 en fråga. Rundans FÅ beslut ligger därför överst med
+ * alternativet utskrivet, och resten är en kompakt lista man kan fälla ut. En
+ * plan som ger alla 18 hål lika mycket plats påstår att alla 18 är lika
+ * viktiga.
  *
  * TVÅ SAKER SIDAN ÄGER, OCH BARA DE:
- *   1. Hämtningen. Planen räknas EN gång, mot analys-servern, och sparas sedan i
- *      Store. Ute på banan finns inget nät — planen läses ur telefonen, och det
- *      är hela poängen med att den är ett sparat dokument och inte en vy mot
- *      ett API.
+ *   1. Ihopsamlingen. Bandata, baslinje, värdeyta, dagens vind och hålens
+ *      höjdprofiler hämtas här och matas till motorn. Sidan räknar ingenting
+ *      själv — §GP3:s "ingen siffra utan motsvarighet" upprätthålls av att den
+ *      saknar aritmetik att bryta den med.
  *   2. Redigeringen. Spelarens text går till `Plan.satt*`, aldrig direkt in i
  *      dokumentet, så motorns svar står orört kvar under.
  *
- * Att generera kräver nät + analys-koppling (samma `sg_base`/`sg_token` som
- * uppladdningen). Att LÄSA kräver ingenting — och sidan säger vilket läge den
- * är i i stället för att låta en tom vy se ut som en tom plan.
+ * Att räkna kräver värdeytan (ligger i appen) och gärna nät för VINDEN. Utan
+ * nät blir planen vindstilla och SÄGER det på varje hål, i stället för att låta
+ * ett vindfritt tal se ut som dagens.
  */
 const app = document.getElementById("app");
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
@@ -137,6 +188,7 @@ const komma = v => String(v).replace(".", ",");
 
 let P = null;              // aktuellt plandokument (null = ingen plan än)
 let redigerar = null;      // hålets rel-nummer som är öppet för redigering
+const oppna = new Set();   // hål i den kompakta listan som spelaren fällt ut
 let banmeta = {};          // globalt hål → {loop, hole, par, length_m}
 let jobbar = false;
 
@@ -146,60 +198,157 @@ const kombination = () => {
   return (p && typeof Spelprofil !== "undefined") ? Spelprofil.kombination(p) : null;
 };
 
-/* ---------- hämtning ---------- */
-function analysKoppling() {
-  const base = (localStorage.getItem("sg_base") || "").trim().replace(/\/+$/, "");
-  const token = (localStorage.getItem("sg_token") || "").trim();
-  return base ? { base, token } : null;
-}
+/* ---------- planen räknas här (SP5) ---------- */
+const FOR = Forslag.skapa();
+/* Dagens pinnar bor i `Vylage` — det är hålvyn som låter spelaren flytta dem
+   (§SP4). Dokumentet LÄSER dem: en pin man flyttat i kartan ska ge samma
+   inspel i planen, annars säger de två ytorna olika om samma hål. */
+const VY = Vylage.skapa();
+let ROUND = [];            // rundans hål i spelordning (bandatans poster)
+let GLOBALS = [];          // motsvarande globala hålnummer
+let framsteg = null;       // "Räknar hål 7 av 18 …" medan planen byggs
 
-/* Bandatan behövs för den TOMMA planen (par och längd per hål). Saknas den blir
-   listan tom — en tom plan med påhittade par vore sämre än ingen. */
+/* Bandatan behövs både för den tomma planen (par och längd) och för räkningen
+   (polygonerna motorn rastrerar). Saknas den blir listan tom — en plan med
+   påhittade par vore sämre än ingen. */
 async function laddaBanmeta() {
   try {
-    const d = await (await fetch("data/" + SGRound.mobileJson(), { cache: "force-cache" })).json();
-    for (const h of d.holes || []) {
-      banmeta[SGRound.GLOBAL_BASE[h.loop] + h.hole] = h;
-    }
-  } catch (e) { /* offline utan cachad bandata — tom plan går då inte att göra */ }
+    const course = await MapCore.loadCourse();
+    for (const h of course.HOLES) banmeta[h.global] = h;
+    const seq = SGRound.ROUND_SEQ[spec()] || SGRound.ROUND_SEQ["1-18"] || [];
+    ROUND = []; GLOBALS = [];
+    seq.forEach(g => {
+      const h = course.byGlobal[g];
+      if (h) { ROUND.push(h); GLOBALS.push(g); }
+    });
+  } catch (e) { /* offline utan cachad bandata — plan går då inte att göra */ }
+}
+
+/* Hålets längd FRÅN SPELARENS TEE. Bandatans `length_m` är scorekortets
+   standardlängd — står kortet "Par 3 · 145 m" medan slagraden säger 183 m är
+   båda talen sanna och läsaren osäker på båda (uppmätt på Blue 4: tee 61 ligger
+   182 m från pin, scorekortslängden är 145). Tee-boxarna bär sin egen
+   `dist_to_pin_m`, och det är den teen planen faktiskt är räknad från. */
+function langdFor(h) {
+  const p = MapCore.teePoint(h);
+  const t = p && (h.tees || []).find(x => x.lat === p[0] && x.lon === p[1]);
+  if (t && t.dist_to_pin_m != null) return t.dist_to_pin_m;
+  return h.length_m != null ? h.length_m : null;
 }
 
 function halMetaForRunda() {
-  const seq = SGRound.ROUND_SEQ[spec()] || SGRound.ROUND_SEQ["1-18"];
-  return seq.map(g => {
-    const h = banmeta[g];
-    return h ? { hole_global: g, loop: h.loop, hole_number: h.hole, par: h.par,
-                 hole_dist: h.length_m != null ? h.length_m : null } : null;
-  }).filter(Boolean);
+  return ROUND.map((h, i) => ({
+    hole_global: GLOBALS[i], loop: h.loop, hole_number: h.hole, par: h.par,
+    hole_dist: langdFor(h),
+  }));
+}
+
+/* Hålets höjdprofil (holes3d-metan) som ett löfte. `PlayAs.loadElev3d` är
+   eld-och-glöm med en callback — här behövs väntan, för höjdtermen ska vara MED
+   i svepet (§SP4) och inte råka komma efter. Ett hål utan exporterad 3D
+   resolverar med null, och då säger kortets förutsättningsrad "utan höjd". */
+function laddaHojd(h) {
+  const klart = PlayAs.meta(h);
+  if (klart) return Promise.resolve(klart);
+  return new Promise(res => {
+    let svarat = false;
+    const ge = () => { if (!svarat) { svarat = true; res(PlayAs.meta(h)); } };
+    PlayAs.loadElev3d(h, ge);
+    setTimeout(ge, 3000);      // saknas filen fyrar callbacken aldrig
+  });
+}
+
+/* Vad motorn behöver för ETT hål. Samma uppsättning som hålvyn skickar
+   (`planvy.html:forslagsIndata`) — samma tee, samma pin, samma höjduppslag —
+   för planen och kartan ska svara samma sak om samma hål. */
+function indataFor(h, vind, m) {
+  return {
+    loop: h.loop, hole: h.hole, bandataHal: h,
+    tee: MapCore.teePoint(h),
+    teeNamn: localStorage.getItem("sg_tee") || null,
+    pin: VY.pin(SGRound.GLOBAL_BASE[h.loop] + h.hole),
+    vind,
+    baslinje: (lie, d) => SG.expectedStrokes(lie, d, baslinjeNamn),
+    dh: m ? (a, b) => {
+      const y0 = PlayAs.elev3dAt(m, a[0], a[1]), y1 = PlayAs.elev3dAt(m, b[0], b[1]);
+      return (y0 == null || y1 == null) ? null : y1 - y0;
+    } : null,
+    dhGreen: m ? (a) => PlayAs.dh3dToGreen({ pt: a }, h) : null,
+  };
+}
+
+let baslinjeNamn = null;
+
+/* Värdeytan + baslinjen. Båda ligger i appen (SP1), så det här kräver inget
+   nät — men det kräver en BESVARAD profil: ytan är namngiven efter
+   profilkombinationen (GP1), och `hcpokand` är en fil som inte finns. */
+async function laddaMotor() {
+  if (!SG.loaded()) {
+    SG.load(await (await fetch("./data/baseline.json", { cache: "force-cache" })).json());
+  }
+  await Store.ready();      // en tom profil svarar synkront men är inte svaret
+  const komb = kombination();
+  if (!komb) throw new Error("Profilen kunde inte läsas — fyll i den under Profil först.");
+  await FOR.ladda({ slug: SGRound.activeSlug(), kombination: komb });
+  if (!FOR.laddad()) {
+    throw new Error(Spelprofil.harSvar(Store.profile())
+      ? "Ingen plan är byggd för din spelprofil på den här banan."
+      : "Planen behöver din spelprofil — svara på frågorna under Profil.");
+  }
+  baslinjeNamn = FOR.ytan().profil.baseline;
+  return komb;
 }
 
 async function generera() {
-  const k = analysKoppling();
-  if (!k) {
-    alert("Planen räknas på analys-servern. Ange adress och token under " +
-          "⚙ Analys-koppling på startsidan först.");
-    return;
-  }
-  const komb = kombination();
-  if (!komb) { alert("Profilen kunde inte läsas — fyll i den under Profil först."); return; }
-  jobbar = true; render();
+  if (jobbar) return;
+  jobbar = true; framsteg = "Förbereder …"; render();
   try {
-    const p = Store.profile();
-    const q = new URLSearchParams({
-      holes: spec(), drive: komb.drive, approach: komb.approach,
-      baseline: komb.baseline,
+    if (!ROUND.length) await laddaBanmeta();
+    if (!ROUND.length) throw new Error("Bandata saknas i telefonen.");
+    const komb = await laddaMotor();
+    /* EN vind för hela rundan, hämtad en gång. Den är ett ögonblick och inte en
+       prognos per hål — därför står den på varje kort, så ingen läser ett tal
+       som om det gällde fyra timmar senare. Utan nät blir den null, och då
+       säger korten "vindstilla". */
+    framsteg = "Hämtar vinden …"; render();
+    const mitt = (ROUND[0] && ROUND[0].green_center) || null;
+    const vind = mitt ? await PlayAs.fetchWind(mitt[0], mitt[1]) : null;
+
+    /* Höjdprofilerna hämtas ALLA PÅ EN GÅNG och inte hål för hål. Väntan är
+       densamma när filerna finns (de ligger i sw-cachen efter första
+       besöket) — men på en bana UTAN 3D-export fyrar callbacken aldrig, och
+       sekventiellt hade planen då stått och väntat ut sin egen tidsgräns arton
+       gånger i rad. */
+    framsteg = "Läser höjdprofilerna …"; render();
+    const metan = await Promise.all(ROUND.map(h => laddaHojd(h)));
+
+    const hal = [];
+    for (let i = 0; i < ROUND.length; i++) {
+      const h = ROUND[i];
+      framsteg = `Räknar hål ${i + 1} av ${ROUND.length} …`;
+      if (i % 3 === 0) render();          // ge skärmen en chans mellan hålen
+      const m = metan[i];
+      let f = null;
+      try { f = FOR.forHal(indataFor(h, vind, m)); } catch (e) { f = null; }
+      hal.push({ f, meta: { rel: i + 1, hole_global: GLOBALS[i], loop: h.loop,
+                            hole_number: h.hole, par: h.par,
+                            hole_dist: langdFor(h),
+                            tee_latlon: MapCore.teePoint(h),
+                            pin_latlon: VY.pin(GLOBALS[i]) || h.green_center || null } });
+    }
+    const svar = Planrunda.bygg({
+      spec: spec(), course: SGRound.activeSlug(), kombination: komb,
+      planVersion: FOR.ytan().plan_version || null,
+      stil: (Store.profile() || {}).stil || null,
+      hal,
     });
-    if (p && p.stil) q.set("stil", p.stil);
-    const r = await fetch(`${k.base}/api/plan/kort?${q}`,
-                          k.token ? { headers: { "X-Auth-Token": k.token } } : {});
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
-    P = Store.savePlan(Plan.franKort(d, { fore: P, courseName: SGRound.courseName ? SGRound.courseName() : null }));
+    P = Store.savePlan(Plan.franKort(svar, {
+      fore: P, courseName: SGRound.courseName ? SGRound.courseName() : null }));
   } catch (e) {
-    alert("Kunde inte hämta planen: " + e.message +
+    alert("Kunde inte räkna planen: " + e.message +
           "\n\nEn redan sparad plan är orörd — du kan fortsätta läsa den.");
   }
-  jobbar = false; render();
+  jobbar = false; framsteg = null; render();
 }
 
 function tomPlan() {
@@ -215,6 +364,14 @@ function tomPlan() {
 }
 
 /* ---------- rendering ---------- */
+/* Förutsättningsraden står EN gång när den gäller hela rundan (samma tee, samma
+   vind, samma sorts pin) och per hål annars. Att upprepa samma rad 18 gånger
+   gör den till bakgrund, och en rad man slutar läsa kan lika gärna saknas. */
+function delatVillkor() {
+  const v = (P.holes || []).map(k => k.villkor).filter(Boolean);
+  return v.length === (P.holes || []).length && v.every(x => x === v[0]) ? v[0] : null;
+}
+
 function huvudHtml() {
   const komb = kombination();
   const stammer = P ? Plan.stammerMedProfil(P, komb) : null;
@@ -224,13 +381,15 @@ function huvudHtml() {
   if (P.summary) rader.push(`<p class="sub" style="margin:0">${esc(P.summary)}</p>`);
   if (P.kind === "tom") {
     rader.push(`<p class="hint" style="margin:0">Tom plan — skriv in den själv.
-      Du kan generera en när du är uppkopplad; dina egna rader följer med.</p>`);
+      Du kan räkna en när du vill; dina egna rader följer med.</p>`);
   }
+  const delat = P.kind === "tom" ? null : delatVillkor();
+  if (delat) rader.push(`<p class="hint" style="margin:8px 0 0">${esc(delat)}</p>`);
   rader.push(`<p class="hint" style="margin:8px 0 0">${esc(P.spec)} ·
     sparad ${esc(tid)}${P.profil && P.profil.drive ? " · profil " + esc(P.profil.drive) : ""}</p>`);
   const varning = stammer === false
     ? `<div class="banner">Planen är räknad på en annan profil än den du har nu.
-       Talen är inte fel — men de är inte dina. Räkna om när du har nät.</div>` : "";
+       Talen är inte fel — men de är inte dina. Räkna om planen.</div>` : "";
   return `<div class="card">${rader.join("")}</div>${varning}`;
 }
 
@@ -274,19 +433,34 @@ function halHtml(kort) {
   if (kort.shots.length) {
     kropp.push(`<div style="margin-top:4px">${kort.shots.map(s => slagHtml(kort, s)).join("")}</div>`);
   } else if (!oppen) {
-    kropp.push(`<p class="hint" style="margin:6px 0 0">Inga slag ännu — tryck Ändra
-      och skriv din egen plan för hålet.</p>`);
+    kropp.push(`<p class="hint" style="margin:6px 0 0">${kort.saknas
+      ? "Ingen plan för det här hålet — tryck Ändra och skriv din egen."
+      : "Inga slag ännu — tryck Ändra och skriv din egen plan för hålet."}</p>`);
+  }
+  /* Beslutet står som en EGEN rad och inte inne i slagtexten: det är hålets
+     enda fråga, och den ska gå att hitta utan att läsa raden före (§5.2). */
+  for (const r of (kort.rader || [])) {
+    if (r.sort === "alternativ") kropp.push(`<p class="rad-info val">${esc(r.text)}</p>`);
   }
   if (kort.i_spel) kropp.push(`<p class="rad-info risk">${esc(kort.i_spel)}</p>`);
   if (kort.undvik) kropp.push(`<p class="rad-info risk">${esc(kort.undvik)}</p>`);
   if (kort.stil) kropp.push(`<p class="rad-info">${esc(kort.stil)}</p>`);
+  // Förutsättningarna per hål bara när de skiljer sig åt inom rundan (annars
+  // står de en gång överst).
+  if (kort.villkor && !delatVillkor()) {
+    kropp.push(`<p class="hint" style="margin:8px 0 0">${esc(kort.villkor)}</p>`);
+  }
   if (kort.egen.anteckning) {
     kropp.push(`<div class="anteckning">${esc(kort.egen.anteckning)}</div>`);
   }
+  const lank = Planrunda.planvyLank(kort);
   kropp.push(oppen ? redigeraHtml(kort)
-    : `<div class="verktyg"><button data-red="${kort.rel}">Ändra</button></div>`);
+    : `<div class="verktyg">
+        ${lank ? `<a class="knapplank" href="${esc(lank)}">Öppna i kartan</a>` : ""}
+        <button data-red="${kort.rel}">Ändra</button>
+      </div>`);
 
-  return `<div class="card hal" data-hal="${kort.rel}">
+  return `<div class="card hal${kort.beslut ? " beslut" : ""}" data-hal="${kort.rel}">
     <div class="halhuv">
       <span class="tx"><span class="rub">${esc(kort.rubrik)}</span>
         <span class="fak">${esc(kort.fakta)}</span></span>
@@ -295,6 +469,22 @@ function halHtml(kort) {
     </div>
     <div class="halkropp">${kropp.join("")}</div>
   </div>`;
+}
+
+/* Den kompakta raden: hålet, målet och planens FÖRSTA slag i en rad. Det är den
+   formen 17 av 18 hål förtjänar när banan inte ställer någon fråga där —
+   tryck fäller ut hela kortet. */
+function radHtml(kort) {
+  const m = Plan.mal(kort);
+  const forsta = kort.shots && kort.shots[0]
+    ? Plan.slagtext(kort, kort.shots[0]).text : "";
+  return `<button class="halrad" data-oppna="${kort.rel}" type="button">
+    <span class="h">${kort.rel}</span>
+    <span class="p"><b>${esc(kort.fakta || "")}</b>${
+      forsta ? `<span class="s">${esc(forsta)}</span>` : ""}${
+      Plan.harEget(kort) ? '<span class="egenmark">din text</span>' : ""}</span>
+    <span class="m">${m.value != null ? esc(m.value) : "–"}</span>
+  </button>`;
 }
 
 /* Yardage-guiden: hela rundan på en skärm, som en banguide. Talen är hålkortens
@@ -315,17 +505,38 @@ function tomtHtml() {
   const komb = kombination();
   return `<div class="card">
       <p class="sub" style="margin:0 0 6px">Du har ingen plan för ${esc(spec())} än.</p>
-      <p class="hint" style="margin:0">En genererad plan räknas på din profil
-        ${komb ? `(<b>${esc(komb.drive)}</b>)` : ""} och kräver nät en gång.
-        Sedan lever den i telefonen.</p>
+      <p class="hint" style="margin:0">Planen räknas i telefonen, på din profil
+        ${komb ? `(<b>${esc(komb.drive)}</b>)` : ""} — inget nät behövs.
+        Med nät hämtas dagens vind först; utan blir planen vindstilla, och det
+        står på varje hål.</p>
     </div>
     <div class="knappar">
-      <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${jobbar ? "Räknar …" : "Generera plan"}</button>
+      <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${
+        jobbar ? esc(framsteg || "Räknar …") : "Räkna planen"}</button>
     </div>
     <div class="knappar">
       <button class="btn ghost" id="tom">Tom plan att fylla i själv</button>
     </div>
     <p class="hint">Planen påverkar aldrig en pågående runda eller din score.</p>`;
+}
+
+/* BESLUTSFÖRST (§SP5). Rundans få beslut ligger överst som hela kort; resten är
+   en lista man kan fälla ut. Ordningen är en LÄSNING — dokumentet lagras alltid
+   i spelordning, för det är den ordningen hålen spelas i. */
+function halavsnitt() {
+  const { beslut, ovriga } = Planrunda.beslutForst(P.holes);
+  const bitar = [];
+  if (beslut.length) {
+    bitar.push(`<p class="avsnitt">Rundans beslut</p>`);
+    bitar.push(beslut.map(halHtml).join(""));
+    bitar.push(`<p class="avsnitt">Resten av rundan</p>`);
+  } else if (P.kind !== "tom") {
+    bitar.push(`<p class="avsnitt">Rundan hål för hål</p>`);
+  }
+  // Ett hål man öppnat (eller redigerar) visas som helt kort mitt i listan.
+  bitar.push(ovriga.map(k => (oppna.has(k.rel) || redigerar === k.rel)
+    ? halHtml(k) : radHtml(k)).join(""));
+  return bitar.join("");
 }
 
 function render() {
@@ -335,10 +546,11 @@ function render() {
     </div>`;
   if (!P) { app.innerHTML = huvud + tomtHtml(); koppla(); return; }
   app.innerHTML = huvud + huvudHtml()
-    + P.holes.map(halHtml).join("")
+    + halavsnitt()
     + yardageHtml()
     + `<div class="knappar">
-        <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${jobbar ? "Räknar …" : "Räkna om"}</button>
+        <button class="btn" id="gen"${jobbar ? " disabled" : ""}>${
+          jobbar ? esc(framsteg || "Räknar …") : "Räkna om"}</button>
       </div>
       <div class="knappar"><button class="btn ghost" id="bort">Ta bort planen</button></div>
       <p class="hint">Dina egna rader följer med när planen räknas om.</p>`;
@@ -357,6 +569,14 @@ function koppla() {
 
   app.querySelectorAll("[data-red]").forEach(b => {
     b.onclick = () => { redigerar = +b.dataset.red; render(); };
+  });
+  // Den kompakta raden fälls ut till hela kortet — och fälls ihop igen.
+  app.querySelectorAll("[data-oppna]").forEach(b => {
+    b.onclick = () => {
+      const rel = +b.dataset.oppna;
+      if (oppna.has(rel)) oppna.delete(rel); else oppna.add(rel);
+      render();
+    };
   });
 
   /* Redigeringen sparas när fältet lämnas, inte vid varje tangenttryck: en

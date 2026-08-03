@@ -103,6 +103,13 @@
 <!-- Offline-nedladdning av banor: inställningen bor här sedan AS-IA steg 3
      (§2.1d). Modulen monterar sig i #offline-tools. -->
 <script src="./offline-download.js"></script>
+<!-- Kontot (MOLN_PLAN §6 V1). live.js MÅSTE ligga före konto.js: den äger den
+     enda supabase-klienten och konto.js lånar den (två klienter skriver över
+     varandras token-förnyelser). supabase-js kommer från CDN och faller tyst
+     bort offline — kontokortet säger det då, resten av sidan är opåverkad. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./live.js"></script>
+<script src="./konto.js"></script>
 <script>
 /* profil.html — spelprofilens guide och översikt (UPPGRADERING_3D §GP1 del 2).
  *
@@ -259,6 +266,11 @@ function sammanfattningHtml(profil) {
          Planera hade den blandats med strategiarbetet. Här är den en lista man
          ser över någon gång per säsong. Flyttad hit från spela.html i steg 3. -->
     <div class="card" id="offline-tools"></div>
+    <!-- Kontot bor i Profil av samma skäl som offline-banorna: det är en
+         inställning som gäller över tid, inte ett val i ögonblicket. Och det
+         ligger SIST — appen fungerar fullt ut utan konto, så att möta en
+         inloggning innan man ens sett sin profil vore att ljuga om kravet. -->
+    <div class="card" id="konto"></div>
     <div class="knappar">
       <button class="btn ghost" id="omguide">Gå igenom guiden igen</button>
     </div>`;
@@ -276,7 +288,173 @@ function render() {
   app.innerHTML = steg ? guideHtml(profil) : sammanfattningHtml(profil);
   // Offline-banorna finns bara i sammanfattningen, inte mitt i guiden.
   if (!steg && window.SGOffline) SGOffline.mount("offline-tools");
+  if (!steg) monteraKonto();
   koppla(profil);
+}
+
+/* ---------- kontot (MOLN_PLAN §6 V1) ----------
+   Hela kortet är BEST EFFORT. Saknas nätet, supabase-js eller projektet ska
+   sidan se ut precis som förut — profilen är lokal och appen kräver aldrig
+   inloggning. Därför fångas allt, och ett fel blir en rad text, aldrig ett
+   tomt kort eller en trasig sida. */
+let kontoLage = null;      // null | {steg:"kod", epost, lage} | {fel:"…"}
+
+function monteraKonto() {
+  const el = document.getElementById("konto");
+  if (!el) return;
+  if (!window.Konto || !Konto.tillganglig()) {
+    el.innerHTML = `<h2>Konto</h2><p class="hint">Molnet är inte tillgängligt
+      just nu. Profilen sparas på telefonen som vanligt.</p>`;
+    return;
+  }
+  ritaKonto(el);
+  // LÄSER sessionen, skapar den inte: att öppna profilsidan ska inte prägla en
+  // molnidentitet åt någon som bara tittar. Den skapas först när man trycker
+  // "Skicka kod" — se konto.js `lasSession` mot `redo`.
+  Konto.lasSession().then(() => ritaKonto(el)).catch(() => ritaKonto(el));
+}
+
+function ritaKonto(el) {
+  const s = Konto.status();
+  const felrad = kontoLage && kontoLage.fel
+    ? `<p class="hint" style="color:var(--warn)">${esc(kontoLage.fel)}</p>` : "";
+
+  if (kontoLage && kontoLage.steg === "kod") {
+    /* "Skickad" betyder att SERVERN tog emot begäran, inte att mejlet kom fram
+       — leveransfel sker långt senare och når aldrig klienten. Att skriva
+       "vi skickade en kod" och sedan tiga är därför att lova något vi inte vet.
+       Raden om skräppost och knappen "Skicka igen" är hela vår ärlighet här. */
+    el.innerHTML = `<h2>Konto</h2>
+      <p class="hint">En sexsiffrig kod är på väg till
+        <b>${esc(kontoLage.epost)}</b>. Skriv in den här — den gäller några
+        minuter.</p>
+      <input id="kkod" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="000000" style="letter-spacing:4px">
+      ${felrad}
+      <div class="knappar">
+        <button class="btn" id="kverify">Bekräfta</button>
+        <button class="btn ghost" id="kigen">Skicka igen</button>
+        <button class="btn ghost" id="kavbryt">Avbryt</button>
+      </div>
+      <p class="hint">Kom inget? Kolla skräpposten — nya avsändare hamnar ofta
+        där första gången.</p>`;
+  } else if (s.inloggad && !s.gast) {
+    el.innerHTML = `<h2>Konto</h2>
+      <p class="hint">Inloggad som <b>${esc(s.epost)}</b>. Profilen följer med
+        till en ny telefon när du loggar in där.</p>
+      ${felrad}
+      <div class="knappar">
+        <button class="btn ghost" id="ksynka">Synka profilen nu</button>
+        <button class="btn ghost" id="kut">Logga ut</button>
+      </div>`;
+  } else {
+    // Gäst — och det är ett fullgott läge, inte ett halvfärdigt.
+    const harGast = s.inloggad && s.gast;
+    el.innerHTML = `<h2>Konto</h2>
+      <p class="hint">${harGast
+        ? `Du spelar som <b>gäst</b>. Allt fungerar, men profilen och rundorna
+           bor bara på den här telefonen — rensas webbläsarens data är de borta.
+           Lägg till en e-post så följer de med.`
+        : `Skapa ett konto eller logga in med din e-post, så följer profil och
+           rundor med till andra enheter. Du kan också bara börja spela — appen
+           kräver inget konto.`}</p>
+      <input id="kepost" type="email" inputmode="email" autocomplete="email"
+             placeholder="din@epost.se">
+      ${felrad}
+      <div class="knappar">
+        <button class="btn" id="kskicka">Skicka kod</button>
+        ${kontoLage && kontoLage.taget
+          ? `<button class="btn ghost" id="kbyt">Logga in i stället</button>` : ""}
+      </div>`;
+  }
+  kopplaKonto(el);
+}
+
+function kopplaKonto(el) {
+  const q = id => el.querySelector("#" + id);
+  const jobbar = (knapp, text) => { if (knapp) { knapp.disabled = true; knapp.textContent = text; } };
+
+  async function begarKod(epost, opt) {
+    try {
+      const r = await Konto.skickaKod(epost, opt);
+      kontoLage = { steg: "kod", epost, lage: r.lage };
+    } catch (e) {
+      // `taget` = e-posten hör till ett befintligt konto. Då är rätt svar inte
+      // ett felmeddelande utan en väg vidare, och den vägen ritas av ritaKonto.
+      kontoLage = { fel: e.message, taget: !!e.taget, epost };
+    }
+    ritaKonto(el);
+  }
+
+  const skicka = q("kskicka");
+  if (skicka) skicka.onclick = async () => {
+    const epost = (q("kepost").value || "").trim();
+    if (!epost || epost.indexOf("@") < 0) {
+      kontoLage = { fel: "Skriv en e-postadress." }; return ritaKonto(el);
+    }
+    jobbar(skicka, "Skickar …");
+    await begarKod(epost);
+  };
+
+  const byt = q("kbyt");
+  if (byt) byt.onclick = async () => {
+    const epost = (kontoLage && kontoLage.epost) || (q("kepost").value || "").trim();
+    if (!epost) return;
+    if (!confirm("Logga in på det befintliga kontot? Gästsessionen på den här " +
+                 "telefonen lämnas — rundorna ligger kvar lokalt.")) return;
+    jobbar(byt, "Skickar …");
+    await begarKod(epost, { tvingaInloggning: true });
+  };
+
+  const verify = q("kverify");
+  if (verify) verify.onclick = async () => {
+    const kod = (q("kkod").value || "").trim();
+    if (kod.length < 6) { kontoLage = Object.assign({}, kontoLage, { fel: "Koden är sex siffror." }); return ritaKonto(el); }
+    jobbar(verify, "Bekräftar …");
+    const { epost, lage } = kontoLage;
+    try {
+      await Konto.verifiera(epost, kod, lage);
+      kontoLage = null;
+      // Kontot är nytt men profilen finns redan lokalt — lyft upp den direkt,
+      // annars är kontot tomt tills något annat råkar synka.
+      await Konto.synkaProfil().catch(() => {});
+      render();
+      return;
+    } catch (e) { kontoLage = Object.assign({}, kontoLage, { fel: e.message }); }
+    ritaKonto(el);
+  };
+
+  const igen = q("kigen");
+  if (igen) igen.onclick = async () => {
+    jobbar(igen, "Skickar …");
+    // Inget `tvingaInloggning` här: `skickaKod` läser sessionen och väljer
+    // samma väg som första gången av sig själv — gäst finns kvar → uppgradering,
+    // ingen session → inloggning. Att tvinga hade loggat ut i onödan.
+    await begarKod(kontoLage.epost);
+  };
+
+  const avbryt = q("kavbryt");
+  if (avbryt) avbryt.onclick = () => { kontoLage = null; ritaKonto(el); };
+
+  const synka = q("ksynka");
+  if (synka) synka.onclick = async () => {
+    jobbar(synka, "Synkar …");
+    try {
+      const r = await Konto.synkaProfil();
+      kontoLage = { fel: r.gjort === "hamtade" ? "Hämtade profilen från molnet."
+                        : r.gjort === "sparade" ? "Profilen är sparad i molnet."
+                        : "Inget att synka." };
+    } catch (e) { kontoLage = { fel: e.message }; }
+    render();
+  };
+
+  const ut = q("kut");
+  if (ut) ut.onclick = async () => {
+    if (!confirm("Logga ut? Rundorna på telefonen ligger kvar.")) return;
+    try { await Konto.loggaUt(); } catch (e) {}
+    kontoLage = null;
+    render();
+  };
 }
 
 function koppla(profil) {

@@ -328,6 +328,29 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
                      ? [planTeeLL(), ...planLegs].filter(Boolean)
                          .map(ll => shotXZ(ll[0], ll[1]).map(v => Math.round(v)))
                      : null }),
+    /* SP3: förslagets lager i 3D. Verifieras i scengrafen och inte i en
+       skärmdump — det är där det syns att punkten hamnade på hålets mark
+       (`allFinite`) och att den ligger på SAMMA plats som 2D-kartans (jämför
+       `xz` mot Leaflets punkt genom hålets ll2xz). */
+    forslag: () => ({
+      data: forslagData,
+      namn: forslagObjs.map(o => o.name).filter(Boolean),
+      // Ringarna byggs i absoluta koordinater (som hållinjen), så deras
+      // `position` är origo — mitten bärs i userData i stället.
+      xz: forslagObjs.filter(o => o.userData && o.userData.mitt)
+        .map(o => ({ namn: o.name, x: +o.userData.mitt.x.toFixed(1),
+                     z: +o.userData.mitt.z.toFixed(1) })),
+      allFinite: forslagObjs.every(o => {
+        const p = o.geometry?.attributes?.position;
+        if (!p) return true;
+        for (let i = 0; i < p.count * p.itemSize; i++) if (!isFinite(p.array[i])) return false;
+        return true;
+      }),
+      punkterXZ: forslagData && meta && meta.ll2xz
+        ? (forslagData.punkter || []).concat(forslagData.sikte ? [forslagData.sikte] : [])
+            .map(ll => shotXZ(ll[0], ll[1]).map(v => Math.round(v)))
+        : null,
+    }),
     // U6: höjdprofilens tillstånd + möjligheten att driva EN tick för hand.
     // rAF tickar INTE i en dold browser-panel (läxa i §10), så utan detta går
     // kopplingen profil ↔ 3D-markör inte att verifiera automatiskt: att vänta
@@ -603,6 +626,10 @@ function clearHole() {
   // laddningen; tills dess ska ingen gammal kedja stå kvar på ny mark.
   planTee = null; planLegs = []; planGreen = null; planSlagval = {};
   rensaHinder(); hinderData = [];
+  // SP3: förslaget hör till hålet OCH till dess förutsättningar. Värdsidan
+  // skickar det nya när hålet ligger i scenen; tills dess ska inget gammalt
+  // förslag stå kvar på ny mark.
+  rensaForslag(); forslagData = null;
   // U17: justeringarna hör till slagen på DET hålet. Nytt hål = tomt bord —
   // en apex-faktor från hål 5 får inte följa med till hål 6.
   slagJust = SlagJust.tom(); valtSlag = null; slagTal = [];
@@ -860,7 +887,7 @@ function byggMarkindex() {
  * läser slagens tal.
  *
  * Namnet är nyckeln: två `buildShots` under samma ruta blir ETT bygge. */
-const OMBYGG_ORDNING = ['trad', 'hinder', 'linje', 'slope', 'slag', 'sikte'];
+const OMBYGG_ORDNING = ['trad', 'hinder', 'linje', 'slope', 'slag', 'sikte', 'forslag'];
 const _ombyggKo = new Map();
 let _ombyggRaf = 0;
 function schemalagg(namn, fn) {
@@ -1178,6 +1205,179 @@ const omHinder = () => schemalagg('hinder', buildHinder);
 function sattHinder(lista) {
   hinderData = Array.isArray(lista) ? lista.filter(h => h && Array.isArray(h.poly)) : [];
   buildHinder();
+}
+
+// --------------------------- SP3: PLANENS FÖRSLAG, i 3D ---------------------
+/* Förslaget är inte spelarens plan — det är ett ERBJUDANDE, och skillnaden ska
+ * synas i bilden. Spelarens egna punkter är fyllda och gröna (PLAN_FARG);
+ * förslagets är STRECKADE och ljusare, precis som 2D-kartans (`forslagIkon` i
+ * planvy.html). Tas förslaget emot blir punkterna `Vylage.legs` och byter
+ * skepnad till spelarens i samma ögonblick — i båda vinklarna.
+ *
+ * SP3 ritade dem bara i 2D. Texten ("slå driver mot punkten") stod då i en vy
+ * där punkten inte fanns, och en siktpunkt som bara går att läsa om är inte en
+ * siktpunkt (§5.3: förslaget ritas som PUNKTER i bilden, texten kompletterar).
+ *
+ * Datan kommer in i lat/lon och räknas om med hålets ll2xz — samma väg som
+ * `sattPlanLegs`, av samma skäl: punkten ska hamna på exakt samma gräs som
+ * kartan visar den på.
+ */
+let forslagObjs = [], forslagData = null;
+
+/* Förslagets ljusare gröna. Slås upp ur tokens (samma token som 2D-lagret,
+   `--accent-ui-ljus`) i stället för att skrivas av — en färg som står på två
+   ställen är två färger som kan glida isär. */
+const FORSLAG_FARG = () => new THREE.Color(
+  (typeof TOK === 'function' && TOK('--accent-ui-ljus')) || '#7fd8a6');
+
+function rensaForslag() {
+  forslagObjs.forEach(o => {
+    scene.remove(o);
+    o.geometry?.dispose?.(); o.material?.map?.dispose?.(); o.material?.dispose?.();
+  });
+  forslagObjs = [];
+}
+
+/* En streckad ring platt på marken. Ringen är förslagets grundform: den säger
+   "här", utan att se ut som ett föremål som redan ligger där (jämför kulan på
+   ett planerat slag, som gör precis det). */
+function forslagRing(x, z, farg, r, streckad) {
+  const mitt = surfaceYAt(x, z, 0);
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * Math.PI * 2;
+    const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+    // Varje hörn lyfts till SIN mark, som hinderkonturen. En ring med en enda
+    // höjd är en skiva, och en skiva skär genom en sluttning — vilket är precis
+    // de lägen där siktpunkten betyder mest.
+    pts.push(new THREE.Vector3(px, surfaceYAt(px, pz, mitt) + LINE_OFFSET * 1.5, pz));
+  }
+  const mat = streckad
+    ? new THREE.LineDashedMaterial({ color: farg, dashSize: 1.2, gapSize: 1.2,
+                                     transparent: true, opacity: 0.95, depthTest: false })
+    : new THREE.LineBasicMaterial({ color: farg, transparent: true,
+                                    opacity: 0.95, depthTest: false });
+  const ring = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  if (streckad) ring.computeLineDistances();
+  // Ringen ligger i absoluta koordinater (som hållinjen och hinderkonturen), så
+  // `position` är origo. Mitten bärs här — det är den scengraf-verifieringen
+  // jämför mot kartans punkt.
+  ring.userData.mitt = { x, z };
+  return ring;
+}
+
+/* Förslagets linje följer MARKEN, som hållinjen gör (samma densifiering och
+   samma offset). En rak linje mellan två punkter hade dykt ner i terrängen på
+   ett kuperat hål — och just där betyder linjen som mest. */
+function forslagLinje(xz, farg) {
+  const pts = [];
+  for (let i = 0; i < xz.length - 1; i++) {
+    const a = xz[i], b = xz[i + 1];
+    const n = Math.max(1, Math.round(Math.hypot(b.x - a.x, b.z - a.z) / LINE_STEP));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+      pts.push(new THREE.Vector3(x, surfaceYAt(x, z, 0) + LINE_OFFSET * 1.5, z));
+    }
+  }
+  const sista = xz[xz.length - 1];
+  pts.push(new THREE.Vector3(sista.x,
+    surfaceYAt(sista.x, sista.z, 0) + LINE_OFFSET * 1.5, sista.z));
+  const linje = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineDashedMaterial({ color: farg, dashSize: 2.5, gapSize: 3.5,
+                                   transparent: true, opacity: 0.85 }));
+  linje.computeLineDistances();
+  return linje;
+}
+
+/* Dagens pin som en flagga: stång + duk. Den är en FÖRUTSÄTTNING för förslaget
+   (§SP4) och ritas därför i samma lager. Flyttad pin lyser i förslagets färg,
+   bandatans står dämpad — samma skillnad som 2D-kartans ⚑ gör. */
+function pinFlagga(x, z, farg) {
+  const ut = [];
+  const y = surfaceYAt(x, z, 0);
+  const h = 2.4;
+  ut.push(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x, y, z), new THREE.Vector3(x, y + h, z)]),
+    new THREE.LineBasicMaterial({ color: farg, depthTest: false })));
+  const duk = new THREE.Mesh(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([x, y + h, z, x + 1.6, y + h - 0.35, z, x, y + h - 0.8, z]), 3)),
+    new THREE.MeshBasicMaterial({ color: farg, side: THREE.DoubleSide,
+                                  transparent: true, opacity: 0.9, depthTest: false }));
+  ut.push(duk);
+  return ut;
+}
+
+function buildForslag() {
+  rensaForslag();
+  const d = forslagData;
+  if (!meta || !meta.ll2xz || !d) return;
+  const farg = FORSLAG_FARG();
+  const punkter = (d.punkter || []).map(planPunkt);
+  const sikte = d.sikte ? planPunkt(d.sikte) : null;
+  const tee = d.tee ? planPunkt(d.tee) : null;
+
+  // Linjen tee → landningar → sikte. Samma kedja som 2D ritar, och den ritas
+  // bara om det finns minst två punkter att dra den mellan.
+  const kedja = [tee, ...punkter, sikte].filter(Boolean);
+  if (kedja.length > 1) {
+    const l = forslagLinje(kedja, farg);
+    l.name = 'forslag-linje';
+    scene.add(l); forslagObjs.push(l);
+  }
+
+  punkter.forEach((p, i) => {
+    const ring = forslagRing(p.x, p.z, farg, 4, true);
+    ring.name = `forslag-punkt-${i + 1}`;
+    scene.add(ring); forslagObjs.push(ring);
+    // Numret står ovanför ringen, inte i den: en fylld bricka mitt i ringen
+    // hade läst som spelarens egen punkt, vilket är precis det den inte är.
+    const nr = nummerSprite(i + 1, '#' + farg.getHexString());
+    nr.scale.set(5, 5, 1);
+    nr.position.set(p.x, surfaceYAt(p.x, p.z, 0) + 5, p.z);
+    nr.name = `forslag-nummer-${i + 1}`;
+    scene.add(nr); forslagObjs.push(nr);
+  });
+
+  // Siktet är ett MÅL och inte en landning: hel ring med kryss i, samma
+  // skillnad som 2D gör mellan den streckade brickan och den fyllda.
+  if (sikte) {
+    const ring = forslagRing(sikte.x, sikte.z, farg, 3, false);
+    ring.name = 'forslag-sikte';
+    scene.add(ring); forslagObjs.push(ring);
+    const kryss = kryssMarkor(sikte.x, sikte.z, farg, 3);
+    kryss.name = 'forslag-sikte-kryss';
+    scene.add(kryss); forslagObjs.push(kryss);
+  }
+
+  if (d.pin) {
+    const p = planPunkt(d.pin);
+    const pf = d.pinFlyttad ? farg
+      : new THREE.Color((typeof TOK === 'function' && TOK('--dim')) || '#9bb0a6');
+    pinFlagga(p.x, p.z, pf).forEach((o, i) => {
+      o.name = i === 0 ? 'forslag-pin-stang' : 'forslag-pin-duk';
+      scene.add(o); forslagObjs.push(o);
+    });
+  }
+}
+
+const omForslag = () => schemalagg('forslag', buildForslag);
+
+/* Värdsidan räknar förslaget (`forslag.js`) och skickar det hit — motorn
+   värderar ingenting själv. `null` = inget att visa (avstängt, ingen yta, eller
+   ett hål utan plan), och då ska lagret vara TOMT och inte stå kvar från förra
+   hålet. */
+function sattForslag(f) {
+  forslagData = (f && (f.punkter || f.sikte || f.pin)) ? {
+    tee: f.tee || null,
+    punkter: Array.isArray(f.punkter) ? f.punkter : [],
+    sikte: f.sikte || null,
+    pin: f.pin || null,
+    pinFlyttad: !!f.pinFlyttad,
+  } : null;
+  buildForslag();
 }
 
 /* Kedjans punkter i scenens ram. `Planslag` arbetar i lat/lon (samma valuta som
@@ -1926,6 +2126,7 @@ function applyExag(forra) {
   omHinder();        // U8: hinderytorna ligger PÅ marken → följer överdriften
   omSlope();         // lutningsmattan draperas på marken → likaså
   omSlag();          // planens slag ligger på marken → räknas om med den
+  omForslag();       // SP3: förslagets punkter ligger också på den
   if (!forra || forra === exag) return;
   // Marken flyttar sig lodrätt när överdriften ändras. Gör inte kameran samma
   // resa hamnar den under terrängen (eller svävande högt över den) utan att
@@ -2440,7 +2641,7 @@ export { loadHole as laddaHal, sattExag, sattSynlig, setLage as sattLage,
          sattPlanLegs, posen, sattPosen, harIndex, paTapp, paExag, paLage,
          lageNu, metaNu, konv, markY, yRefPlan, flygTill, flygerNu, skarmAv, rita1,
          paKedja, kedjanNu, kedjaFor, valtNu, valjFran2d, vindenNu, sattSlope, harSlope,
-         baringNu, paBildruta, paSlagval, sattHinder };
+         baringNu, paBildruta, paSlagval, sattHinder, sattForslag };
 
 if (!EMBED) (async () => {
   let idx;

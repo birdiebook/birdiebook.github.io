@@ -220,6 +220,14 @@ const SGLive = (() => {
   }
 
   return { initLive, createGame, joinGame, pushHoleScore, finishGame,
-           subscribeLeaderboard, pushPin, subscribePins, fetchPins, liveWarn };
+           subscribeLeaderboard, pushPin, subscribePins, fetchPins, liveWarn,
+           /* EN klient i appen, delad. `konto.js` måste använda DENNA och får
+              aldrig ropa createClient själv: två supabase-klienter delar
+              storage-nyckel men har var sin GoTrue-instans, och de skriver över
+              varandras token-förnyelser. Symptomen (sessioner som tappas
+              slumpmässigt, "Multiple GoTrueClient instances detected") dyker upp
+              långt från orsaken. `db()` är lat, så den som anropar först skapar
+              den och resten ärver. */
+           client: db, URL, KEY };
 })();
 if (typeof window !== "undefined") window.SGLive = SGLive;

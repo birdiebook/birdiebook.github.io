@@ -208,6 +208,7 @@
      Faller tyst tillbaka till "ingen live" om CDN inte nås (t.ex. offline). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./score.js"></script>
+<script src="./geo.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
 <script src="./live.js"></script>
@@ -359,16 +360,16 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && watching) requestWakeLock();
 });
 
+// Positionskällan ligger bakom `geo.js` sedan N1 (NATIVE_APP_PLAN §3.2). Allt
+// nedanför — ringbuffert, pickBest, medianfilter, acc-vakt — är oförändrat och
+// ligger med flit KVAR här: det är den delade logiken som webb och native-skal
+// ska ha gemensam.
 function startWatch() {
-  if (watching || !("geolocation" in navigator)) return;
+  if (watching || !Geo.available()) return;
   watching = true;
   requestWakeLock();
-  navigator.geolocation.watchPosition(
-    p => { const now = Date.now();
-           lastFix = { lat: p.coords.latitude, lon: p.coords.longitude,
-                       acc: p.coords.accuracy, ts: now };
-           fixBuf.push(lastFix); pruneBuf(now); updateGpsChip(); },
-    () => {}, { enableHighAccuracy: true, maximumAge: 0 });
+  Geo.onFix(f => { lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip(); });
+  Geo.start();
 }
 
 const median = arr => {
@@ -400,16 +401,11 @@ function pickBest(fixes) {
 // Tar bästa ur senaste bufferten (~6 s) om något finns, annars en enskild fix.
 function quickFix() {
   return new Promise((resolve, reject) => {
-    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    if (!Geo.available()) return reject(new Error(Geo.TEXT.INGEN_GPS));
     pruneBuf(Date.now());
     const b = pickBest(fixBuf);
     if (b) return resolve(b);
-    navigator.geolocation.getCurrentPosition(
-      p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude,
-                     acc: p.coords.accuracy, ts: Date.now() }),
-      e => reject(new Error(e.code === 1 ? "GPS nekad — tillåt platsåtkomst i webbläsaren."
-                                         : "Fick ingen GPS-position, försök igen.")),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
+    Geo.current().then(resolve, reject);
   });
 }
 
@@ -424,28 +420,31 @@ function quickFix() {
 // det, så här väntar vi vidare upp till en hård gräns tills första fixen dyker upp.
 function collectFix() {
   return new Promise((resolve, reject) => {
-    if (!("geolocation" in navigator)) return reject(new Error("Ingen GPS i webbläsaren."));
+    if (!Geo.available()) return reject(new Error(Geo.TEXT.INGEN_GPS));
     const collected = [];
-    let wid = null, done = false, windowElapsed = false;
+    let w = null, done = false, windowElapsed = false;
     const finish = (fn, arg) => {
       if (done) return; done = true;
-      if (wid !== null) navigator.geolocation.clearWatch(wid);
+      if (w) w.stop();
       clearTimeout(capTimer); clearTimeout(hardTimer);
       fn(arg);
     };
     const settle = () => {
       const best = pickBest(collected);
-      finish(best ? resolve : reject, best || new Error("Fick ingen GPS-position, försök igen."));
+      finish(best ? resolve : reject, best || new Error(Geo.TEXT.INGEN_POS));
     };
-    wid = navigator.geolocation.watchPosition(
-      p => { const f = { lat: p.coords.latitude, lon: p.coords.longitude,
-                         acc: p.coords.accuracy, ts: Date.now() };
-             collected.push(f);
-             lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip();
-             // Fönstret redan passerat och vi väntade på första fixen? Klart nu.
-             if (windowElapsed) settle(); },
-      e => { if (e.code === 1) finish(reject, new Error("GPS nekad — tillåt platsåtkomst i webbläsaren.")); },
-      { enableHighAccuracy: true, maximumAge: 0 });
+    // Egen ström, inte huvudwatchen: på webben en riktig andra watch (färska
+    // fixar även om huvudwatchen strypts i bakgrunden), i native-skalet en
+    // prenumeration på den varma strömmen. Se geo.js.
+    w = Geo.watch({
+      onFix: f => {
+        collected.push(f);
+        lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip();
+        // Fönstret redan passerat och vi väntade på första fixen? Klart nu.
+        if (windowElapsed) settle();
+      },
+      onError: e => { if (e.denied) finish(reject, e); },
+    });
     // Efter 5 s: har vi fixar väljer vi bästa. Har vi INGA (kall mottagare/
     // behörighetsdialog) låter vi watchen leva vidare tills första fixen kommer.
     const capTimer = setTimeout(() => {

@@ -37,7 +37,7 @@
 
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-03-as-ia-3";
+const VERSION = "2026-08-03-v1-konto-sp5";
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -86,15 +86,29 @@ const SHELL_ASSETS = [
   "slopeoverlay.js",
   "redigera.js",
   "score.js",
+  // Positionskällan bakom ett lager sedan N1 (NATIVE_APP_PLAN §3.2). Saknas
+  // filen offline kan spela.html inte logga ett enda slag — alltså på banan.
+  "geo.js",
   "markhojd.js",
   "spelprofil.js",
   "vylage.js",
   "plan.js",
+  // SP2–SP4: planens förslag räknas i telefonen. Utan de här tre raderna
+  // fungerar planeringsvyn online men står utan förslag på banan — alltså
+  // precis där den ska svara utan nät (SPELPLAN_PLAN §1).
+  "strategi.js",
+  "forslag.js",
+  // SP5: dokumentet räknas också i telefonen. Utan raden kan "Min plan" inte
+  // byggas på banan, vilket är precis där en plan behövs.
+  "planrunda.js",
   "vybro.js",
   "planslag.js",
   "kompass.js",
   "store.js",
   "live.js",
+  // Identiteten (MOLN_PLAN §6 V1). Måste finnas offline av samma skäl som
+  // live.js: profil.html laddar den, och en saknad fil hade tagit hela sidan.
+  "konto.js",
   "offline-download.js",
   "vendor/leaflet.js",
   "vendor/leaflet.css",
@@ -150,8 +164,13 @@ const isHole3d = (url) => /\/data\/holes3d\//.test(url.pathname);
 // inte det problemet.
 // green_slope.<slug>.geojson (V4b — bana-scopad, se tools/build_green_slope.py)
 // matchas generellt likadant, ingen bana hårdkodad.
+// data/strategi/<bana>/<profilkombination>.json (SP1, SPELPLAN_PLAN) — värdeytan
+// planen föreslår spel ur. Ligger en katalognivå djupare än övrig bandata och
+// föll därför utanför mönstret ovan: utan den här raden hämtades den från nätet
+// varje gång och fanns inte alls på banan, vilket är just var den behövs.
 const isData = (url) =>
   (/\/data\/[^/]+\.json$/.test(url.pathname) && !/\/data\/courses\.json$/.test(url.pathname)) ||
+  /\/data\/strategi\/[^/]+\/[^/]+\.json$/.test(url.pathname) ||
   /\/data\/green_slope\.[^/]+\.geojson$/.test(url.pathname) ||
   /\/tiles\/[^/]+\/manifest\.json$/.test(url.pathname);
 

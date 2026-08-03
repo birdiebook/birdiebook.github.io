@@ -35,6 +35,12 @@
 <script src="./vybro.js"></script>   <!-- U12: bron Leaflet ↔ camctl -->
 <script src="./planslag.js"></script> <!-- U19: EN beräkning av planens slag -->
 <script src="./kompass.js"></script>  <!-- U22: norr och vinden -->
+<!-- SP2–SP4: planens FÖRSLAG, räknat i telefonen. sg.js bär baslinjen som
+     motorn värderar mot, strategi.js är motorn och forslag.js lagret som vet
+     vad som får ritas och skrivas. Ordningen är ett beroende, inte en smak. -->
+<script src="./sg.js"></script>
+<script src="./strategi.js"></script>
+<script src="./forslag.js"></script>
 <link rel="stylesheet" href="./tokens.css">
 <style>
   /* U3: den nedre remsan är överdriftsreglaget (#botten), och det finns BARA i
@@ -46,6 +52,13 @@
      nått den. Nedärvningen bär värdet, inte uttrycket. */
   :root { --remsa: 0px; }
   :root.tredim { --remsa: 46px; }
+  /* SP3: förslagsremsan ligger nederst och lyfter allt som annars står där.
+     Höjden MÄTS (`mattForslag`) av samma skäl som toppremsans: den ändras med
+     textens radbrytning, och varje gissat tal blir fel på någon telefon. */
+  :root { --forslagh: 0px; }
+  /* Allt nere räknar sitt avstånd till botten som lyft + remsa. Ett enda
+     uttryck, så en ny panel inte kan glömma en av dem. */
+  :root { --nedre: calc(var(--lyft) + var(--forslagh)); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
     font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
@@ -85,7 +98,7 @@
 
   /* ---- botten i 2D: slagkedjan, lutningen, ångra ---- */
   #bottom2d { position:fixed; left:0; right:0; z-index:1000;
-    bottom:var(--lyft);
+    bottom:var(--nedre);
     display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 12px; }
   .hint { color:var(--dim); font-size:12px; background:var(--framebg);
     border:1px solid var(--line); border-radius:10px; padding:6px 12px; }
@@ -116,7 +129,7 @@
   /* Ångra i 3D-vinkeln: samma knapp, annan plats (bottenmitten är upptagen av
      överdriftsreglaget). Kedjan syns i scenen, så listan behövs inte här. */
   #undo3d { position:fixed; z-index:6; left:10px;
-    bottom:var(--lyft);
+    bottom:var(--nedre);
     background:var(--panel); border:1px solid var(--panelkant); color:var(--ink);
     border-radius:12px; padding:8px 12px; font:600 12px inherit;
     backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
@@ -127,7 +140,7 @@
     justify-content:center; z-index:4; color:var(--dim); font-size:15px;
     text-align:center; padding:0 30px; pointer-events:none; }
   #kalla { position:fixed; right:8px; z-index:5; font-size:9px; color:var(--dim-svagare);
-    bottom:calc(var(--lyft) + 2px); }
+    bottom:calc(var(--nedre) + 2px); }
   #botten { position:fixed; left:0; right:0; z-index:5;
     bottom:0; padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);
     background:linear-gradient(transparent, var(--panel));
@@ -183,7 +196,7 @@
     box-shadow:0 10px 32px var(--skuggfarg); }
   #hojdpanel.dold { display:none; }
   #vindpanel, #slagpanel { position:fixed; left:10px; right:10px; z-index:5;
-    bottom:var(--lyft);
+    bottom:var(--nedre);
     background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
     padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
@@ -250,6 +263,47 @@
   #hojdsvg { width:100%; height:74px; display:block; touch-action:none; }
   #hojdlive { font-size:12.5px; color:var(--dim); margin-top:4px; }
   #hojdlive b { color:var(--accent-ui); font-weight:700; }
+  /* ---- SP3: förslaget. Finns i BÅDA vinklarna ---- */
+  /* Remsan är planens röst i vyn, och den är MEDVETET liten: ett hål har högst
+     ett beslut och oftast inget alls (§5.2), så den vanliga raden är en rad.
+     Allt som är analys ligger bakom ▾ (§SP3: "alternativet nås bakom ett
+     tryck"). */
+  #forslag { position:fixed; left:0; right:0; bottom:0; z-index:1002;
+    padding:8px 12px calc(env(safe-area-inset-bottom) + 8px);
+    background:linear-gradient(transparent, var(--panel) 22%);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+  /* I 3D-vinkeln är bottenremsan överdriftsreglaget (--remsa). Remsan lägger
+     sig ÖVER den om den inte lyfts — och det är samma tal, så det slås upp i
+     stället för att räknas om. Safe-area:n hör då till #botten, inte hit. */
+  :root.tredim #forslag { bottom:var(--remsa); padding-bottom:8px; }
+  #forslag.dold { display:none; }
+  #forslag .kort { background:var(--panel); border:1px solid var(--panelkant);
+    border-radius:14px; padding:9px 11px; box-shadow:0 10px 32px var(--skuggfarg); }
+  #fRad { display:flex; align-items:flex-start; gap:8px; }
+  #fText { flex:1; font-size:13.5px; line-height:1.4; color:var(--ink); }
+  #fText.tyst { color:var(--dim); }
+  #fMer { background:none; border:1px solid var(--panelkant); color:var(--dim);
+    border-radius:9px; min-width:30px; min-height:30px; font-size:13px; cursor:pointer; }
+  #fMer[aria-expanded="true"] { color:var(--accent-ui-ljus);
+    border-color:var(--accent-ui-kant); }
+  #fUnder { display:flex; align-items:center; gap:8px; margin-top:7px; }
+  /* Förutsättningsraden (§SP4): VILKEN verklighet förslaget är räknat för.
+     Den står alltid, i båda vinklarna — en plan utan sina förutsättningar är
+     ett påstående utan villkor. */
+  #fVillkor { flex:1; font-size:10.5px; line-height:1.35; color:var(--dim-svag); }
+  #fAnvand { background:var(--accent-ui-fyll); color:var(--accent-ink);
+    border:1px solid var(--accent-ui-kant); border-radius:10px; min-height:34px;
+    padding:0 12px; font:700 12px inherit; cursor:pointer; white-space:nowrap; }
+  #fAnvand:disabled { opacity:.4; cursor:default; }
+  #fDetalj { margin-top:8px; padding-top:7px; border-top:1px solid var(--panelkant-svag);
+    font-size:11.5px; color:var(--dim); line-height:1.5; }
+  #fDetalj[hidden] { display:none; }
+  #fDetalj .drad { display:flex; justify-content:space-between; gap:10px; }
+  #fDetalj .drad b { color:var(--ink); font-weight:600; }
+  #fDetalj .pinrad { margin-top:6px; display:flex; align-items:center; gap:8px; }
+  #fDetalj button { background:none; border:1px solid var(--panelkant);
+    color:var(--dim); border-radius:9px; min-height:28px; padding:0 9px;
+    font:600 11px inherit; cursor:pointer; }
   /* Slår ut även element med inline-display (t.ex. #flyavbryt, som motorn sätter
      till block när en flygning pågår). */
   .doldvy { display:none !important; }
@@ -328,6 +382,7 @@
   <button id="vSlope" type="button" title="Green-lutningen"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="13" rx="8.5" ry="5.5"/><path d="M7 11l5 4 5-4"/><path d="M12 3.5v4"/></svg><span>Lutning</span></button>
   <button id="vSlaget" type="button" disabled title="Valj ett slag och andra apex, vind och spridning"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg><span>Slaget</span></button>
   <button id="vSlag" type="button" disabled title="Planens slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
+  <button id="vForslag" type="button" title="Planens forslag pa halet"><svg viewBox="0 0 24 24"><path d="M4 20l6-16"/><path d="M10 4l8 4-8 4"/><circle cx="4" cy="20" r="1.6"/></svg><span>Plan</span></button>
   <button id="vVind" type="button" title="Vindens verkan pa bollbanan"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 13h15a3 3 0 1 1-3 3"/><path d="M3 18h8"/></svg><span>Vind</span></button>
   <div id="slaginfo" hidden></div>
 </div>
@@ -394,9 +449,26 @@
     de sparas inte och rör aldrig en spelad runda. Spridningen kommer
     <span id="sprkalla">ur din spelprofil</span>.</div>
 </div>
+<!-- SP3: förslaget. Ligger UTANFÖR både #bottom2d och .chrome3d — det hör till
+     hålet och inte till en kameravinkel, och ska därför synas i båda. -->
+<div id="forslag" class="dold">
+  <div class="kort">
+    <div id="fRad">
+      <span id="fText"></span>
+      <button id="fMer" type="button" aria-expanded="false"
+              aria-label="visa alternativet">▾</button>
+    </div>
+    <div id="fUnder">
+      <span id="fVillkor"></span>
+      <button id="fAnvand" type="button">Använd förslaget</button>
+    </div>
+    <div id="fDetalj" hidden></div>
+  </div>
+</div>
+
 <button id="flyavbryt" class="chrome3d" style="display:none; position:fixed; z-index:6;
   left:50%; transform:translateX(-50%);
-  bottom:calc(var(--lyft) + 10px);
+  bottom:calc(var(--nedre) + 10px);
   background:var(--panel); color:var(--ink); border:1px solid var(--line);
   border-radius:20px; padding:8px 16px; font-size:14px;">⏸ Avbryt flygning</button>
 
@@ -430,7 +502,8 @@ const params = new URLSearchParams(location.search);
 const VY = Vylage.skapa();                 // ENDA ägaren av vy-tillståndet
 let map, layers = L.layerGroup(), slopeLayer = L.layerGroup(),
     slopeArrowLayer = L.layerGroup(), legLayer = L.layerGroup(),
-    chipLayer = L.layerGroup();      // U8: avståndschip per segment
+    chipLayer = L.layerGroup(),      // U8: avståndschip per segment
+    forslagLager = L.layerGroup();   // SP3: planens förslag + dagens pin
 let ROUND = [], GLOBALS = [], hi = 0, WIND = null;
 let H3 = null;              // 3D-motorn, importeras först när 3D efterfrågas
 let h3dIndex = null;        // data/holes3d/index.<slug>.json, eller null
@@ -463,12 +536,13 @@ function updateHeader() {
    kunde ha gett två vindar, och då hade 2D och 3D sagt olika om samma slag. */
 async function loadWind() {
   const h = halNu();
-  if (H3) { WIND = H3.vindenNu(); uppdateraKompass(); return; }
+  if (H3) { WIND = H3.vindenNu(); uppdateraKompass(); ritaForslag(); return; }
   const loc = (h && h.green_center) || [55.618, 13.07];
   WIND = await PlayAs.fetchWind(loc[0], loc[1]);
   updateHeader();
   drawLegs();
   uppdateraKompass();
+  ritaForslag();
 }
 
 // ------------------------------------------------------ 2D: kartan och kedjan ---
@@ -696,6 +770,264 @@ function valjSlag2d(i) {
   ritaLista();
 }
 
+// --------------------------------------------------------- SP3: förslaget ---
+/* PLANENS FÖRSLAG PÅ HÅLET — räknat HÄR, utan nät och utan server.
+ *
+ * Kedjan är: den skeppade värdeytan (SP1) → motorn i `strategi.js` (SP2) →
+ * `forslag.js`, som vet vad som får ritas och skrivas (SP3/SP4). Den här filen
+ * ritar bara konsekvensen, som allt annat i vyn.
+ *
+ * TRE REGLER, och de kommer ur planen:
+ *   · Förslaget ritas som PUNKTER i bilden — det är så en siktpunkt används
+ *     (§5.3). Texten är ett komplement, inte formen.
+ *   · Ett hål utan mätbart val får en rad om siktet och INGEN analys (§5.2).
+ *   · Spelarens egna punkter skrivs aldrig över utan att frågan ställs (§6).
+ */
+const FOR = Forslag.skapa();
+let forslagNu = null, forslagNyckel = null, baslinjeNamn = null;
+
+async function laddaForslag() {
+  try {
+    if (!SG.loaded()) {
+      SG.load(await (await fetch("./data/baseline.json", { cache: "no-cache" })).json());
+    }
+  } catch (e) { return; }                 // utan baslinje finns inget att värdera mot
+  /* INVÄNTA STORE. `Store.profile()` är synkron men svarar med en TOM profil
+     tills IndexedDB hydrerat — frågar man för tidigt får man kombinationen
+     `hcpokand`, alltså en fil som inte finns, och panelen hade sagt "planen
+     behöver din spelprofil" till en spelare som redan svarat. Samma fälla som
+     §GP1 dokumenterade när en profil satt strax efter sidladdning försvann
+     tyst. */
+  try { await Store.ready(); } catch (e) { /* minnesläge: profilen är tom, och det syns */ }
+  // Profilens KOMBINATION är filens namn (GP1: en hink har ett namn, ett tal
+  // har det inte) — det är den egenskapen som gör en förberäknad yta möjlig.
+  await FOR.ladda({ slug: SGRound.activeSlug(),
+                    kombination: Spelprofil.kombination(Store.profile()) });
+  baslinjeNamn = FOR.laddad() ? FOR.ytan().profil.baseline : null;
+  ritaForslag();
+}
+
+/* Vad förslaget är räknat FÖR. Ändras inget av detta finns ingen anledning att
+   räkna om — och `rita()` går genom den här vägen vid varje ändring i vyn,
+   även de som inte rör planen (ett flyttat ben, ett vinkelbyte). */
+function forslagsNyckel(h) {
+  const t = MapCore.teePoint(h) || [];
+  const p = VY.pin() || [];
+  return [h.loop, h.hole, t[0], t[1], p[0], p[1],
+          WIND && WIND.ms, WIND && WIND.dir, VY.forslag].join("|");
+}
+
+function forslagsIndata(h) {
+  const m = PlayAs.meta(h);
+  return {
+    loop: h.loop, hole: h.hole, bandataHal: h,
+    // SP4: teen spelaren FAKTISKT spelar — inte planerarens baktee (§2.2).
+    tee: MapCore.teePoint(h),
+    teeNamn: localStorage.getItem("sg_tee") || null,
+    pin: VY.pin(),
+    vind: WIND,
+    baslinje: (lie, d) => SG.expectedStrokes(lie, d, baslinjeNamn),
+    // Höjden ur hålets egen profil (samma fil `api/elev.py` läser på PC:n —
+    // det är därför paritetstestet kan kräva samma svar med höjden på).
+    dh: m ? (a, b) => {
+      const y0 = PlayAs.elev3dAt(m, a[0], a[1]), y1 = PlayAs.elev3dAt(m, b[0], b[1]);
+      return (y0 == null || y1 == null) ? null : y1 - y0;
+    } : null,
+    dhGreen: m ? (a) => PlayAs.dh3dToGreen({ pt: a }, h) : null,
+  };
+}
+
+/* Förutsättningsraden bor i `forslag.js` sedan SP5: dokumentet skriver samma
+   rad om samma svar, och två kopior av en formulering glider isär. */
+const villkorstext = (f) => Forslag.villkorstext(f);
+
+const forslagIkon = (txt, sikte) => L.divIcon({
+  className: "", iconSize: [24, 24], iconAnchor: [12, 12],
+  html: `<div style="width:22px;height:22px;border-radius:50%;`
+    + `border:2px dashed var(--accent-ui-ljus);background:var(--panel);`
+    + `color:var(--accent-ui-ljus);font:800 11px/18px inherit;text-align:center;`
+    + `${sikte ? "border-style:solid;" : ""}">${txt}</div>` });
+
+/* Färgen väljs som TOKENNAMN inuti `var(...)`, inte som en färdig var-sträng i
+   JS: den formen blir tyst svart om den råkar hamna i en Leaflet-option i
+   stället för i ett style-attribut, och `tests/test_formsprak_tokens.py`
+   förbjuder den av precis det skälet. */
+const pinIkon = (flyttad) => L.divIcon({
+  className: "", iconSize: [22, 22], iconAnchor: [11, 20],
+  html: `<div style="font-size:17px;line-height:1;color:var(${
+    flyttad ? "--accent-ui-ljus" : "--dim"})">⚑</div>` });
+
+function ritaForslagsPunkter(h, f) {
+  const tee = MapCore.teePoint(h) || (h.line && h.line[0]);
+  if (tee) {
+    const kedja = [tee, ...f.punkter, f.sikte || h.green_center].filter(Boolean);
+    if (kedja.length > 1) {
+      L.polyline(kedja, { color: TOK("--accent-ui-ljus"), weight: 2, opacity: .85,
+                          dashArray: "2,7" }).addTo(forslagLager);
+    }
+  }
+  f.punkter.forEach((p, i) => L.marker(p, { icon: forslagIkon(String(i + 1)),
+                                            interactive: false }).addTo(forslagLager));
+  // Siktet mot green ritas som en FYLLD ring: det är ett mål, inte en landning.
+  if (f.sikte) {
+    L.marker(f.sikte, { icon: forslagIkon("◎", true), interactive: false })
+      .addTo(forslagLager);
+  }
+  // Pinnen är dragbar (§SP4). Den ligger i samma lager som förslaget, för den
+  // ÄR en förutsättning för det.
+  const post = FOR.halPost(h.loop, h.hole);
+  if (post) {
+    const mk = L.marker(VY.pin() || post.pin,
+                        { icon: pinIkon(!!VY.pin()), draggable: true,
+                          zIndexOffset: 400, title: "Dagens pin — dra för att flytta" })
+      .addTo(forslagLager);
+    mk.on("dragend", () => {
+      const ll = mk.getLatLng();
+      VY.sattPin([ll.lat, ll.lng]);
+    });
+  }
+}
+
+function ritaDetalj(f) {
+  const rutor = FOR.detaljer(f);
+  const flyttad = !!VY.pin();
+  const del = (r) => `<div class="drad"><span>${r.etikett}`
+    + (r.klubba ? ` — <b>${r.klubba}</b>` : "")
+    + (r.bucket ? ` — <b>${r.bucket} m</b>` : "")
+    + `</span><span>` + [
+      r.fairway ? `fairway ${r.fairway}` : null,
+      r.green ? `green ${r.green}` : null,
+      r.fara ? `fara ${r.fara}` : null,
+      r.kostar ? `+${r.kostar} slag` : null,
+    ].filter(Boolean).join(" · ") + `</span></div>`;
+  $("fDetalj").innerHTML = rutor.map(del).join("")
+    + `<div class="pinrad"><span>Pinnen: ${flyttad ? "flyttad av dig" : "bandatans"}`
+    + `</span>${flyttad ? '<button id="fPinAter" type="button">Återställ</button>' : ""}`
+    + `<span style="flex:1"></span>`
+    + `<button id="fAv" type="button">Dölj förslaget</button></div>`;
+  const ater = document.getElementById("fPinAter");
+  if (ater) ater.onclick = () => VY.aterstallPin();
+  document.getElementById("fAv").onclick = () => VY.sattForslag(false);
+}
+
+/* Samma förslag i BÅDA vinklarna. Motorn får punkterna i lat/lon — samma
+   valuta som Vylage lagrar och som Leaflet ritar — och lägger dem på hålets
+   egen mark; det är den enda vägen till "punkten i 2D är punkten i 3D".
+   `null` betyder tomt lager: avstängt, ingen värdeyta, eller ett hål utan plan
+   ska inte lämna förra hålets punkter kvar i scenen. */
+function synkaForslag3d(h, f) {
+  if (!H3 || !h3Klar()) return;
+  // Förslaget bär sin hålidentitet. Under ett hålbyte hinner scenen bli klar
+  // med det NYA hålet medan `forslagNu` ännu är det gamla hålets svar — utan
+  // den här jämförelsen hade den gamla punkten ritats på den nya marken.
+  const visa = !!(VY.forslag && f && h && f.loop === h.loop && f.hole === h.hole);
+  if (!visa) return H3.sattForslag(null);
+  const post = FOR.halPost(h.loop, h.hole);
+  H3.sattForslag({
+    tee: MapCore.teePoint(h) || (h.line && h.line[0]),
+    punkter: f.punkter, sikte: f.sikte,
+    pin: VY.pin() || (post && post.pin) || null,
+    pinFlyttad: !!VY.pin(),
+  });
+}
+
+/* EN ritning, båda vinklarna. `ritaForslagVy` äger remsan (som finns i båda)
+   och kartans lager; `synkaForslag3d` skickar samma punkter till scenen. */
+function ritaForslag() {
+  ritaForslagVy();
+  synkaForslag3d(halNu(), forslagNu);
+}
+
+function ritaForslagVy() {
+  const h = halNu();
+  const panel = $("forslag");
+  forslagLager.clearLayers();
+  $("vForslag").setAttribute("aria-pressed", String(VY.forslag));
+  $("vForslag").disabled = !FOR.laddad();
+  $("vForslag").title = FOR.laddad() ? "Planens forslag pa halet"
+    : "Ingen vardeyta for den har banan och profilen";
+  if (!VY.forslag || !h) {
+    panel.classList.add("dold");
+    return mattForslag();
+  }
+  if (!FOR.laddad()) {
+    /* Ingen yta för DEN HÄR spelaren på DEN HÄR banan. Att då räkna mot någon
+       annans yta vore ett förslag byggt på någon annans spridning — rätt i
+       formen, fel i sak, och omöjligt att se. Panelen säger vad som saknas i
+       stället, och den vanligaste orsaken är att profilen inte är besvarad
+       (ytan är namngiven efter profilkombinationen, GP1). */
+    const svarat = Spelprofil.harSvar(Store.profile());
+    panel.classList.remove("dold");
+    $("fText").textContent = svarat
+      ? "Ingen plan är byggd för din spelprofil på den här banan."
+      : "Planen behöver din spelprofil.";
+    $("fText").classList.add("tyst");
+    $("fVillkor").textContent = svarat ? "" : "Svara på frågorna i Profil-fliken.";
+    $("fAnvand").disabled = true;
+    $("fDetalj").innerHTML = "";
+    $("fDetalj").hidden = true;
+    return mattForslag();
+  }
+  const nyckel = forslagsNyckel(h);
+  if (nyckel !== forslagNyckel) {
+    forslagNyckel = nyckel;
+    try { forslagNu = FOR.forHal(forslagsIndata(h)); }
+    catch (e) { forslagNu = null; }
+  }
+  const f = forslagNu;
+  if (!f) {
+    // Hålet saknas i ytan (t.ex. en bana som inte publicerats om). Panelen
+    // säger det i stället för att stå tom och se trasig ut.
+    panel.classList.remove("dold");
+    $("fText").textContent = "Ingen plan för det här hålet.";
+    $("fText").classList.add("tyst");
+    $("fVillkor").textContent = "";
+    $("fAnvand").disabled = true;
+    $("fDetalj").innerHTML = "";
+    return mattForslag();
+  }
+  panel.classList.remove("dold");
+  $("fText").textContent = FOR.text(f);
+  // Tystnad ska SE ut som tystnad: ett hål utan val får en dämpad rad, inte en
+  // lika stark som ett hål där banan faktiskt ställer en fråga.
+  $("fText").classList.toggle("tyst", !f.harBeslut);
+  $("fVillkor").textContent = villkorstext(f);
+  $("fAnvand").disabled = !f.punkter.length;
+  $("fAnvand").title = f.punkter.length ? ""
+    : "Ett par 3 har ingen kedja att ta emot — siktet ÄR slaget";
+  ritaDetalj(f);
+  ritaForslagsPunkter(h, f);
+  mattForslag();
+}
+
+/* Remsans höjd mäts och matas till CSS (--forslagh) så allt annat nere i
+   bilden lyfter sig över den. Samma skäl som toppremsans mätning: höjden
+   ändras med textens radbrytning, och varje gissning blir fel på någon
+   telefon. */
+function mattForslag() {
+  const el = $("forslag");
+  const h = el.classList.contains("dold") ? 0 : Math.round(el.getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--forslagh", h + "px");
+}
+
+/* Att ta emot förslaget = planens punkter blir SPELARENS (Vylage.legs), samma
+   punkter 2D och 3D redan ritar. Men aldrig ovanpå egna punkter utan att
+   frågan ställs: skillnaden mellan planens linje och den man tänkt själv är
+   information (§6). */
+function anvandForslag() {
+  const f = forslagNu;
+  if (!f || !f.punkter.length) return;
+  const satt = () => {
+    VY.batch(s => {
+      while (s.antalLegs()) s.taBortPunkt(s.antalLegs() - 1);
+      f.punkter.forEach(p => s.laggPunkt(p));
+    });
+  };
+  if (VY.antalLegs() === 0) { satt(); return; }
+  planBanner("Du har egna punkter på hålet. Ersätta dem med planens?",
+             () => { satt(); planBanner("Planens punkter", null); }, "Ersätt");
+}
+
 // ------------------------------------------------------------- vinkelbytet ---
 /* U12: BYTET. Kameran sjunker ner i 3D i stället för att sidan klipper om.
  *
@@ -894,7 +1226,8 @@ async function sakerstall3d() {
   H3.paLage(l => VY.sattLage(l));              // verktygsradens läge → Vylage
   // U19: räknar motorn om kedjan (vind hämtad, reglage draget) skriver
   // 2D-listan om sig ur SAMMA rader. Ingen andra beräkning, inget att synka.
-  H3.paKedja(() => { WIND = H3.vindenNu(); ritaLista(); updateHeader(); uppdateraKompass(); });
+  H3.paKedja(() => { WIND = H3.vindenNu(); ritaLista(); updateHeader();
+                     uppdateraKompass(); ritaForslag(); });
   H3.paBildruta(() => { if (VY.vinkel === "3d") uppdateraKompass(); });
   U13 = true;                                  // motorn kan rita lutningen (U13)
   return H3;
@@ -928,6 +1261,11 @@ async function visaHalI3d(opt) {
   H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h.line && h.line[0]),
                     legs: VY.legs(), green: h.green_center,
                     slagval: VY.allaSlagval() });
+  // Förslaget skickas HÄR av samma skäl som hindren: `clearHole` tömmer lagret
+  // vid varje hålbyte, och `rita()` hinner köra `ritaForslag` innan hålets glb
+  // har landat i scenen. Det här är enda punkten där både scenen och hålvalet
+  // säkert står på samma hål.
+  synkaForslag3d(h, forslagNu);
 }
 
 // -------------------------------------------------------------- hålbytet ---
@@ -983,13 +1321,17 @@ function rita(vad) {
   if (vad === "vinkel" || vad === "batch") syncSlope();
   drawLegs();
   uppdateraKompass();
+  // Förslaget sist: det läser teen, vinden och pinnen, och `forslagsNyckel`
+  // ser till att bara en ÄNDRING av dem kostar en omräkning.
+  ritaForslag();
 }
 
 async function init() {
   map = MapCore.createMap("map");
   // Inget ortofoto-banlager i planeringsvyn — bara hålets egen geometri
   // (linje, pin, bunker/vatten) mot mörk botten.
-  [layers, slopeLayer, slopeArrowLayer, legLayer, chipLayer].forEach(l => l.addTo(map));
+  [layers, slopeLayer, slopeArrowLayer, legLayer, chipLayer, forslagLager]
+    .forEach(l => l.addTo(map));
   SlopeOverlay.load();
   map.on("zoomend", () => {
     if (SlopeOverlay.activeHole()
@@ -1003,9 +1345,31 @@ async function init() {
   $("prev").onclick = () => goTo(hi);
   $("next").onclick = () => goTo(hi + 2);
   $("vSlope").onclick = () => VY.sattSlope(!VY.slope);
+  // SP3: förslaget går att stänga av — men det är PÅ tills spelaren gör det.
+  $("vForslag").onclick = () => VY.sattForslag(!VY.forslag);
+  $("fAnvand").onclick = anvandForslag;
+  $("fMer").onclick = () => {
+    const d = $("fDetalj"), oppen = d.hidden;
+    d.hidden = !oppen;
+    $("fMer").setAttribute("aria-expanded", String(oppen));
+    $("fMer").textContent = oppen ? "▴" : "▾";
+    mattForslag();
+  };
   // U22: kompassen är en genväg till vindpanelen — vinden är det den visar, och
   // det man vill göra åt den är att titta närmare på den.
   $("kompass").onclick = () => $("vVind").click();
+  /* Vindpanelens REGLAGE ägs av 3D-motorn, men markupen bor här — och vinden
+     är en förutsättning för både kompassen och förslaget. Motorn aviserar via
+     `paKedja`, men bara när den byggt om sina bågar: står man i 2D-vinkeln
+     händer det inte, och då stod kompassen kvar på den hämtade vinden medan
+     spelaren dragit reglaget till 14 m/s (uppmätt 2026-08-03). Lyssnaren
+     ligger på PANELEN och inte på varje reglage: den bubblar, alltså kör den
+     efter motorns egen hanterare, och den fångar också återställningsknappen. */
+  ["input", "click"].forEach(typ => $("vindpanel").addEventListener(typ, () => {
+    if (H3) WIND = H3.vindenNu();
+    uppdateraKompass();
+    ritaForslag();
+  }));
   // Leaflet äger 2D-bäringen; den ändras bara av en rotation, så en lyssnare är
   // rätt här (kompassen är chrome och inte något som sitter fast i marken).
   map.on("rotate move zoomend", uppdateraKompass);
@@ -1043,6 +1407,10 @@ async function init() {
     await visaHalI3d();      // scenen får hålet även i 2D — se visaHalI3d
     syncSlope(); drawLegs(); updateHeader();
   });
+
+  // Värdeytan hämtas i bakgrunden; vyn ska vara uppe direkt, och förslaget
+  // ritar sig självt när ytan landat (`laddaForslag` slutar med `ritaForslag`).
+  laddaForslag();
 
   if (params.get("slope") === "1") VY.sattSlope(true);
   if (params.get("vinkel") === "3d" || params.get("vy") === "3d") VY.sattVinkel("3d");
@@ -1093,7 +1461,7 @@ function planSikte() {
 
 /* Remsan som säger var punkterna kom ifrån. Byggs här och inte i markup:t för
    att den bara finns när man kom hit från planen. */
-function planBanner(text, onErsatt) {
+function planBanner(text, onErsatt, etikett) {
   let b = document.getElementById("plansikte");
   if (!b) {
     b = document.createElement("div");
@@ -1115,7 +1483,7 @@ function planBanner(text, onErsatt) {
     k.onclick = fn;
     b.appendChild(k);
   };
-  if (onErsatt) knapp("Visa planens", onErsatt);
+  if (onErsatt) knapp(etikett || "Visa planens", onErsatt);
   knapp("✕", () => b.remove());
 }
 
@@ -1130,6 +1498,9 @@ function mattToppremsa() {
     "--topphojd", Math.round(top.getBoundingClientRect().height) + "px");
 }
 if (window.ResizeObserver) new ResizeObserver(mattToppremsa).observe(document.getElementById("top"));
+/* Samma sak nedtill: förslagsremsan växer med textens radbrytning, och allt
+   som står ovanför den läser höjden ur --forslagh. */
+if (window.ResizeObserver) new ResizeObserver(mattForslag).observe(document.getElementById("forslag"));
 
 addEventListener("resize", () => { mattToppremsa(); if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
 addEventListener("orientationchange", () => { mattToppremsa(); if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
