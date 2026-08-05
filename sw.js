@@ -35,9 +35,13 @@
  */
 "use strict";
 
+// Var de tunga filerna bor (MOLN_PLAN §6 V0). Samma modul som sidorna laddar,
+// så service workern och appen kan aldrig få olika uppfattning om saken.
+importScripts("assetbas.js");
+
 // Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
 // injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-04-planvy-karta-kamera";
+const VERSION = "2026-08-05-assetbas";
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -105,6 +109,10 @@ const SHELL_ASSETS = [
   "planslag.js",
   "kompass.js",
   "store.js",
+  // Var kartrutor och 3D-hål bor. Laddas av sidorna OCH av denna fil
+  // (importScripts ovan) — utan den i shell-cachen skulle en installation
+  // offline få en service worker som inte kan starta.
+  "assetbas.js",
   "live.js",
   // Identiteten (MOLN_PLAN §6 V1). Måste finnas offline av samma skäl som
   // live.js: profil.html laddar den, och en saknad fil hade tagit hela sidan.
@@ -204,7 +212,14 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;                 // bara GET cachas
 
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;  // cross-origin (Supabase, Open-Meteo) släpps förbi orört
+  // Cross-origin (Supabase, Open-Meteo) släpps förbi orört — MED UNDANTAG för
+  // värden som bär kartrutor och 3D-hål. Utan undantaget slutar allt nedan
+  // gälla i samma sekund som filerna flyttar till R2 (MOLN_PLAN §6 V0):
+  // ingenting cachas, offline-nedladdningen fyller tomt, och appen ser frisk ut
+  // så länge man har täckning. Det är den tystaste tänkbara regressionen.
+  // SGAsset.origin() är null tills basen pekar bort, så raden är en no-op idag.
+  const assetOrigin = (typeof SGAsset !== "undefined" && SGAsset.origin()) || null;
+  if (url.origin !== self.location.origin && url.origin !== assetOrigin) return;
 
   // Kartrutor: cache-first, permanent i sg-tiles (ALDRIG rensad).
   if (isTile(url)) {

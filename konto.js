@@ -143,6 +143,40 @@ const Konto = (() => {
     return satt(null);
   }
 
+  /* Radera kontot (MOLN_PLAN §6 V5). App Store 5.1.1(v) kräver att detta går
+     att STARTA inifrån appen — en hänvisning till mejl räcker inte.
+
+     Skickar inget uid: edge-funktionen tar det ur tokenen. Att skicka det hade
+     gjort anropet till en radera-vem-som-helst-knapp för den som kan skriva en
+     curl, oavsett hur snällt appen beter sig.
+
+     Rundorna i telefonen rörs INTE. De är användarens egna och ligger i
+     IndexedDB — molnet är en kopia, inte originalet (§1 local-first). */
+  async function raderaKonto() {
+    if (!finns()) throw new Error("Molnet är inte tillgängligt just nu.");
+    const c = db();
+    const { data: { session } } = await c.auth.getSession();
+    if (!session) throw new Error("Du är inte inloggad.");
+
+    const r = await fetch(SGLive.URL + "/functions/v1/radera-konto", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + session.access_token,
+                 apikey: SGLive.KEY },
+    });
+    let kropp = null;
+    try { kropp = await r.json(); } catch (_) { /* tomt svar hanteras nedan */ }
+    if (!r.ok || !kropp || !kropp.ok) {
+      throw new Error((kropp && kropp.fel) ||
+        "Kontot kunde inte raderas just nu. Försök igen om en stund.");
+    }
+    // Sessionen pekar på en användare som inte finns längre — städa lokalt så
+    // appen inte försöker använda den. `signOut` mot servern kan mycket väl
+    // svara fel nu, och det är inget att bry sig om.
+    try { await c.auth.signOut(); } catch (_) {}
+    satt(null);
+    return kropp;
+  }
+
   /* Kantfallet ur MOLN_PLAN §5.3: e-posten tillhör redan ett konto, så
      `updateUser` nekas. Vi översätter det till något en människa kan agera på
      i stället för att visa Supabases engelska råtext. */
@@ -217,7 +251,7 @@ const Konto = (() => {
   }
 
   return { redo, lasSession, status, uid: () => cache.uid, arGast: () => cache.gast,
-           epost: () => cache.epost, skickaKod, verifiera, loggaUt, onAndrad,
+           epost: () => cache.epost, skickaKod, verifiera, loggaUt, raderaKonto, onAndrad,
            sparaProfil, hamtaProfil, synkaProfil, _fel: fel, _satt: satt,
            tillganglig: finns };
 })();

@@ -20,9 +20,15 @@
  * `acc`, och att döpa om fältet i lagret hade tvingat fram en översättning i
  * varje anropare utan att någon blev klokare.
  *
- * REN och importfri (som planslag.js och spelprofil.js): ingen DOM, ingen
- * Store, inget fetch. Wake Lock hör INTE hit — den är apppolicy ("håll skärmen
- * tänd medan en runda pågår"), inte en egenskap hos positionskällan.
+ * REN och importfri (som planslag.js och spelprofil.js): ingen Store, inget
+ * fetch. Wake Lock hör INTE hit — den är apppolicy ("håll skärmen tänd medan en
+ * runda pågår"), inte en egenskap hos positionskällan.
+ *
+ * ETT undantag från "ingen DOM": skärmläget. N3 stryper huvudströmmen när
+ * skärmen är släckt, och VILKEN TAKT källan levererar i är en egenskap hos
+ * källan — inte hos vyn (NATIVE_APP_PLAN §N3). Modulen lyssnar därför på
+ * `visibilitychange` om ett `document` finns, och skalet kan säga samma sak
+ * själv via `settSkarmlage()` när Capacitors app-state är sanningen.
  */
 const Geo = (() => {
 
@@ -61,6 +67,47 @@ const Geo = (() => {
   const STROM_OPT  = { enableHighAccuracy: true, maximumAge: 0 };
   const ENGANG_OPT = { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 };
 
+  /* ---------- takten på huvudströmmen (N3) ---------- */
+
+  /* Precisionen är maximal hela tiden; det är LEVERANSTAKTEN som sänks när
+     skärmen är släckt (grundaren 2026-08-03). Ingen behöver en position per
+     sekund mellan slagen — men chippet ska aldrig gå kallt.
+
+     DETTA ÄR EN TIDSSTRYPNING, ALDRIG `distanceFilter`. Den detaljen är den enda
+     i etappen som kan bli tyst fel: `distanceFilter` är ett AVSTÅNDSvillkor, så
+     står man stilla levereras INGA uppdateringar alls — och att stå stilla vid
+     bollen är exakt det ögonblick appen finns för. Med en tidsstrypning ovanpå
+     den kontinuerliga strömmen är senaste fixen aldrig äldre än intervallet,
+     oavsett om spelaren rör sig eller står still.
+
+     Strypningen gäller BARA huvudströmmen. `watch()` (slagtrycket) får allt —
+     det är fem sekunder per slag och hela poängen med att strömmen hålls varm. */
+  const TAKT_SYNLIG = 1000;    // 1 Hz
+  const TAKT_DOLD = 10000;     // 0,1 Hz
+
+  let skarmSynlig = true;
+  let sistUtskickad = 0;
+
+  /* Noll = ingen strypning. Webben stryper inte alls: där finns ingen
+     bakgrundsström att spara, webbläsaren fryser ändå sidan när den döljs, och
+     att ändra takten hade varit en beteendeförändring utan vinst. Raden vänds
+     av att `isBackgroundCapable()` blir sann, inte av något annat. */
+  function takt() {
+    if (!isBackgroundCapable()) return 0;
+    return skarmSynlig ? TAKT_SYNLIG : TAKT_DOLD;
+  }
+
+  /* Skalet anropar denna när Capacitors app-state ändras; webben får samma sak
+     ur `visibilitychange` nedan. Att sätta läget nollställer INTE klockan —
+     annars hade en skärm som tänds och släcks upprepat kunnat pressa fram fixar
+     tätare än takten. */
+  function settSkarmlage(synlig) { skarmSynlig = !!synlig; }
+
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("visibilitychange",
+      () => settSkarmlage(!document.hidden));
+  }
+
   /* ---------- huvudströmmen (en per app) ---------- */
 
   let huvudId = null;
@@ -70,8 +117,15 @@ const Geo = (() => {
     if (huvudId !== null) return true;        // redan igång — idempotent
     const g = source();
     if (!g) return false;
+    sistUtskickad = 0;                        // första fixen släpps alltid fram
     huvudId = g.watchPosition(
-      p => { const f = fixAv(p); for (const cb of lyssnare) cb(f); },
+      p => {
+        const f = fixAv(p);
+        const t = takt();
+        if (t && sistUtskickad && f.ts - sistUtskickad < t) return;
+        sistUtskickad = f.ts;
+        for (const cb of lyssnare) cb(f);
+      },
       () => {},                                // tyst, som före N1
       STROM_OPT);
     return true;
@@ -128,13 +182,28 @@ const Geo = (() => {
 
   /* Falskt på webben, och det är hela skillnaden N3 ska vända. Anropare får
      använda den för att SÄGA något ärligt ("appen kan inte logga med skärmen
-     släckt"), aldrig för att räkna annorlunda. */
-  const isBackgroundCapable = () => false;
+     släckt") och för att slippa webbkryckor som Wake Locken — aldrig för att
+     räkna annorlunda på en position.
+
+     Flaggan är en variabel och funktionen en konstant, inte tvärtom: exporteras
+     funktionen i objektet nedan fryses värdet den hade DÅ, och en omvänd flagga
+     hade synts inne i modulen men inte utanför. */
+  let bakgrundsformaga = false;
+  const isBackgroundCapable = () => bakgrundsformaga;
 
   return { available, start, stop, igang, onFix, watch, current,
-           isBackgroundCapable,
+           isBackgroundCapable, settSkarmlage,
            TEXT: { NEKAD, INGEN_POS, INGEN_GPS },
-           _useSource(g) { injicerad = g; huvudId = null; lyssnare.clear(); } };
+           TAKT: { SYNLIG: TAKT_SYNLIG, DOLD: TAKT_DOLD },
+           _takt: takt,
+           _useSource(g) {
+             injicerad = g; huvudId = null; lyssnare.clear();
+             skarmSynlig = true; sistUtskickad = 0;
+           },
+           /* Vänder native-sömmen. N3:s skal sätter den till true när pluginen
+              är på plats; tills dess är det testerna som använder den för att
+              kunna mäta strypningen innan skalet finns. */
+           _settBackgroundCapable(v) { bakgrundsformaga = !!v; } };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = Geo;

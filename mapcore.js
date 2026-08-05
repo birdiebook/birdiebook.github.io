@@ -44,13 +44,17 @@ const MapCore = (() => {
     const deepMax = t => t.max_zoom - 1 - (L.Browser.retina ? 1 : 0);
     const esriFallback = () => CourseMap.esriLayer(TILE_OPTS).addTo(map);
     const slug = (typeof SGRound !== "undefined" && SGRound.activeSlug()) || "malmo_burlov";
-    fetch(`tiles/${slug}/manifest.json`, { cache: "no-cache" })
+    fetch(SGAsset.tileManifest(slug), { cache: "no-cache" })
       .then(r => r.ok ? r.json() : null)
       .then(t => {
         if (!t) { esriFallback(); return; }
         // esriLayer() aktiverade förr ljus/färg-filtret; nu måste vi kalla det själva (idempotent).
         CourseMap.applyImageFilter();
-        L.tileLayer(`tiles/${slug}/{z}/{x}/{y}.webp`, {
+        L.tileLayer(SGAsset.tileTemplate(slug), {
+          // crossOrigin krävs när rutorna ligger på annan värd (R2): utan den
+          // blir svaret opaque och service workern kan inte spara det — se
+          // assetbas.js. Falsk när filerna ligger bredvid appen (oförändrat).
+          crossOrigin: SGAsset.tileCors(),
           bounds: t.bounds, zIndex: 10,
           minNativeZoom: t.min_zoom, maxNativeZoom: deepMax(t),
           minZoom: t.min_zoom, maxZoom: 21,

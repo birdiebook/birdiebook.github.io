@@ -102,6 +102,7 @@
 <script src="./store.js"></script>
 <!-- Offline-nedladdning av banor: inställningen bor här sedan AS-IA steg 3
      (§2.1d). Modulen monterar sig i #offline-tools. -->
+<script src="./assetbas.js"></script>
 <script src="./offline-download.js"></script>
 <!-- Kontot (MOLN_PLAN §6 V1). live.js MÅSTE ligga före konto.js: den äger den
      enda supabase-klienten och konto.js lånar den (två klienter skriver över
@@ -346,7 +347,11 @@ function ritaKonto(el) {
       <div class="knappar">
         <button class="btn ghost" id="ksynka">Synka profilen nu</button>
         <button class="btn ghost" id="kut">Logga ut</button>
-      </div>`;
+      </div>
+      <!-- Radera konto måste gå att STARTA här: App Store 5.1.1(v) godtar inte
+           en hänvisning till mejl (APPSTORE_PLAN §8). Diskret, men inte gömd. -->
+      <p class="hint" style="margin-top:14px">
+        <a href="#" id="kradera" style="color:#b23b3b">Radera mitt konto</a></p>`;
   } else {
     // Gäst — och det är ett fullgott läge, inte ett halvfärdigt.
     const harGast = s.inloggad && s.gast;
@@ -453,6 +458,30 @@ function kopplaKonto(el) {
     if (!confirm("Logga ut? Rundorna på telefonen ligger kvar.")) return;
     try { await Konto.loggaUt(); } catch (e) {}
     kontoLage = null;
+    render();
+  };
+
+  /* Radera konto. Här är utförlig text RÄTT trots att appen annars ska säga så
+     lite som möjligt: det är en oåterkallelig handling, och vad som händer med
+     siffrorna i andras matcher är information som faktiskt ändrar beslutet. */
+  const radera = q("kradera");
+  if (radera) radera.onclick = async (ev) => {
+    ev.preventDefault();
+    const ok = confirm(
+      "Radera kontot?\n\n" +
+      "Din profil och e-post tas bort ur molnet. I matcher du spelat med andra " +
+      "står ditt namn kvar som \"Borttagen spelare\" så att deras resultat inte " +
+      "förvanskas.\n\n" +
+      "Rundorna på den här telefonen påverkas inte.\n\n" +
+      "Det går inte att ångra.");
+    if (!ok) return;
+    radera.textContent = "Raderar …";
+    try {
+      await Konto.raderaKonto();
+      kontoLage = { fel: "Kontot är raderat. Rundorna på telefonen ligger kvar." };
+    } catch (e) {
+      kontoLage = { fel: e.message };
+    }
     render();
   };
 }

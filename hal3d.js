@@ -2453,8 +2453,8 @@ async function loadHole(slug) {
   status('laddar ' + slug.replace('_', ' ') + '…');
   fakta('');
   try {
-    meta = await (await fetch(`data/holes3d/${slug}.json`)).json();
-    const gltf = await loader.loadAsync(`data/holes3d/${meta.glb}`);
+    meta = await (await fetch(SGAsset.holes3d(`${slug}.json`))).json();
+    const gltf = await loader.loadAsync(SGAsset.holes3d(meta.glb));
     ground = gltf.scene;
     ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
     // U7: marken TAR EMOT skuggor men kastar inga — den är en enda yta, så en
@@ -2492,7 +2492,7 @@ const SKIRT_DROP_M = 0.3;
 
 async function loadWide(slug, file) {
   try {
-    const gltf = await loader.loadAsync(`data/holes3d/${file}`);
+    const gltf = await loader.loadAsync(SGAsset.holes3d(file));
     if (!meta || meta.slug !== slug) return;      // användaren bytte hål under laddningen
     wide = gltf.scene;
     wide.name = 'u15-wide';                       // scengraf-verifiering, ?dbg=1
@@ -2552,7 +2552,7 @@ const sattPosen = p => { if (p && p.target) controls.setState(p); };
 /** Finns hålet i 3D för aktiv bana? Värdsidan döljer 3D-knappen om inte. */
 async function harIndex() {
   try {
-    const r = await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`);
+    const r = await fetch(SGAsset.holes3d(`index.${SGRound.activeSlug()}.json`));
     if (!r.ok) return null;
     const idx = await r.json();
     return (idx.holes || []).length ? idx : null;
@@ -2646,7 +2646,7 @@ export { loadHole as laddaHal, sattExag, sattSynlig, setLage as sattLage,
 if (!EMBED) (async () => {
   let idx;
   try {
-    idx = await (await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`)).json();
+    idx = await (await fetch(SGAsset.holes3d(`index.${SGRound.activeSlug()}.json`))).json();
   } catch { status('inga 3D-hål exporterade än (tools/hole_gltf.py)'); return; }
   if (!idx.holes.length) { status('inga 3D-hål exporterade än'); return; }
   const sel = el('hal');

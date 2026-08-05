@@ -349,7 +349,14 @@ function pruneBuf(now) {
 // #1 Screen Wake Lock: håll skärmen tänd medan en runda är aktiv så GPS-chippet
 // förblir varmt (ingen kall uppvärmning per hål). Släpps av OS vid flikbyte/lås;
 // vi åter-begär på visibilitychange. Saknas API:t (äldre iOS) gör vi inget.
+//
+// I NATIVE-SKALET BEGÄRS DEN ALDRIG (NATIVE_APP_PLAN §N3). Wake Locken är en ren
+// webbkrycka: den finns för att hindra sidan från att frysa, och när skalet kan
+// hålla strömmen varm i bakgrunden är den både onödig och den dyraste posten i
+// batterikalkylen. Villkoret är `Geo.isBackgroundCapable()`, som är falsk på
+// webben — raden ändrar alltså ingenting förrän skalet vänder den.
 async function requestWakeLock() {
+  if (Geo.isBackgroundCapable()) return;
   if (wakeLock || !("wakeLock" in navigator)) return;
   try {
     wakeLock = await navigator.wakeLock.request("screen");

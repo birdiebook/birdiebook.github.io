@@ -51,7 +51,7 @@
       const xMin = lon2x(west, z), xMax = lon2x(east, z);
       const yMin = lat2y(north, z), yMax = lat2y(south, z); // norr = mindre y
       for (let x = xMin; x <= xMax; x++)
-        for (let y = yMin; y <= yMax; y++) urls.push(`./tiles/${slug}/${z}/${x}/${y}.webp`);
+        for (let y = yMin; y <= yMax; y++) urls.push(SGAsset.tile(slug, z, x, y));
     }
     return urls;
   }
@@ -74,7 +74,7 @@
       // (bara ett fåtal banor har ortofoto), inte ett fel — den utelämnas tyst.
       const med = await Promise.all(lista.map(async (c) => {
         try {
-          const m = await (await fetch(`./tiles/${c.slug}/manifest.json`,
+          const m = await (await fetch(SGAsset.tileManifest(c.slug),
                                        { cache: "no-cache" })).json();
           if (!m || !m.bounds) return null;
           return { slug: c.slug, namn: c.name || c.slug, manifest: m };
