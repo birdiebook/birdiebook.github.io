@@ -289,14 +289,26 @@ async function laddaMotor() {
   await Store.ready();      // en tom profil svarar synkront men är inte svaret
   const komb = kombination();
   if (!komb) throw new Error("Profilen kunde inte läsas — fyll i den under Profil först.");
-  await FOR.ladda({ slug: SGRound.activeSlug(), kombination: komb });
+  // Samma kompromiss som hålvyn (§8.3): spelarens egen yta först, annars
+  // närmaste skeppade — och `planrunda.js` skriver ut vilken, i varje korts
+  // förutsättningsrad.
+  await FOR.ladda({ slug: SGRound.activeSlug(), kombination: komb,
+                    valj: Spelprofil.narmasteKombinationer });
   if (!FOR.laddad()) {
-    throw new Error(Spelprofil.harSvar(Store.profile())
-      ? "Ingen plan är byggd för din spelprofil på den här banan."
+    throw new Error(Spelprofil.harPlanSvar(Store.profile())
+      ? "Ingen plan är byggd för den här banan."
       : "Planen behöver din spelprofil — svara på frågorna under Profil.");
   }
   baslinjeNamn = FOR.ytan().profil.baseline;
-  return komb;
+  /* BÅDA kombinationerna följer med, och det är inte överflödigt.
+     `drive/approach/baseline` är SPELARENS egen — det är den planen ska
+     jämföras mot när appen frågar "gäller den fortfarande?" (`stammerMedProfil`).
+     `raknad` är den yta svaret faktiskt kom ur, som kan vara en kompromiss
+     (§SP3b). Blandas de ihop får man antingen en plan som påstår sig gälla en
+     spelare den inte gäller, eller en varning om "annan profil" som aldrig går
+     att bli av med — den senare mätt 2026-08-04. */
+  const p = FOR.profilen();
+  return { ...komb, raknad: p.kombination, egen: p.egen };
 }
 
 async function generera() {

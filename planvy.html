@@ -344,7 +344,10 @@
 <!-- 3D-vinkelns chrome. Samma markup som hal3d.html — motorn i hal3d.js slår
      upp exakt de här id:na, och det är hela skälet att de heter likadant. -->
 <div id="status" class="chrome3d"></div>
-<div id="kalla" class="chrome3d">Foto &amp; höjddata © Lantmäteriet (CC BY 4.0)</div>
+<!-- Attributionen står i BÅDA vinklarna sedan 2D fick sitt ortofoto: det är
+     samma bild på samma mark, bara sedd rakt uppifrån. Därför inte .chrome3d,
+     och därför ritar MapCore.addOrthophoto ingen egen kredit här. -->
+<div id="kalla">Ortofoto &amp; höjddata © Lantmäteriet (CC BY 4.0)</div>
 <div id="hojdpanel" class="dold chrome3d">
   <div id="hojdrad"><b id="hojdDelta"></b><span id="hojdLangd"></span></div>
   <svg id="hojdsvg" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
@@ -546,19 +549,94 @@ async function loadWind() {
 }
 
 // ------------------------------------------------------ 2D: kartan och kedjan ---
+/* KARTANS STORLEK MÄTS UR ELEMENTET, aldrig ur Leaflet.
+ *
+ * `map.getSize()` svarar med Leaflets SENASTE mätning, och den mätningen kan
+ * vara 0×0: `invalidateSize` på en karta som ligger `display:none` (vilket den
+ * gör i hela 3D-vinkeln) skriver in noll. Konsekvensen var inte subtil —
+ * uppmätt 2026-08-04: ETT `resize` medan spelaren stod i 3D räckte för att
+ * `fitBounds` skulle sätta zoom 0, och för att vinkelbytets `view2dFor` skulle
+ * räkna zoomen ur en division med noll (`heightPx = 0`). Tillbaka i 2D låg
+ * kartan på zoom 0 vid latitud 56,01 — hela världen, fem mil fel.
+ *
+ * Regeln som följer: mät elementet, och gör ingenting med kartan när den inte
+ * har någon yta. En osynlig karta ska inte gå att skriva sönder. */
+function kartmatt() {
+  const r = $("map").getBoundingClientRect();
+  return (r.width > 1 && r.height > 1) ? { w: r.width, h: r.height } : null;
+}
+
+/* Har spelaren flyttat kartan SJÄLV?
+   Då är vyn hens, och en inramning som utlöses av att telefonen bytte höjd
+   (adressfältet som glider undan, förslagsremsan som växer en rad) rycker undan
+   bilden mitt i ett beslut. Våra egna vysättningar får inte räknas som
+   spelarens — därför räknaren: Leaflet skiljer inte på vem som ringde. */
+let egenVy = false, ritarVy = 0;
+const sattVy = fn => { ritarVy++; try { fn(); } finally { ritarVy--; } };
+
+/* Kartan visas + mäts om. Ordningen är hela poängen: `invalidateSize` innan
+   `doldvy` är borttagen mäter noll (se `kartmatt`). */
+function visaKartan() {
+  $("map").classList.remove("doldvy");
+  if (kartmatt()) sattVy(() => map.invalidateSize({ pan: false }));
+}
+
+/* Bandet av bilden som INTE är chrome. Toppremsan och det som står nere mäts
+   redan (`mattToppremsa`, `mattForslag`) — inramningen ska rymmas mellan dem,
+   annars hamnar teen under slaglistan på ett långt hål. */
+function bandet(m) {
+  const st = getComputedStyle(document.documentElement);
+  const topp = (parseFloat(st.getPropertyValue("--topphojd")) || 79) + 10;
+  const b2 = $("bottom2d").getBoundingClientRect();
+  const forslagh = parseFloat(st.getPropertyValue("--forslagh")) || 0;
+  const bot = (b2.height > 1 ? b2.top : m.h - forslagh) - 10;
+  return { topY: topp, botY: Math.max(topp + 80, bot), width: m.w, height: m.h };
+}
+
+/** Den greenpunkt som ligger LÄNGST från teen — hålets bortre ände. */
+function bortreGreen(h, tee) {
+  let bast = null, d = -1;
+  for (const gp of (h.green || [])) {
+    const x = hav(tee, gp);
+    if (x > d) { d = x; bast = gp; }
+  }
+  return bast;
+}
+
+/* Ramar in hålet. Tre ändringar mot U11:s version, alla av samma skäl — bilden
+   ska landa där spelaren förväntar sig:
+ *
+ *   · `fitBand` i stället för `fitBounds`. Kartan är ALLTID vriden här (hålet
+ *     pekar uppåt), och `fitBounds` ramar in en nord-sydlig låda kring
+ *     punkterna — den vet inte om rotationen. På ett hål som går i nordöst
+ *     blev lådan därför mycket större än hålet och bilden zoomade ut för
+ *     mycket; på ett som går rakt österut skars teen bort. `fitBand` räknar i
+ *     oroterad pixelrymd och tar bandet mellan chromet som mål.
+ *   · Ramen räknas från spelarens EGEN tee (`teePoint`), inte från hålets
+ *     första linjepunkt. Bakteen är inte den man står på.
+ *   · Ingen `requestAnimationFrame(invalidateSize)`. Den kunde landa efter ett
+ *     vinkelbyte och mätte då en dold karta till 0×0 — samma gift som ovan.
+ */
 function frameHole() {
   const h = halNu();
-  if (!h || !map) return;
-  MapCore.orientToHole(map, h);
-  if (VY.slope && h.green && h.green.length) {
-    map.fitBounds(L.latLngBounds(h.green).pad(0.6), { animate: false });
-  } else {
-    const teePt = (h.line && h.line.length) ? h.line[0]
-      : (h.tees && h.tees.length) ? [h.tees[0].lat, h.tees[0].lon] : null;
-    const pts = [...(h.green || []), ...(h.line || []), teePt].filter(Boolean);
+  const m = kartmatt();
+  // Ingen inramning av en karta som inte syns: i 3D-vinkeln är varje sådan
+  // sättning osynlig när den görs och fel när den upptäcks.
+  if (!map || !h || !m || VY.vinkel !== "2d") return;
+  sattVy(() => {
+    map.invalidateSize({ pan: false });
+    MapCore.orientToHole(map, h);
+    if (VY.slope && h.green && h.green.length) {
+      map.fitBounds(L.latLngBounds(h.green).pad(0.6), { animate: false });
+      return;
+    }
+    const tee = MapCore.teePoint(h) || (h.line && h.line[0]);
+    const bortre = tee ? bortreGreen(h, tee) : null;
+    if (tee && bortre && MapCore.fitBand(map, tee, bortre, bandet(m))) return;
+    const pts = [...(h.green || []), ...(h.line || []), tee].filter(Boolean);
     if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.12), { animate: false });
-  }
-  requestAnimationFrame(() => map && map.invalidateSize({ pan: false }));
+  });
+  egenVy = false;
 }
 
 /* U20: EN toggle, två vinklar. Tillståndet bor i Vylage; här ritas bara
@@ -654,22 +732,16 @@ function drawLegs() {
   ritaLista();
 }
 
-/* U8: hinderytorna på kartan — halvgenomskinlig fyllning MED KONTUR, samma
-   regel och samma tokens som i 3D. Konturen är det som gör att ytan läses som
-   ett lager och inte som en färgfläck i ortofotot.
-   Färgen slås upp med `TOK` och skrivs inte av: Leaflets `color`/`fillColor`
-   är attributsträngar och tar inte `var(--x)` — en färg satt så blir tyst
-   svart (§U3-fällan). */
-const HINDER_TOKEN = { water: "--vatten", bunker: "--fara" };
-
-function ritaHinder(h) {
-  for (const hz of ((h && h.hazards) || [])) {
-    if (!hz || !Array.isArray(hz.poly) || hz.poly.length < 3) continue;
-    const f = TOK(HINDER_TOKEN[hz.type] || "--fara");
-    L.polygon(hz.poly, { color: f, weight: 2, opacity: .95,
-                         fillColor: f, fillOpacity: .28 }).addTo(layers);
-  }
-}
+/* U8:s HINDERLAGER ÄR BORTTAGET (grundarens beslut 2026-08-04), i båda
+   vinklarna.
+   U8 ritade bunker och vatten som färgade polygoner därför att 2D-vinkeln inte
+   hade någon bild att läsa dem ur — bakgrunden var svart. Med ortofotot på
+   plats ritar lagret ut något som redan STÅR i bilden, och gör det med en
+   sämre kant: exportens polygoner är OSM-generaliserade medan fotot är 0,16
+   m/px. Två svar på "var slutar bunkern", och det grövre ovanpå det finare.
+   Hindren finns kvar i bandatan och i planerarens raster — det är bara
+   ÖVERRITNINGEN som är borta. Motorns `sattHinder` står kvar i hal3d.js för
+   den fristående hal3d.html. */
 
 /* Chipet är en DivIcon och inte en Leaflet-tooltip: en tooltip ligger i sin
    egen pane ovanför allt och följer inte kartans rotation, så den hade lossnat
@@ -801,8 +873,13 @@ async function laddaForslag() {
   try { await Store.ready(); } catch (e) { /* minnesläge: profilen är tom, och det syns */ }
   // Profilens KOMBINATION är filens namn (GP1: en hink har ett namn, ett tal
   // har det inte) — det är den egenskapen som gör en förberäknad yta möjlig.
+  /* `valj` är kompromissen (§SP1/§8.3): finns ingen yta för spelarens egen
+     kombination faller vi tillbaka på närmaste skeppade — och remsan säger det.
+     Utan den var planen osynlig för alla utom den spelare ytan byggdes för,
+     eftersom banan bär en av 126 möjliga kombinationer. */
   await FOR.ladda({ slug: SGRound.activeSlug(),
-                    kombination: Spelprofil.kombination(Store.profile()) });
+                    kombination: Spelprofil.kombination(Store.profile()),
+                    valj: Spelprofil.narmasteKombinationer });
   baslinjeNamn = FOR.laddad() ? FOR.ytan().profil.baseline : null;
   ritaForslag();
 }
@@ -840,6 +917,23 @@ function forslagsIndata(h) {
 /* Förutsättningsraden bor i `forslag.js` sedan SP5: dokumentet skriver samma
    rad om samma svar, och två kopior av en formulering glider isär. */
 const villkorstext = (f) => Forslag.villkorstext(f);
+
+/* Förutsättningsraden + en väg framåt när den säger att ytan inte är spelarens.
+   Länken byggs som ETT ELEMENT och texten sätts med textContent: raden bär
+   tee-etiketten ur localStorage, och en sträng därifrån har inget i innerHTML
+   att göra. */
+function skrivVillkor(f) {
+  const el = $("fVillkor");
+  el.textContent = f ? villkorstext(f) : "";
+  const p = FOR.profilen();
+  if (!p || p.egen) return;
+  el.appendChild(document.createTextNode(" "));
+  const a = document.createElement("a");
+  a.href = "./profil.html";
+  a.textContent = "Din profil →";
+  a.style.cssText = "color:var(--accent-ui-ljus);white-space:nowrap";
+  el.appendChild(a);
+}
 
 const forslagIkon = (txt, sikte) => L.divIcon({
   className: "", iconSize: [24, 24], iconAnchor: [12, 12],
@@ -951,18 +1045,27 @@ function ritaForslagVy() {
     return mattForslag();
   }
   if (!FOR.laddad()) {
-    /* Ingen yta för DEN HÄR spelaren på DEN HÄR banan. Att då räkna mot någon
-       annans yta vore ett förslag byggt på någon annans spridning — rätt i
-       formen, fel i sak, och omöjligt att se. Panelen säger vad som saknas i
-       stället, och den vanligaste orsaken är att profilen inte är besvarad
-       (ytan är namngiven efter profilkombinationen, GP1). */
-    const svarat = Spelprofil.harSvar(Store.profile());
+    /* Ingen yta ALLS för banan — inte ens en näraliggande profil (kompromissen
+       i `laddaForslag`). Då är det banan som saknar plan, inte spelaren, och
+       remsan får inte säga något annat.
+       Frågan "har spelaren svarat?" ställs till `harPlanSvar` och inte till
+       `harSvar`: den senare är sann så fort ett NAMN finns, och namnet sätts
+       när kontot skapas. Den som bara skrivit sitt namn möttes därför av
+       "Ingen plan är byggd för din spelprofil" — sant, men utan väg vidare. */
+    const svarat = Spelprofil.harPlanSvar(Store.profile());
     panel.classList.remove("dold");
     $("fText").textContent = svarat
-      ? "Ingen plan är byggd för din spelprofil på den här banan."
+      ? "Ingen plan är byggd för den här banan."
       : "Planen behöver din spelprofil.";
     $("fText").classList.add("tyst");
-    $("fVillkor").textContent = svarat ? "" : "Svara på frågorna i Profil-fliken.";
+    $("fVillkor").textContent = "";
+    if (!svarat) {
+      const a = document.createElement("a");
+      a.href = "./profil.html";
+      a.textContent = "Svara på frågorna i Profil →";
+      a.style.cssText = "color:var(--accent-ui-ljus)";
+      $("fVillkor").appendChild(a);
+    }
     $("fAnvand").disabled = true;
     $("fDetalj").innerHTML = "";
     $("fDetalj").hidden = true;
@@ -991,7 +1094,7 @@ function ritaForslagVy() {
   // Tystnad ska SE ut som tystnad: ett hål utan val får en dämpad rad, inte en
   // lika stark som ett hål där banan faktiskt ställer en fråga.
   $("fText").classList.toggle("tyst", !f.harBeslut);
-  $("fVillkor").textContent = villkorstext(f);
+  skrivVillkor(f);
   $("fAnvand").disabled = !f.punkter.length;
   $("fAnvand").title = f.punkter.length ? ""
     : "Ett par 3 har ingen kedja att ta emot — siktet ÄR slaget";
@@ -1051,19 +1154,27 @@ const SANK_MS = 700;
 let byteId = 0;                 // ett nytt byte ogiltigförklarar det pågående
 const sov = ms => new Promise(r => setTimeout(r, ms));
 
-/** Leaflets vy som bron vill ha den. */
+/** Leaflets vy som bron vill ha den, eller null när kartan inte är mätbar. */
 function leafletVy() {
+  const m = kartmatt();
   const c = map.getCenter();
+  if (!m || !Number.isFinite(c.lat) || !Number.isFinite(map.getZoom())) return null;
   return { center: [c.lat, c.lng], zoom: map.getZoom(),
            bearing: (map.getBearing && map.getBearing()) || 0,
-           heightPx: map.getSize().y };
+           heightPx: m.h };
 }
 
-/** Kamerapose som visar exakt det Leaflet visar just nu (platt, ovanifrån). */
+/* Kamerapose som visar exakt det Leaflet visar just nu (platt, ovanifrån).
+   `null` när posen inte går att räkna — och då hoppar bytet hellre över
+   kontinuiteten än landar på en pose byggd av NaN. En kamera med NaN i target
+   ritar ingenting alls, vilket ser ut som en trasig 3D-vy. */
 function poseFranLeaflet() {
-  const k = H3 && H3.konv();
-  if (!k) return null;
-  return Vybro.poseFor2d({ ...leafletVy(), konv: k, yAt: H3.markY, yRef: H3.yRefPlan() });
+  const k = H3 && h3Klar() && H3.konv();
+  const vy = k ? leafletVy() : null;
+  if (!vy) return null;
+  const p = Vybro.poseFor2d({ ...vy, konv: k, yAt: H3.markY, yRef: H3.yRefPlan() });
+  const tal = [p.target.x, p.target.y, p.target.z, p.range, p.heading, p.tilt];
+  return tal.every(Number.isFinite) && p.range > 0 ? p : null;
 }
 
 function sattChrome(tre) {
@@ -1162,14 +1273,13 @@ async function visaVinkel(opt) {
 }
 
 async function till2d(mitt, direkt) {
-  if (!H3) { $("map").classList.remove("doldvy"); syncSlope(); return; }
+  if (!H3) { visaKartan(); syncSlope(); frameHole(); return; }
   if (direkt) {
     $("scen").classList.add("doldvy");
     $("scen").style.opacity = "1";
     H3.sattSynlig(false);
-    $("map").classList.remove("doldvy");
+    visaKartan();
     syncSlope();
-    map.invalidateSize({ pan: false });
     frameHole();
     return;
   }
@@ -1178,19 +1288,36 @@ async function till2d(mitt, direkt) {
   H3.flygTill({ tilt: Vybro.TILT_2D }, SANK_MS);
   await sov(SANK_MS);
   if (mitt !== byteId) return;
-  // (2) Leaflets vy ur kameratillståndet, FÖRE övertoningen
-  const k = H3.konv();
-  if (k) {
-    const v = Vybro.view2dFor({ konv: k, state: H3.posen(), heightPx: map.getSize().y,
-                                yRef: H3.yRefPlan() });
-    $("map").classList.remove("doldvy");
-    map.invalidateSize({ pan: false });
-    if (map.setBearing) map.setBearing(v.bearing);
-    map.setView(v.center, v.zoom, { animate: false });
+  /* (2) Leaflets vy ur kameratillståndet, FÖRE övertoningen.
+   *
+   * Kartan visas och mäts FÖRST. Förr räknades vyn med `map.getSize().y` medan
+   * kartan fortfarande låg `display:none` — Leaflet svarade då med sin gamla
+   * mätning, och var den 0×0 blev zoomen oändlig och `setView(center, null)`
+   * lämnade kartan på zoom 0 (uppmätt 2026-08-04). Scenen ligger kvar ovanpå
+   * med opacitet 1 medan detta sker, så ingenting av det syns.
+   */
+  visaKartan();
+  const m = kartmatt();
+  // Omräkningen gäller bara om scenen faktiskt står på DET HÄR hålet. Byter man
+  // hål och vinkel tätt kan kameran höra till förra hålet, och då hade
+  // "kontinuitet med 3D-bilden" betytt att kartan landade på fel hål.
+  const k = h3Klar() ? H3.konv() : null;
+  const v = (k && m) ? Vybro.view2dFor({ konv: k, state: H3.posen(),
+                                         heightPx: m.h, yRef: H3.yRefPlan() }) : null;
+  const brukbar = v && Number.isFinite(v.zoom)
+    && Number.isFinite(v.center[0]) && Number.isFinite(v.center[1]);
+  if (brukbar) {
+    sattVy(() => {
+      if (map.setBearing) map.setBearing(v.bearing);
+      map.setView(v.center, v.zoom, { animate: false });
+    });
+    // Vyn kommer ur kameran, alltså ur något spelaren styrt — den ska inte
+    // ramas om av nästa storleksändring.
+    egenVy = true;
     syncSlope();
   } else {
-    $("map").classList.remove("doldvy");
-    map.invalidateSize({ pan: false });
+    // Ingen brukbar omräkning. Hålets egen ram är ett ärligt svar; en vy räknad
+    // ur en division med noll är det inte.
     syncSlope();
     frameHole();
   }
@@ -1241,21 +1368,34 @@ async function sakerstall3d() {
    läsa SAMMA rader (§5 U19). Det andra är att vinkelbytet då blir omedelbart.
    Kostnaden är hålets glb, som ändå hämtas vid första bytet och ligger i
    sw-cachen efteråt. */
+let h3dGen = 0;      // varje ny laddning ogiltigförklarar den föregående
+
 async function visaHalI3d(opt) {
   const h = halNu();
   if (!H3 || !h || !finns3d(h)) return;
   const slug = slugFor(h);
+  const min = ++h3dGen;
   if (!(opt && opt.posefri)) H3.sattExag(VY.effektivExag());
   if (h3dLaddat !== slug) {
-    h3dLaddat = slug;
+    /* TVÅ RÄTTELSER, båda om vem som äger scenen medan den laddar.
+     *
+     * (1) `h3dLaddat` sätts EFTER laddningen, inte före. Sattes den före ljög
+     *     `h3Klar()` under hela hämtningen av hålets glb: 2D-listan bad då
+     *     motorn om kedjan för ett hål som inte låg i scenen, förslaget
+     *     synkades mot förra hålets mark, och vinkelbytet räknade sin pose ur
+     *     en konvertering som hörde till ett annat hål.
+     * (2) Generationsräknaren. Två tryck på "nästa hål" i följd har två
+     *     laddningar i luften samtidigt, och utan räknaren vinner den som blir
+     *     klar SIST — inte den spelaren står på. Då satte den förlorade
+     *     laddningen sin pose, sina slag och sitt förslag ovanpå rätt hål.
+     */
+    h3dLaddat = null;
     await H3.laddaHal(slug);
+    if (min !== h3dGen) return;          // spelaren bytte hål under laddningen
+    h3dLaddat = slug;
     const p = (opt && opt.posefri) ? null : VY.pose();
     if (p) H3.sattPosen(p);
   }
-  // U8: hindren skickas HÄR och inte i `rita`, för `clearHole` nollar dem vid
-  // varje hålbyte och motorn kan ha laddat hålet först efteråt. Det här är den
-  // enda punkten där både scenen och hålvalet säkert är på plats.
-  H3.sattHinder(h.hazards || []);
   // Hela planen, inte bara punkterna: motorn räknar kedjan och behöver tee och
   // green för att veta var slag 1 börjar och var sista slaget tar vägen (U19).
   H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h.line && h.line[0]),
@@ -1297,7 +1437,6 @@ function rita(vad) {
   if (vad === "hal") {
     layers.clearLayers();
     MapCore.drawHoleGeometry(layers, h);
-    ritaHinder(h);      // 2D-lagret; 3D-sidan får dem i visaHalI3d
     PlayAs.loadElev3d(h, () => { updateHeader(); drawLegs(); });
     updateHeader();
     syncSlope();
@@ -1328,8 +1467,13 @@ function rita(vad) {
 
 async function init() {
   map = MapCore.createMap("map");
-  // Inget ortofoto-banlager i planeringsvyn — bara hålets egen geometri
-  // (linje, pin, bunker/vatten) mot mörk botten.
+  /* 2D-VINKELN ÄR EN KARTA. U11 skrev om planeringsvyn och tappade på vägen
+     ortofotot som `planera-karta.html` hade — kvar blev hålets vita linje och
+     färgade hinderpolygoner mot svart, alltså en ritning och inte en bana.
+     Samma bild som 3D-scenen står på (samma tiles, samma tonkalibrering), bara
+     sedd rakt uppifrån: det är hela U11:s "en vy, två kameravinklar".
+     Krediten ritas inte av MapCore här — #kalla bär den i båda vinklarna. */
+  MapCore.addOrthophoto(map, { credit: false });
   [layers, slopeLayer, slopeArrowLayer, legLayer, chipLayer, forslagLager]
     .forEach(l => l.addTo(map));
   SlopeOverlay.load();
@@ -1373,11 +1517,14 @@ async function init() {
   // Leaflet äger 2D-bäringen; den ändras bara av en rotation, så en lyssnare är
   // rätt här (kompassen är chrome och inte något som sitter fast i marken).
   map.on("rotate move zoomend", uppdateraKompass);
+  /* Spelarens EGNA kartflyttningar märks, så nästa storleksändring inte kastar
+     dem (`omStorlek`). Leaflet skiljer inte på vem som ringde — `ritarVy` är
+     det som gör skillnaden mellan spelarens finger och vår egen inramning. */
+  map.on("dragend zoomend rotate", () => { if (!ritarVy) egenVy = true; });
   $("undoBtn").onclick = () => VY.angra();
   $("undo3d").onclick = () => VY.angra();
   $("v2d").onclick = () => VY.sattVinkel("2d");
   $("v3d").onclick = () => VY.sattVinkel("3d");
-  VY.pa(vad => rita(vad));
 
   try {
     const course = await MapCore.loadCourse();
@@ -1414,7 +1561,15 @@ async function init() {
 
   if (params.get("slope") === "1") VY.sattSlope(true);
   if (params.get("vinkel") === "3d" || params.get("vy") === "3d") VY.sattVinkel("3d");
+  /* TILLSTÅNDET FÖRST, LYSSNAREN SEDAN.
+     Kopplades `rita` in tidigare ritade uppstarten en första uppställning för
+     HÅL 1 — `hi` står ännu på 0 — innan hålvalet hunnit läsas. I 3D-vinkeln
+     laddade den uppställningen alltså ett hål ingen bett om, och den
+     laddningen kapplöpte sedan med det riktiga hålets. En uppställning, ett
+     hål. */
   VY.batch(s => { s.sattHal(s.startRel(params.get("hal"), ROUND.length), null); });
+  hi = VY.rel - 1;
+  VY.pa(vad => rita(vad));
   goTo(VY.rel);
   planSikte();                      // GP3: ?sikte= från "Min plan"
   visaVinkel({ forsta: true });     // första uppställningen: inget att tona från
@@ -1497,13 +1652,35 @@ function mattToppremsa() {
   document.documentElement.style.setProperty(
     "--topphojd", Math.round(top.getBoundingClientRect().height) + "px");
 }
+/* Mät EN gång direkt också. ResizeObserver levererar sin första avisering först
+   i en renderad bildruta, och allt som ligger nere i bilden (högerkolumnen,
+   inramningens band) läser --topphojd redan innan dess. */
+mattToppremsa();
 if (window.ResizeObserver) new ResizeObserver(mattToppremsa).observe(document.getElementById("top"));
 /* Samma sak nedtill: förslagsremsan växer med textens radbrytning, och allt
    som står ovanför den läser höjden ur --forslagh. */
 if (window.ResizeObserver) new ResizeObserver(mattForslag).observe(document.getElementById("forslag"));
 
-addEventListener("resize", () => { mattToppremsa(); if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
-addEventListener("orientationchange", () => { mattToppremsa(); if (map) { map.invalidateSize({ pan: false }); frameHole(); } });
+/* ETT STORLEKSBYTE ÄR INTE ETT HÅLBYTE.
+ *
+ * Förr ramade både `resize` och `orientationchange` om hålet villkorslöst. På
+ * en telefon betyder det att varje gång adressfältet glider undan, tangentbordet
+ * öppnas eller förslagsremsan växer en rad, rycks kartan tillbaka till hålets
+ * ram — mitt i en panorering spelaren gjorde för att titta på något. Och gjordes
+ * det medan 3D-vinkeln stod framme mättes en dold karta till 0×0, vilket sedan
+ * förstörde hela vinkelbytet (se `kartmatt`).
+ *
+ * Nu: mät om alltid, rama om bara vid en RIKTIG orienteringsändring och bara om
+ * spelaren inte har flyttat kartan själv. */
+function omStorlek(ramaOm) {
+  mattToppremsa();
+  mattForslag();
+  if (!map || !kartmatt()) return;      // 3D-vinkeln: kartan är display:none
+  sattVy(() => map.invalidateSize({ pan: false }));
+  if (ramaOm && !egenVy) frameHole();
+}
+addEventListener("resize", () => omStorlek(false));
+addEventListener("orientationchange", () => omStorlek(true));
 /* Kameran ska överleva att appen läggs undan — inte bara ett hålbyte. */
 addEventListener("pagehide", sparaPose);
 

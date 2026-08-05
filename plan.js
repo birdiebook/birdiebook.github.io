@@ -121,7 +121,12 @@ const Plan = (() => {
       kind: "genererad",
       spec: s.spec || o.spec,
       course: s.course || o.course, courseName: o.courseName,
+      // `raknad`/`egen`: vilken yta svaret kom ur, när den inte var spelarens
+      // egen (§SP3b). `drive/approach/baseline` är fortsatt SPELARENS — det är
+      // dem `stammerMedProfil` jämför, och de får inte bytas mot kompromissens.
       profil: { drive: s.drive, approach: s.approach, baseline: s.baseline,
+                raknad: s.profil_raknad || null,
+                egen: s.profil_egen !== false,
                 stil: s.stil || null, plan_version: s.plan_version || null },
       summary: s.summary || null, totals: s.totals || null,
       holes: (s.holes || []).map((k, i) => {

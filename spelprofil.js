@@ -245,6 +245,111 @@ const Spelprofil = (() => {
              baseline: BASELINE };
   }
 
+  /* ---- Kombinationen som NAMN, och hur nära två namn ligger varandra -------
+   *
+   * Bakgrunden är en mätning, inte en smak: en bana har 126 möjliga
+   * kombinationer och appen skeppar i dag EN (≈83 kB gzip styck —
+   * [[SPELPLAN_PLAN]] §8.3). Alla utom den spelare ytan byggdes för fick
+   * därför "Ingen plan är byggd för din spelprofil", vilket är sant och
+   * oanvändbart. Grundarens beslut 2026-08-04: räkna hellre mot NÄRMASTE
+   * skeppade profil och SÄG det i förutsättningsraden.
+   *
+   * Rangordningen bor här och inte i `forslag.js` av samma skäl som
+   * `kombination` gör det: det är hinkarna som vet vilka profiler som ligger
+   * nära varandra. `forslag.js` ska bara veta vilken fil den ska hämta.
+   */
+  const namnFor = (k) => `${k.drive}_${k.approach}_${k.baseline}`;
+
+  // Hinkarnas mittpunkter under sina FRUSNA koder — härledda ur listorna ovan,
+  // aldrig avskrivna. Byts en hinks mid följer avståndsmåttet med av sig självt.
+  const HCP_MID = {};
+  for (const b of HCP) HCP_MID[HCP_BAS[b.id]] = b.mid;
+  const DRIVER_MID = {};
+  for (const d of DRIVER) if (DRIVER_KOD[d.id]) DRIVER_MID[DRIVER_KOD[d.id]] = d.mid;
+
+  /* Ett kombinationsnamn tillbaka till sina delar, eller null om det inte är
+     ett namn den här koden har byggt. `drive` är `hcpX[-dKOD][-mh|-mv]`. */
+  function tolkaKombination(namn) {
+    const bitar = String(namn || "").split("_");
+    if (bitar.length !== 3) return null;
+    const [drive, approach, baseline] = bitar;
+    const delar = drive.split("-");
+    const bas = delar[0];
+    if (HCP_MID[bas] == null) return null;
+    let driver = null, sida = null;
+    for (const d of delar.slice(1)) {
+      if (d === "mh") sida = +1;
+      else if (d === "mv") sida = -1;
+      else if (d[0] === "d") driver = d.slice(1);
+    }
+    return { namn, drive, approach, baseline, bas, driver, sida };
+  }
+
+  /* Hur långt ifrån varandra två profiler ligger. Handicap dominerar med
+     avsikt — det är den storhet ytan är byggd kring (spridningen per avstånd);
+     driverlängden skalas till samma storleksordning (15 m ≈ ett slag i den här
+     jämförelsen) och missens sida är ett steg. En annan BASLINJE är inte ett
+     avstånd utan ett annat mått, och diskvalificerar. */
+  function kombAvstand(a, b) {
+    if (!a || !b || a.baseline !== b.baseline) return Infinity;
+    let d = Math.abs(HCP_MID[a.bas] - HCP_MID[b.bas]);
+    const da = DRIVER_MID[a.driver], db = DRIVER_MID[b.driver];
+    // Utan driverhink gäller basprofilens längd, och den går inte att jämföra i
+    // meter. Skillnaden kostar då en fast liten avgift i stället för ett
+    // påhittat tal — samma princip som att `spridning` svarar null hellre än
+    // gissar.
+    d += (da != null && db != null) ? Math.abs(da - db) / 15
+                                    : (a.driver === b.driver ? 0 : 1.5);
+    if (a.sida !== b.sida) d += 2;
+    return d;
+  }
+
+  /* Tillgängliga kombinationsnamn, ordnade efter hur nära de ligger den
+     önskade. Det önskade namnet självt tas bort — anroparen har redan provat
+     det. Lika avstånd bryts på namnet, så samma app alltid väljer samma yta
+     (en plan som byter profil mellan två sidladdningar vore omöjlig att lita
+     på). */
+  function narmasteKombinationer(onskat, tillgangliga) {
+    const mal = tolkaKombination(onskat);
+    if (!mal) return [];
+    return (tillgangliga || [])
+      .filter(n => n && n !== onskat)
+      .map(n => ({ n, d: kombAvstand(mal, tolkaKombination(n)) }))
+      .filter(x => Number.isFinite(x.d))
+      .sort((a, b) => (a.d - b.d) || (a.n < b.n ? -1 : 1))
+      .map(x => x.n);
+  }
+
+  /* Kombinationen i klartext, för förutsättningsraden. "hcp8-d240t270-mv" är
+     ett filnamn; spelaren ska läsa "hcp 8 · 240–270 m · miss vänster". */
+  function kombinationsetikett(namn) {
+    const k = tolkaKombination(namn);
+    if (!k) return String(namn || "");
+    const hcpId = Object.keys(HCP_BAS).find(id => HCP_BAS[id] === k.bas);
+    const hcpH = hcpId && hink("hcp", hcpId);
+    const delar = [hcpId === "vet-inte" ? "hcp okänt"
+                   : hcpH ? `hcp ${hcpH.label.replace("Scratch / ", "")}` : k.bas];
+    const drvId = Object.keys(DRIVER_KOD).find(id => DRIVER_KOD[id] === k.driver);
+    const drv = drvId && hink("driver", drvId);
+    if (drv) delar.push(drv.label.toLowerCase());
+    if (k.sida) delar.push(k.sida > 0 ? "miss höger" : "miss vänster");
+    return delar.join(" · ");
+  }
+
+  /* Har spelaren svarat på det PLANEN frågar efter?
+   *
+   * `harSvar` duger inte till den frågan och det gav en riktig återvändsgränd:
+   * den är sann så fort ett NAMN finns, och namnet sätts när kontot skapas. En
+   * spelare som bara hade sitt namn ifyllt fick därför "Ingen plan är byggd
+   * för din spelprofil" — ett meddelande utan väg framåt — i stället för
+   * "Planen behöver din spelprofil", som pekar på frågan som faktiskt saknar
+   * svar. Ytan namnges av handicap, driverlängd och miss; det är de som räknas
+   * här. "Vet inte" ÄR ett svar (§GP1) och räknas som ett. */
+  function harPlanSvar(p) {
+    const o = normalisera(p);
+    return !!(o.hcpBucket || o.hcpExact != null || o.driver || o.miss);
+  }
+
   /* ---- Spridningen i telefonen (GP1 del 3) -------------------------------
      Tabellen kommer FÄRDIGRÄKNAD ur Python (`mobile/data/dispersion.json`, byggd
      av tools/publish_mobile_dispersion.py). Modulen räknar alltså inte fram
@@ -459,7 +564,9 @@ const Spelprofil = (() => {
 
   return { V, HCP, DRIVER, JARN7, MISS, SVAGHET, STIL, TEE,
            tom, normalisera, hink, hcpTal, hcpForBerakning, bucketForHcp,
-           franLegacy, harSvar, kombination, HCP_BAS, DRIVER_KOD, MISS_SIDA,
+           franLegacy, harSvar, harPlanSvar, kombination,
+           namnFor, tolkaKombination, kombAvstand, narmasteKombinationer,
+           kombinationsetikett, HCP_BAS, DRIVER_KOD, MISS_SIDA,
            sattSpridning, spridning, bucketFor,
            klubbtrappa, valjKlubba, applicera, valListor, ankare, slagFor };
 })();

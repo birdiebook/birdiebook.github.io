@@ -28,9 +28,14 @@ const Forslag = (() => {
   /* Ytans plats. EN källa: service-workern cachar exakt det här mönstret
      (`sw.js` fick sin rad i SP1), och en URL som byggs på två ställen är en
      fil som ligger i cachen under ett namn ingen frågar efter. */
-  function url(slug, komb) {
-    return `data/strategi/${slug}/${komb.drive}_${komb.approach}_${komb.baseline}.json`;
-  }
+  const namnFor = (komb) => `${komb.drive}_${komb.approach}_${komb.baseline}`;
+  function url(slug, komb) { return urlNamn(slug, namnFor(komb)); }
+  function urlNamn(slug, namn) { return `data/strategi/${slug}/${namn}.json`; }
+  /* Vilka kombinationer banan FAKTISKT bär. Skrivs av
+     `tools/publish_mobile_strategi.py` bredvid ytorna, så listan aldrig kan
+     säga något annat än katalogen. Utan den vore alternativet att gissa
+     filnamn och räkna 404:or — vilket är dyrt på banan och omöjligt offline. */
+  function urlIndex(slug) { return `data/strategi/${slug}/index.json`; }
 
   /* ---- Vad som får skrivas ut (§5.3) ------------------------------------
      Reglerna bor på MODULNIVÅ och inte inuti `skapa`, för de gäller varje text
@@ -134,6 +139,8 @@ const Forslag = (() => {
     const o = opt || {};
     const streck = o.streck
       || (typeof Kompass !== "undefined" ? Kompass.streck : (d => Math.round(d) + "°"));
+    const profiletikett = o.profiletikett
+      || (typeof Spelprofil !== "undefined" ? Spelprofil.kombinationsetikett : (n => n));
     const v = (f && f.forutsattningar) || {};
     const delar = [`tee ${v.tee || "bakre"}`];
     delar.push(v.vind ? `vind ${Math.round(v.vind.ms)} m/s ${streck(v.vind.dir)}`
@@ -142,6 +149,13 @@ const Forslag = (() => {
     // Saknas höjdprofilen SÄGS det — ett förslag räknat platt på ett kuperat hål
     // ser precis lika säkert ut som ett räknat med backen.
     if (!v.hojd) delar.push("utan höjd");
+    /* Är ytan någon ANNANS profil står det FÖRST, inte sist. Allt annat i
+       raden justerar ett svar; det här säger vem svaret handlar om, och en
+       spelare som inte ser det läser en annan spelares plan som sin egen. */
+    if (v.profil && v.profil.egen === false) {
+      return `Räknat för EN ANNAN PROFIL (${profiletikett(v.profil.kombination)}) — `
+        + "din egen är inte byggd för den här banan · " + delar.join(" · ");
+    }
     return "Räknat för " + delar.join(" · ");
   }
 
@@ -175,7 +189,10 @@ const Forslag = (() => {
     const S = o.strategi || (typeof Strategi !== "undefined" ? Strategi : null);
     if (!S) throw new Error("Forslag kräver Strategi");
     let yta = null;                       // laddad + validerad värdeyta
-    let slugNu = null;
+    let slugNu = null;                    // bana som ytan hör till
+    let namnNu = null;                    // kombination ytan FAKTISKT är byggd för
+    let bettNu = null;                    // vad anroparen senast bad om (cache-nyckel)
+    let kompromiss = false;               // ytan är någon annans profil
     const raster = new Map();             // "loop|hål" → Int8Array (lie-koder)
     const wCache = new Map();             // "loop|hål|pin" → Float64Array
 
@@ -202,28 +219,77 @@ const Forslag = (() => {
        för att kunna spela hålet. Att svälja felet tyst vore däremot fel: den
        som frågar får `null` OCH ett skäl i `senasteFel`. */
     let senasteFel = null;
+
+    /* Banans skeppade kombinationer. Saknas indexet lever appen vidare — den
+       får bara ingen kompromiss att falla tillbaka på, vilket är exakt läget
+       före den här funktionen fanns. */
+    async function lasIndex(slug, hamta) {
+      try {
+        const j = await hamta(urlIndex(slug));
+        return (j && Array.isArray(j.kombinationer)) ? j.kombinationer : [];
+      } catch (e) { return []; }
+    }
+
+    /* KOMPROMISSEN, och varför den finns.
+     *
+     * En bana har 126 möjliga profilkombinationer och appen skeppar i dag EN
+     * (§8.3). Regeln före detta var att hellre tiga än räkna mot någon annans
+     * spridning — principiellt rätt, men i praktiken betydde den att planen
+     * var osynlig för alla utom den spelare ytan byggdes för; den vanligaste
+     * upplevelsen av funktionen var meddelandet "Ingen plan är byggd för din
+     * spelprofil". Grundarens beslut 2026-08-04: räkna mot NÄRMASTE skeppade
+     * profil, och säg i förutsättningsraden att det inte är spelarens egen.
+     * Invändningen är besvarad, inte bortresonerad — felet är fortfarande
+     * där, skillnaden är att det står utskrivet i stället för att vara osynligt.
+     *
+     * Spelarens EGEN yta provas alltid först. Vad som är "nära" avgörs inte
+     * här utan av `valj` (i appen `Spelprofil.narmasteKombinationer`) — det är
+     * profilens hinkar som vet vilka profiler som ligger nära varandra.
+     */
     async function ladda(arg) {
       const a = arg || {};
-      const u = url(a.slug, a.kombination);
-      if (yta && slugNu === u) return yta;
+      const onskat = namnFor(a.kombination);
+      const bett = a.slug + "/" + onskat;
+      if (yta && bettNu === bett) return yta;
       const hamta = a.hamta || (typeof fetch === "function"
         ? (adress => fetch(adress).then(r => (r.ok ? r.json() : null))) : null);
       if (!hamta) { senasteFel = "ingen hämtare"; return null; }
-      let json = null;
-      try { json = await hamta(u); } catch (e) { senasteFel = e.message; return null; }
-      if (!json) { senasteFel = "ytan saknas för " + u; return null; }
-      try { yta = S.laddaYta(json, a.planVersion); } catch (e) {
-        // En yta räknad med en annan modell är inte lite fel — den är ett
-        // annat svar. Hellre inget förslag än ett från fel modell.
-        yta = null; senasteFel = e.message; return null;
+
+      /* Ett försök: hämta, validera, och behåll bara om båda gick vägen. */
+      async function prova(n) {
+        const u = urlNamn(a.slug, n);
+        let json = null;
+        try { json = await hamta(u); } catch (e) { senasteFel = e.message; return false; }
+        if (!json) { senasteFel = "ytan saknas för " + u; return false; }
+        try { yta = S.laddaYta(json, a.planVersion); } catch (e) {
+          // En yta räknad med en annan modell är inte lite fel — den är ett
+          // annat svar. Hellre inget förslag än ett från fel modell.
+          yta = null; senasteFel = e.message; return false;
+        }
+        slugNu = a.slug; namnNu = n; bettNu = bett; kompromiss = (n !== onskat);
+        senasteFel = null;
+        raster.clear(); wCache.clear();
+        return true;
       }
-      slugNu = u; senasteFel = null;
-      raster.clear(); wCache.clear();
-      return yta;
+
+      senasteFel = null;
+      // Spelarens EGEN yta först, och indexet läses inte alls om den finns:
+      // det vanliga fallet ska inte betala för undantaget med en extra
+      // hämtning — på banan är varje uppslag utan nät en väntan på en timeout.
+      if (await prova(onskat)) return yta;
+      if (typeof a.valj === "function") {
+        for (const n of a.valj(onskat, await lasIndex(a.slug, hamta))) {
+          if (n !== onskat && await prova(n)) return yta;
+        }
+      }
+      namnNu = null; bettNu = null; kompromiss = false;
+      return null;
     }
 
     const laddad = () => !!yta;
     const felet = () => senasteFel;
+    /** Vilken kombination ytan är byggd för, och om det är spelarens egen. */
+    const profilen = () => (yta ? { kombination: namnNu, egen: !kompromiss } : null);
     const halPost = (loop, nr) => (yta ? yta.hamta(loop, nr) : null);
 
     /* ---- Förslaget för ETT hål ----------------------------------------- */
@@ -270,6 +336,10 @@ const Forslag = (() => {
         vind: d.vind && d.vind.ms ? { ms: d.vind.ms, dir: d.vind.dir } : null,
         pin: pin ? "flyttad" : "bandatans",
         hojd: !!(d.dh || d.dhGreen),
+        // Vems spridning svaret bygger på. Står i svaret och inte bara i vyn:
+        // ett svar ska gå att spara, jämföra och logga (SP7), och "räknat för
+        // vem" är den mest avgörande förutsättningen av dem alla.
+        profil: profilen(),
       };
       ut.ms = ((typeof performance !== "undefined") ? performance.now() : 0) - t0;
       return ut;
@@ -340,7 +410,7 @@ const Forslag = (() => {
     }
 
     return {
-      V: V_MODUL, ladda, laddad, felet, ytan: () => yta, halPost,
+      V: V_MODUL, ladda, laddad, felet, profilen, ytan: () => yta, halPost,
       forHal, detaljer, url,
       text: f => (f ? bygg(f.bitar) : ""),
       slagText, andelText,
@@ -350,7 +420,7 @@ const Forslag = (() => {
 
   /* Ordreglerna är MODULENS, inte instansens: dokumentet (`planrunda.js`) bygger
      sina rader ur samma bitar och faller därmed under samma grind. */
-  return { skapa, url, V: V_MODUL,
+  return { skapa, url, urlNamn, urlIndex, namnFor, V: V_MODUL,
            ord, tal, namn, bygg, andel, slagText, andelText,
            siktbit, siktePinBitar, teeText, inspelText, detaljer, villkorstext };
 })();

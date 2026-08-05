@@ -32,7 +32,12 @@ const MapCore = (() => {
   // createPane("imagery") hamnar i den oroterade mapPane och blir felplacerad).
   // detectRetina + tileSize:128/zoomOffset:1 = en nivå djupare redan som baslinje
   // → skarpare bild (utnyttjar ortofotots detalj), på bekostnad av fler rutor.
-  function addOrthophoto(map) {
+  // opt.credit === false: anroparen bär attributionen i eget chrome (planvy.html
+  // har #kalla, som redan står i båda kameravinklarna). CC BY 4.0 kräver att den
+  // SYNS — inte att den ritas härifrån — och två krediter ovanpå varandra är
+  // sämre än en.
+  function addOrthophoto(map, opt) {
+    const visaKredit = !(opt && opt.credit === false);
     const TILE_OPTS = { updateWhenIdle: false, keepBuffer: 6, detectRetina: true,
       tileSize: 128, zoomOffset: 1 };
     // Cappa native-zoom så URL-zoomen aldrig överstiger z19 (som finns) → annars 404.
@@ -55,6 +60,7 @@ const MapCore = (() => {
         // Golv på utzoomning = ortofotots lägsta nivå (ingen tom/blank vy).
         map.setMinZoom(t.min_zoom);
         // CC BY 4.0 kräver synlig attribution (attributionControl är av).
+        if (!visaKredit) return;
         const cred = document.createElement("div");
         cred.textContent = "Ortofoto © Lantmäteriet (CC BY 4.0)";
         cred.style.cssText = "position:absolute;right:4px;bottom:2px;z-index:800;"

@@ -172,8 +172,15 @@ const Planrunda = (() => {
     return {
       spec: a.spec || "1-18",
       course: a.course || null,
+      // SPELARENS egen kombination — det dokumentet ska jämföras mot när appen
+      // frågar om planen fortfarande gäller hen.
       drive: komb.drive || null, approach: komb.approach || null,
       baseline: komb.baseline || null,
+      // Och ytan svaret FAKTISKT kom ur. Är den en annan än ovan var det en
+      // kompromiss (§SP3b) — ett dokument ska gå att läsa långt efteråt utan
+      // att man minns vad appen hade i lager den dagen.
+      profil_raknad: komb.raknad || null,
+      profil_egen: komb.egen !== false,
       stil: a.stil || null,
       plan_version: a.planVersion || null,
       // SP5: planen räknas i telefonen. Fältet finns för att en läsare (och ett
