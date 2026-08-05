@@ -1,0 +1,10 @@
+{
+  // Cloudflare Workers/Pages-konfig för birdiebook.github.io-repot: rena
+  // statiska filer, ingen Worker-kod. "assets.directory": "." = repo-roten,
+  // som är exakt dit publish.ps1 speglar mobile/ (MOLN_PLAN §6 V0).
+  "name": "birdiebook",
+  "compatibility_date": "2026-08-05",
+  "assets": {
+    "directory": "."
+  }
+}
