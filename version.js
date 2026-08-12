@@ -16,6 +16,6 @@
  *
  * Laddas bÃ¥de i sidor (<script>) och i service workern (importScripts), dÃ¤rfÃ¶r
  * `self` och inte `window` â€” samma mÃ¶nster som assetbas.js. */
-const SG_APP_VERSION = "2026-08-12-u28-blue1";
+const SG_APP_VERSION = "2026-08-12-u28-cache";
 if (typeof self !== "undefined") self.SG_APP_VERSION = SG_APP_VERSION;
 if (typeof module !== "undefined" && module.exports) module.exports = SG_APP_VERSION;

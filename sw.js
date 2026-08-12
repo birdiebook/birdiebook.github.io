@@ -48,7 +48,21 @@ const VERSION = SG_APP_VERSION;
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
 const TILES_CACHE  = "sg-tiles";
-const HOLES3D_CACHE = "sg-holes3d";
+/* 3D-hålens cache är PERMANENT (cache-first, överlever en VERSION-bump) därför
+ * att en glb är ~4 MB och aldrig ändras — så länge exporten inte ändras.
+ *
+ * U28 bröt det antagandet: hålen byggs om med ny korridorbredd och ny kjol under
+ * SAMMA filnamn. En telefon som redan cachat blue_1.glb hade då fortsatt visa
+ * den gamla geometrin för alltid, hur många deployer som helst — konstaterat
+ * 2026-08-12 direkt efter att den nya filen låg på R2.
+ *
+ * Därför bär cachenamnet en EXPORTVERSION. Den bumpas när holes3d byggs om, och
+ * BARA då: den hör till assets, inte till appen, så den får inte hänga på
+ * `VERSION` (som bumpas vid varje deploy och då hade kastat ~300 MB glb varje
+ * gång). `activate` städar gamla `sg-holes3d*`-cachar, inklusive den namnlösa
+ * ursprungliga. */
+const HOLES3D_EXPORT = "2026-08-12-u28";
+const HOLES3D_CACHE = "sg-holes3d-" + HOLES3D_EXPORT;
 
 // App-shell: allt som behövs för att sidorna ska rendera offline.
 const SHELL_ASSETS = [
@@ -167,7 +181,10 @@ self.addEventListener("activate", (event) => {
     const keys = await caches.keys();
     await Promise.all(keys.map((k) => {
       if (k.startsWith("sg-shell-v") && k !== SHELL_CACHE) return caches.delete(k);
-      return undefined; // sg-data, sg-tiles och sg-holes3d lämnas orörda
+      // U28: en gammal holes3d-cache bär gammal GEOMETRI under samma filnamn.
+      // Den måste bort, annars ser en befintlig installation aldrig ombygget.
+      if (k.startsWith("sg-holes3d") && k !== HOLES3D_CACHE) return caches.delete(k);
+      return undefined; // sg-data och sg-tiles lämnas orörda
     }));
     await self.clients.claim();
   })());
