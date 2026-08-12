@@ -77,6 +77,12 @@
      "across_bias": 0.0,
      "across_sd": 17.6
     }
+   },
+   "miss": {
+    "p": 0.07,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcp18": {
@@ -135,6 +141,12 @@
      "across_bias": 0.0,
      "across_sd": 19.8
     }
+   },
+   "miss": {
+    "p": 0.085,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcp2": {
@@ -193,6 +205,12 @@
      "across_bias": 0.0,
      "across_sd": 11.2
     }
+   },
+   "miss": {
+    "p": 0.03,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcp23": {
@@ -251,6 +269,12 @@
      "across_bias": 0.0,
      "across_sd": 21.6
     }
+   },
+   "miss": {
+    "p": 0.1,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcp30": {
@@ -309,6 +333,12 @@
      "across_bias": 0.0,
      "across_sd": 23.8
     }
+   },
+   "miss": {
+    "p": 0.115,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcp8": {
@@ -367,6 +397,12 @@
      "across_bias": 0.0,
      "across_sd": 14.9
     }
+   },
+   "miss": {
+    "p": 0.05,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   },
   "hcpokand": {
@@ -425,6 +461,12 @@
      "across_bias": 0.0,
      "across_sd": 20.1
     }
+   },
+   "miss": {
+    "p": 0.085,
+    "along_frac": 0.25,
+    "along_mult": 2.0,
+    "across_mult": 2.5
    }
   }
  },

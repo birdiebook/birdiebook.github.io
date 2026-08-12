@@ -22,11 +22,13 @@
  * fristående moduler utan egna beroenden.  */
 const Store = (() => {
   // DB_VER 2 (GP1): lagret `profile` tillkom. DB_VER 3 (GP3): `plans`.
+  // DB_VER 4 (A5): `trendSummaries` tillkom — cachen trendvyn läser i stället
+  // för att öppna varje runddokument.
   // onupgradeneeded skapar bara det som saknas, så en telefon med en äldre
   // databas får de nya lagren utan att rundorna rörs.
-  const DB_NAME = "golfsg", DB_VER = 3;
+  const DB_NAME = "golfsg", DB_VER = 4;
   const ROUNDS = "rounds", DOCS = "roundDocs", MATCHES = "matches";
-  const PROFILE = "profile", PLANS = "plans";
+  const PROFILE = "profile", PLANS = "plans", TREND = "trendSummaries";
   // Profilen är EN post. Id:t är konstant med avsikt: GP1 beslutade att
   // profilen ska sparas som ett enda serialiserbart objekt, så AS6:s
   // enhetssynk blir en kopiering och inte en omskrivning.
@@ -67,7 +69,7 @@ const Store = (() => {
      förut — inte sämre. */
   function memoryBackend() {
     const m = { [ROUNDS]: new Map(), [DOCS]: new Map(), [MATCHES]: new Map(),
-                [PROFILE]: new Map(), [PLANS]: new Map() };
+                [PROFILE]: new Map(), [PLANS]: new Map(), [TREND]: new Map() };
     return {
       kind: "memory",
       get: (s, k) => Promise.resolve(clone(m[s].get(k)) || null),
@@ -110,6 +112,9 @@ const Store = (() => {
         if (!db.objectStoreNames.contains(MATCHES)) db.createObjectStore(MATCHES, { keyPath: "id" });
         if (!db.objectStoreNames.contains(PROFILE)) db.createObjectStore(PROFILE, { keyPath: "id" });
         if (!db.objectStoreNames.contains(PLANS)) db.createObjectStore(PLANS, { keyPath: "id" });
+        // A5: nyckeln är rundans id. `v` i varje rad (inte lagrets version) styr
+        // om en rad är giltig — se trendSummary()/setTrendSummary() nedan.
+        if (!db.objectStoreNames.contains(TREND)) db.createObjectStore(TREND, { keyPath: "id" });
       };
       req.onsuccess = () => res(idbBackend(req.result));
       req.onerror = () => rej(req.error);
@@ -216,10 +221,11 @@ const Store = (() => {
       startedAt: d.startedAt, endedAt: d.endedAt, status: d.status,
       loggingLevel: d.loggingLevel, holesPlayed: played, holesLevel3: sg3,
       strokes, matchId: d.matchId || null, sync: d.sync || null,
+      moln: d.moln || null,
     };
   }
 
-  /* Dokument → wire-format (det som POST:as till /api/rounds/upload).
+  /* Dokument → wire-format (`payload` i molnkuvertet, MOLN_PLAN §6 V2).
      FÅR INTE ÄNDRAS. Nyckelordningen är signifikant: JSON.stringify följer
      insättningsordning, och tests/js/test_store.mjs kräver byte-identitet med
      den exportData() som låg i index.html före §9.1. */
@@ -236,6 +242,14 @@ const Store = (() => {
         holed_out: h.putts === 0 && h.shots.length > 0,
         score_adjust: h.adj || 0,
       }));
+    // Totalpoängen molnindexet (`rounds_index.total_score`, worker.js) läser
+    // ur denna payload — summerad HÄR av samma skäl som `indexRow()` ovan
+    // (SGScore.components är EN sanning), inte i worker.js som inte har
+    // SGScore tillgängligt. Lagd SIST: nyckelordningen ovanför är låst av
+    // test_store.mjs byte-identitet, den här raden är ett tillägg, inte en
+    // ändring av den.
+    const total_score = holes.reduce((sum, h) =>
+      sum + h.shots.length + h.score_adjust + h.putts + h.penalties, 0);
     return {
       format: "golf-sg-mobil", version: 1,
       player: (d.player || "").trim(),
@@ -248,7 +262,68 @@ const Store = (() => {
       started_at: d.startedAt,
       ended_at: d.endedAt || endedAtFallback || nowIso(),
       holes,
+      total_score,
     };
+  }
+
+  /* Wire → dokument (INVERSEN av `toWire`, MOLN_PLAN.md §6 V4a). Samma form
+     som `docFromLegacyWire` nedan bygger ur den gamla `sg-rundlogg-sist`-
+     nyckeln — wire-formatet är samma sedan §9.1 — men med `id` GIVET av
+     anroparen i stället för ett nytt slumpat id. Wire-kuvertet bär inget eget
+     id (bara metadata om spelet); molnets läsväg känner round_id från
+     indexraden LÅNGT innan blobben hämtas, och det är DET id:t dokumentet ska
+     få — annars vore en hydrerad runda och dess R2-nyckel två olika saker. */
+  function docFromWire(id, W) {
+    const d = newDoc({
+      player: W.player || "", tee: W.tee || "", courseName: W.course || undefined,
+      roundSeq: W.round || undefined, startedAt: W.started_at || nowIso(),
+      loggingLevel: 3,
+    });
+    d.id = id;
+    d.endedAt = W.ended_at || nowIso();
+    d.status = "finished";
+    d.holes = (W.holes || []).map((h, i) => {
+      let rel = null;
+      try { rel = SGRound.globalToRel(h.hole); } catch (e) {}
+      const rec = newHole(rel || i + 1, 3);
+      rec.global = h.hole;
+      rec.shots = h.shots || [];
+      rec.green = h.green || null;
+      rec.pin = h.pin || null;
+      rec.putts = h.putts || 0;
+      rec.pen = h.penalties || 0;
+      rec.adj = h.score_adjust || 0;
+      rec.holedOut = !!h.holed_out;
+      rec.level = hasPosition(rec) ? 3 : 2;
+      return rec;
+    });
+    /* Nivån HÄRLEDS ur hålen, sätts inte till 3 på förhand. Wire-formatet bär
+       ingen `loggingLevel` (§9.1), och en runda loggad på score-nivå har inga
+       positioner — antog vi 3 skulle den hydrerade rundan visa badgen "Full"
+       och analysvyerna räkna täckning på ett underlag som inte finns. Det är
+       precis den sortens siffra §9.2.3 finns för att förhindra: en runda ska
+       säga vad den faktiskt vet. */
+    d.loggingLevel = d.holes.length ? Math.max(...d.holes.map(h => h.level || 2)) : 1;
+    return normalize(d);
+  }
+
+  /* Skriver en hämtad runda från molnet, om den inte redan finns lokalt.
+     LOCAL-FIRST (§1): en runda som redan finns skrivs ALDRIG över — den
+     lokala versionen är förstahandskällan, molnet är bara kopian. Ändras
+     rundan lokalt efter att den hydrerats vinner den lokala ändringen; nästa
+     `Moln.skicka` laddar upp den igen med samma round_id (§6 V4a "vad som
+     INTE byggs"). Returnerar vad som hände så `Moln.hamta()` kan räkna och
+     veta om den ska sätta `moln.sant` på det nyskrivna dokumentet. */
+  async function importera(id, wire) {
+    if (!id || !wire || typeof wire !== "object" || Array.isArray(wire)) {
+      return { skrevs: false, skal: "ogiltig indata" };
+    }
+    await ready();
+    const befintlig = await get(id);
+    if (befintlig) return { skrevs: false, skal: "finns redan lokalt", id };
+    const d = docFromWire(id, wire);
+    await write(d);
+    return { skrevs: true, id };
   }
 
   /* ---------- migrering (en gång, i ready()) ---------- */
@@ -486,6 +561,22 @@ const Store = (() => {
     return true;
   }
 
+  /* Mutera ETT dokument via id, oavsett om det råkar vara den aktiva rundan
+     eller en tidigare avslutad. `mutate()` ovan kan bara nå `doc` — men en
+     avslutad runda slutar vara `doc` i samma ögonblick `finishRound()`
+     returnerar (§ finishRound), och molnsvepet (MOLN_PLAN §6 V2b) behöver
+     ändå kunna sätta `moln`-fältet på gamla, redan avslutade rundor. Ingen ny
+     lagringsplats: samma DOCS/ROUNDS-lager som `write()` alltid skrivit till. */
+  async function mutateDoc(id, fn) {
+    if (doc && doc.id === id) return mutate(fn);
+    await ready();
+    const d = await get(id);
+    if (!d) return false;
+    if (fn(d) === false) return false;
+    await write(d);
+    return true;
+  }
+
   // Anropare som muterar dokumentet direkt (index.html håller det i sin egen
   // S-variabel) säger till om det med touch() i stället för att gå via mutate.
   const touch = () => { if (doc) flush(); };
@@ -563,7 +654,24 @@ const Store = (() => {
   const get = id => be.get(DOCS, id).then(d => (d ? normalize(d) : null));
   function remove(id) {
     if (doc && doc.id === id) doc = null;
-    return Promise.all([be.del(DOCS, id), be.del(ROUNDS, id)]).then(() => true);
+    // Trendcachen (A5) är en biprodukt av dokumentet — en raderad runda ska
+    // inte lämna ett spöke kvar där (den skulle aldrig läsas igen, men det är
+    // skräp och kan förvirra vid felsökning).
+    return Promise.all([be.del(DOCS, id), be.del(ROUNDS, id), be.del(TREND, id)]).then(() => true);
+  }
+
+  /* ---------- trendcache (A5, ANALYS_MOBIL_V1_BRIEF §10) ----------
+     Rundlistan läser BARA indexrader (§9.1.5) — den räcker inte till trenden,
+     som behöver GIR/fairway/puttar/SG putt, mått som kräver att hela dokumentet
+     öppnas och räknas. Lösningen är en härledd rundsammanfattning som cachas
+     HÄR första gången rundan öppnas i trendvyn, och läses därefter i stället för
+     att öppna dokumentet igen. Nyckeln bär `v` (AnalysTrend.CACHE_VERSION,
+     mobile/analys-trend.js) — ändras måtten byts `v` och den gamla raden
+     ignoreras (inte tas bort; den skrivs bara över nästa gång rundan öppnas). */
+  const trendSummary = id => ready().then(() => be.get(TREND, id));
+  function setTrendSummary(row) {
+    if (!row || !row.id) return Promise.resolve(false);
+    return ready().then(() => be.put(TREND, clone(row))).then(() => true);
   }
 
   /* ---------- match ----------
@@ -825,9 +933,11 @@ const Store = (() => {
 
   return {
     ready, active, activeId, startRound, ensureRound, finishRound, newRound,
-    mutate, touch, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
+    mutate, mutateDoc, touch, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
     addShot, addEvent,
-    list, get, remove, export: toWire,
+    list, get, remove, export: toWire, import: importera,
+    // trendcache (A5)
+    trendSummary, setTrendSummary,
     profile, setProfile, hcpForBerakning,
     // rundplaner (GP3)
     plans, plan, savePlan, removePlan,

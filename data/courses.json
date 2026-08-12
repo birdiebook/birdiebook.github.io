@@ -577,5 +577,132 @@
    "Blå",
    "Röd"
   ]
+ },
+ {
+  "slug": "tegelberga",
+  "name": "Tegelberga Golfklubb",
+  "mobile_json": "tegelberga.json",
+  "loops": [
+   {
+    "name": "Gamla banan",
+    "short": "Gamla",
+    "holes": 18
+   },
+   {
+    "name": "Nya banan",
+    "short": "Nya",
+    "holes": 9
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18 (Gamla)",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   },
+   {
+    "value": "19-27",
+    "label": "1–9 (Nya)",
+    "seq": [
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27
+    ]
+   }
+  ],
+  "tees": []
+ },
+ {
+  "slug": "landskrona",
+  "name": "Landskrona Golfklubb",
+  "mobile_json": "landskrona.json",
+  "loops": [
+   {
+    "name": "Erikstorp",
+    "short": "Erikstorp",
+    "holes": 18
+   },
+   {
+    "name": "Hildesborg",
+    "short": "Hildesborg",
+    "holes": 18
+   }
+  ],
+  "rounds": [
+   {
+    "value": "1-18",
+    "label": "1–18 (Erikstorp)",
+    "seq": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   },
+   {
+    "value": "19-36",
+    "label": "1–18 (Hildesborg)",
+    "seq": [
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     32,
+     33,
+     34,
+     35,
+     36
+    ]
+   }
+  ],
+  "tees": []
  }
 ]

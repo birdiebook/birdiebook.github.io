@@ -36,8 +36,101 @@ const Geo = (() => {
      Capacitor-bryggan inte alltid finnas när skriptet körs. `_useSource` finns
      för testerna (node har ingen navigator). */
   let injicerad = null;
+
+  /* ---------- native-källan (N3) ----------
+     Adaptern presenterar `navigator.geolocation`s gränssnitt
+     (`watchPosition`/`clearWatch`/`getCurrentPosition`) med
+     BackgroundGeolocation under. Skälet att adaptera i stället för att greina
+     i `start()`/`watch()`/`current()`: strypningen, lyssnarhanteringen och
+     felnormaliseringen ska finnas i EN uppsättning kod. Tre grenar hade blivit
+     tre beteenden som glider isär, och den som glider tyst är den som bara kör
+     på riktig hårdvara — alltså den ingen ser förrän på banan.
+
+     `distanceFilter: 0` är inte en slump utan HELA poängen (N3): ett
+     avståndsfilter levererar inga uppdateringar när spelaren står still, vilket
+     är exakt ögonblicket vid bollen. Takten sänks i stället med tid, i `takt()`
+     ovan. Rör aldrig den nollan.
+
+     `backgroundMessage` är det som faktiskt slår på bakgrundsläget i pluginen —
+     utan den blir det en vanlig förgrundswatch och hela etappen är verkningslös
+     utan att något går sönder. */
+  const BG_OPT = {
+    backgroundMessage: "Birdiebook loggar din position under rundan.",
+    backgroundTitle: "Runda pågår",
+    requestPermissions: true,
+    stale: false,
+    distanceFilter: 0,
+  };
+
+  function bgPlugin() {
+    const w = typeof window !== "undefined" ? window : null;
+    const C = w && w.Capacitor;
+    if (!C || typeof C.isNativePlatform !== "function" || !C.isNativePlatform()) return null;
+    const P = (C.Plugins && C.Plugins.BackgroundGeolocation) || w.BackgroundGeolocation;
+    return P && typeof P.addWatcher === "function" ? P : null;
+  }
+
+  /* Pluginens position → samma form som `navigator.geolocation` ger, så
+     `fixAv()` ovan inte behöver veta var fixen kom ifrån. */
+  const somPosition = l => ({ coords: {
+    latitude: l.latitude, longitude: l.longitude, accuracy: l.accuracy } });
+
+  function nativeAdapter(P) {
+    const vakter = new Map();      // vårt id → pluginens id (en Promise)
+    let nasta = 1;
+    return {
+      _native: true,
+      watchPosition(ok, fel, _opt) {
+        const id = nasta++;
+        vakter.set(id, P.addWatcher(BG_OPT, (plats, err) => {
+          if (err) {
+            /* Pluginen säger NOT_AUTHORIZED där webben säger code 1. Vi
+               översätter till webbens form, för `felAv()` är det enda stället
+               som får tolka ett fel. */
+            if (fel) fel({ code: err.code === "NOT_AUTHORIZED" ? 1 : 2 });
+            return;
+          }
+          if (plats && ok) ok(somPosition(plats));
+        }));
+        return id;
+      },
+      clearWatch(id) {
+        const p = vakter.get(id);
+        if (!p) return;
+        vakter.delete(id);
+        Promise.resolve(p)
+          .then(pid => P.removeWatcher({ id: pid }))
+          .catch(() => {});
+      },
+      /* En engångsfix är en watch som stängs vid första svaret. Pluginen har
+         ingen egen getCurrentPosition, och att falla tillbaka på
+         `navigator.geolocation` här hade gett en fix ur en ANNAN mottagarsession
+         än strömmen — med annan noggrannhet och annan ålder. */
+      getCurrentPosition(ok, fel, _opt) {
+        let klar = false;
+        const id = this.watchPosition(
+          p => { if (klar) return; klar = true; this.clearWatch(id); if (ok) ok(p); },
+          e => { if (klar) return; klar = true; this.clearWatch(id); if (fel) fel(e); });
+      },
+    };
+  }
+
+  let nativeKalla = null;
   const source = () => {
     if (injicerad) return injicerad;
+    if (nativeKalla) return nativeKalla;
+    const P = bgPlugin();
+    if (P) {
+      nativeKalla = nativeAdapter(P);
+      /* FLAGGAN VÄNDS HÄR, inte av ett anrop skalet måste komma ihåg. Ett
+         glömt `_settBackgroundCapable(true)` hade gett en app som ser hel ut
+         men kör webbens beteende: ingen strypning och en Wake Lock som håller
+         skärmen vaken hela rundan — den dyraste posten i batterikalkylen (§N4).
+         Att härleda förmågan ur att pluginen FAKTISKT svarar är det enda som
+         inte kan glömmas bort. */
+      bakgrundsformaga = true;
+      return nativeKalla;
+    }
     const n = typeof navigator !== "undefined" ? navigator : null;
     return n && n.geolocation ? n.geolocation : null;
   };
@@ -199,7 +292,12 @@ const Geo = (() => {
            _useSource(g) {
              injicerad = g; huvudId = null; lyssnare.clear();
              skarmSynlig = true; sistUtskickad = 0;
+             nativeKalla = null;   // annars läcker en tidigare adapter in i nästa prov
            },
+           /* Bara för testerna: tvinga om-uppslaget av native-källan så ett prov
+              kan sätta upp en attrapp-plugin på `window.Capacitor` och se att
+              adaptern faktiskt väljs. */
+           _glomNativeKalla() { nativeKalla = null; },
            /* Vänder native-sömmen. N3:s skal sätter den till true när pluginen
               är på plats; tills dess är det testerna som använder den för att
               kunna mäta strypningen innan skalet finns. */

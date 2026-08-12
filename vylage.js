@@ -18,7 +18,11 @@
  *                 en plan sparad före GP2 saknar bara nyckeln)
  *   sg_plan_hole spelarens hål 1–18                              (hubben, rörs ej)
  * och två nya nycklar som bara hör till vyn:
- *   sg_plan_vy   { vinkel, slope, exag, lage, forslag }
+ *   sg_plan_vy   { vinkel, slope, exag, lage, forslagVal, verktyg }
+ *                (U27: `forslag` → `forslagVal`. Det gamla fältet skrevs av
+ *                 varje sparning oavsett om spelaren rört knappen, så det gick
+ *                 inte att skilja "valde på" från "hade default på". Gamla
+ *                 poster läses alltså som "inget val", vilket är sanningen.)
  *   sg_plan_pose { "<globaltHål>": {target:{x,y,z}, range, heading, tilt} }
  *   sg_plan_pin  { "<globaltHål>": [lat, lon] }        (SP4: dagens pin)
  */
@@ -81,9 +85,25 @@ const Vylage = (() => {
       slope: !!vy.slope,
       exag: Number.isFinite(+vy.exag) ? klamp(+vy.exag, EXAG_MIN, EXAG_MAX) : 3,
       lage: LAGEN.includes(vy.lage) ? vy.lage : null,
-      // SP3: förslaget är PÅ tills spelaren stänger av det. Att öppna ett hål
-      // ska visa planen — en plan man måste be om är en plan man glömmer.
-      forslag: vy.forslag !== false,
+      /* U27c: förslaget är AV tills spelaren ber om det (grundarens beslut
+         2026-08-12). SP3 valde motsatsen — "en plan man måste be om är en plan
+         man glömmer" — men konsekvensen var att vyn ALLTID öppnade med en
+         intryckt knapp och en överritning på hålet, innan spelaren hunnit se
+         banan.
+
+         NYCKELN HETER `forslagVal` OCH INTE `forslag`, och det är hela skillnaden
+         mellan att beslutet syns och att det inte gör det. `sparaVy` skriver
+         HELA vy-posten varje gång vinkeln, lutningen, överdriften eller läget
+         ändras — alltså skrev varje tidigare session `forslag: true` utan att
+         spelaren valt något. Läste vi den nyckeln hade "sparat val gäller"
+         betytt att alla befintliga installationer fortsatt öppna med Plan
+         intryckt, och ändringen vore osynlig just för dem som redan använder
+         appen (uppmätt i webbläsaren 2026-08-12). Under det nya namnet finns
+         bara ett värde om spelaren FAKTISKT tryckt på knappen efter U27. */
+      forslag: vy.forslagVal === true,
+      // U27b: verktygsraden är utfälld tills spelaren fäller ihop den — den som
+      // inte vet att knapparna finns ska se dem.
+      verktyg: vy.verktyg !== false,
       legs: [],
       slagval: {},
     };
@@ -93,7 +113,7 @@ const Vylage = (() => {
 
     const sparaVy = () => skriv(lagring, VY_KEY,
       { vinkel: st.vinkel, slope: st.slope, exag: st.exag, lage: st.lage,
-        forslag: st.forslag });
+        forslagVal: st.forslag, verktyg: st.verktyg });
     const sparaPlan = () => skriv(lagring, PLAN_KEY, plan);
 
     let tyst = 0;
@@ -280,14 +300,41 @@ const Vylage = (() => {
     }
 
     // ---- kamerapose per hål ----
+    /* En sparad pose ska vara en POSE NÅGON VALT i 3D — inget annat (U25).
+     *
+     * Vinkelbytet 2D→3D sätter kameran till kartans bild (tilt 0, range på
+     * kilometern) och sänker den sedan till 3D. Byter spelaren hål under den
+     * halvsekunden lades den PLATTA posen undan som hålets vinkel, och nästa
+     * besök i 3D öppnade rakt ovanifrån och fem mil ut — uppmätt 2026-08-11:
+     * hål 2 låg i telefonen med `{range: 1863, tilt: 0}`. Det överlevde en
+     * omladdning, för det låg i localStorage.
+     *
+     * Gränserna är camctl:s (`LIMITS`) skrivna i klartext: den här modulen är
+     * medvetet importfri, så den kan inte läsa dem. Ändras de där ska de
+     * ändras här — men de har inte rört sig sedan U1, och en pose utanför dem
+     * kan inte komma från en gest ändå.
+     *
+     * Provet görs vid BÅDA ändarna: `sattPose` vägrar lägga undan en orimlig
+     * pose, och `pose` vägrar lämna ut en — annars fortsätter de som redan
+     * ligger i telefonen att hoppa. */
+    const TILT_MIN = 5 * Math.PI / 180;     // camctl LIMITS.tiltMinGesture
+    const TILT_MAX = 95 * Math.PI / 180;    // camctl LIMITS.tiltMax
+    const RANGE_MIN = 20, RANGE_MAX = 3000; // camctl LIMITS.rangeMin/rangeMax
+    function rimligPose(p) {
+      if (!p || !p.target) return false;
+      const tal = [p.target.x, p.target.y, p.target.z, p.range, p.heading, p.tilt];
+      if (!tal.every(v => Number.isFinite(+v))) return false;
+      if (+p.range < RANGE_MIN || +p.range > RANGE_MAX) return false;
+      return +p.tilt >= TILT_MIN && +p.tilt <= TILT_MAX;
+    }
     function pose(global) {
       const g = global == null ? st.global : global;
       const p = g == null ? null : poser[String(g)];
-      return p && p.target ? p : null;
+      return rimligPose(p) ? p : null;
     }
     function sattPose(p, global) {
       const g = global == null ? st.global : global;
-      if (g == null || !p || !p.target) return false;
+      if (g == null || !rimligPose(p)) return false;
       poser[String(g)] = {
         target: { x: +p.target.x, y: +p.target.y, z: +p.target.z },
         range: +p.range, heading: +p.heading, tilt: +p.tilt,
@@ -303,6 +350,18 @@ const Vylage = (() => {
       st.forslag = b;
       sparaVy();
       meddela("forslag");
+      return true;
+    }
+
+    /* U27b: är verktygsraden utfälld? Läget hör till VYN och inte till hålet —
+       den som fällt ihop raden för att se banan vill ha den ihopfälld på nästa
+       hål också. */
+    function sattVerktyg(pa) {
+      const b = !!pa;
+      if (b === st.verktyg) return false;
+      st.verktyg = b;
+      sparaVy();
+      meddela("verktyg");
       return true;
     }
 
@@ -348,12 +407,14 @@ const Vylage = (() => {
       get exag() { return st.exag; },
       get lage() { return st.lage; },
       get forslag() { return st.forslag; },
+      get verktyg() { return st.verktyg; },
       legs: () => st.legs.map(p => [p[0], p[1]]),
       antalLegs: () => st.legs.length,
       slagval, harSlagval, antalSlagval, sattSlagval,
       aterstallSlagval, aterstallAllaSlagval,
       allaSlagval: () => ({ ...st.slagval }),
       sattHal, sattVinkel, sattSlope, sattExag, sattLage, sattForslag,
+      sattVerktyg,
       effektivExag, laggPunkt, flyttaPunkt, taBortPunkt, angra,
       pose, sattPose, pin, sattPin, aterstallPin, batch,
       /* Startvärde för hålet: ?hal=<rel> vinner över det ihågkomna. */

@@ -2,3 +2,36 @@
 .git/**
 **/.git/**
 wrangler.jsonc
+
+# Workerns kod ar `main` i wrangler.jsonc, inte en statisk fil. Utan denna rad
+# gar den ocksa att GET:a som /worker.js - inte en lacka (koden bar inga
+# hemligheter, se kommentaren om vars dar) men forvirrande, och den skulle
+# raknas mot filtaket i onodan.
+worker.js
+
+# Ligger pa R2 sedan MOLN_PLAN §6 V0 (se assetbas.js) - inget Worker-projekt
+# ska packa om dem, annars sprangs Workers filtak (20 000/deploy pa gratisnivan).
+tiles/
+data/holes3d/
+
+# LAXA 2026-08-05: wrangler:s EGET arbetsmaterial hamnade i uppladdningen.
+# `npx wrangler deploy` skapar `.wrangler/` i mappen den kors i - och eftersom
+# assets-katalogen ar "." svepte nasta deploy med den. Uppmatt i utskriften:
+#   + /.wrangler/cache/wrangler-account.json
+#   + /.wrangler/tmp/deploy-K7mRb5/worker.js.map
+# Source-mappen ar Workerns kallkod i lasbar form. De blev aldrig publika den
+# gangen bara for att deployen dog pa ett annat fel innan versionen aktiverades
+# - alltsa ren tur, inte ett skydd. Katalogen finns forst efter att nagon kort
+# wrangler lokalt, sa den kan dyka upp igen nar som helst.
+.wrangler/
+*.map
+
+# Intern dokumentation och utvecklingsverktyg. Inga hemligheter, men de svarade
+# 200 pa den publika domanen och det finns ingen anledning att servera dem.
+# Kontrollerat: inget i appen hamtar dem (bara omnamnda i kommentarer).
+CLAUDE.md
+GPS_ACCURACY_PLAN.md
+serve.ps1
+.github/
+.claude/
+_arkiv/

@@ -101,7 +101,7 @@ const Planslag = (() => {
    * `deps` = { hav, bearing, relWind, windAlongShift, slopeEffect, hojd,
    *            spridning, effektiv }
    *   hojd(lat, lon) -> meter | null
-   *   spridning(dist) -> {cross, along} | null      (GP1, spelprofilens tabell)
+   *   spridning(dist) -> {cross, along, alongBias, miss} | null (GP1, spelprofilens tabell)
    *   effektiv(bas, ov) -> SlagJust.effektiv        (injiceras så modulen
    *                                                  förblir fri från beroenden)
    *   bollbana, vind3d -> modulerna själva          (formen och vindens verkan)
@@ -134,7 +134,11 @@ const Planslag = (() => {
       // STYR bara spridningen när spelaren faktiskt valt: annars hade en tom
       // plan tyst bytt ellips den dagen klubbtrappan byggdes.
       const ks = typeof d.klubbslag === "function" ? d.klubbslag(dist, val) : null;
-      const bas = (ks && val) ? { cross: ks.cross, along: ks.along }
+      // `alongBias` följer med båda vägarna: klubbvalet byter ellipsens BREDD,
+      // och skulle det samtidigt tyst nollställa dess centrum vore ett klubbval
+      // en osynlig modelländring.
+      const bas = (ks && val) ? { cross: ks.cross, along: ks.along,
+                                  alongBias: ks.alongBias, miss: ks.miss }
                      : (typeof d.spridning === "function" ? d.spridning(dist) : null);
       /* Höjdvalet är en apex-faktor och inget annat (§GP2). Den läggs som
          BASENS apex, så att U17:s manuella skruv fortfarande vinner: väljer man

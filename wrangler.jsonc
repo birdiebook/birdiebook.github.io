@@ -1,10 +1,50 @@
 {
-  // Cloudflare Workers/Pages-konfig för birdiebook.github.io-repot: rena
-  // statiska filer, ingen Worker-kod. "assets.directory": "." = repo-roten,
-  // som är exakt dit publish.ps1 speglar mobile/ (MOLN_PLAN §6 V0).
+  // Cloudflare Workers-konfig för appen. Sedan MOLN_PLAN §6 V2 bär samma
+  // projekt BÅDE de statiska filerna och `POST /rundor` — en deploy, en domän,
+  // en origin (vilket också är varför CORS normalt inte behövs alls).
   "name": "birdiebook",
   "compatibility_date": "2026-08-05",
+
+  // Rund-mottagaren. Allt utanför `run_worker_first` nedan rör aldrig koden.
+  "main": "worker.js",
+
   "assets": {
-    "directory": "."
+    "directory": ".",
+    // html_handling MEDVETET pa Cloudflares standard ("auto-trailing-slash"),
+    // inte "none": den ger "/" -> index.html gratis, vilket PWA:ns
+    // start_url ("./" i manifest.json) beror pa - "none" gav 404 pa appens
+    // egen ingang (laxa 2026-08-05, testad i produktion samma dag). Priset ar
+    // att /karta.html redirectar till /karta; mobile/nav.js:s filnamn()
+    // hanterar bada formerna sa navigationsraden inte gommer sig av det.
+
+    // De enda tva formerna som gar till Workern: POST /rundor (skrivvagen,
+    // V2/V2b) och GET /rundor/{round_id} (lasvagen, V4a). Listan ar en
+    // ALLOWLIST och ska forbli kort: allt som star har slutar servas som
+    // statisk fil.
+    "run_worker_first": ["/rundor", "/rundor/*"]
+  },
+
+  // Rundblobbarna. Hinken far ALDRIG ha publik lasning paslagen - till
+  // skillnad fran `birdiebook-banor` (V0) ar detta personlig data, och
+  // nyckeln rounds/{uid}/{round_id}.json ar gissningsbar for den som kanner
+  // ett uid. Se kommentaren sist i supabase/rundor.sql.
+  "r2_buckets": [
+    { "binding": "RUNDOR", "bucket_name": "birdiebook-rundor" }
+  ],
+
+  // Bada ar PUBLIKA varden, inte hemligheter: SUPABASE_URL star i klartext i
+  // mobile/live.js, och `sb_publishable_*` ar avsedd for frontend. De ligger
+  // som `vars` just darfor - hade nagot av dem varit hemligt hade det hort
+  // hemma i `wrangler secret put`, aldrig i en git-sparad fil.
+  //
+  // Workern har MEDVETET INGEN service_role-nyckel och ingen JWT-secret:
+  //   * ingen JWT-secret behovs - projektet signerar asymmetriskt (ES256) och
+  //     verifieringen sker mot den PUBLIKA JWKS:en, se worker.js;
+  //   * ingen service_role - indexraden skrivs med anvandarens egen token sa
+  //     att Postgres RLS blir en andra, oberoende kontroll av uid:t. En
+  //     service_role-nyckel hade kringgatt RLS och tagit bort den kontrollen.
+  "vars": {
+    "SUPABASE_URL": "https://pcwzxjbuydyuxufpzaxl.supabase.co",
+    "SUPABASE_ANON_KEY": "sb_publishable_w2Vfqc5zLUJ-VTP3ePTbcQ_sAaAGk6m"
   }
 }

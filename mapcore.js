@@ -43,7 +43,12 @@ const MapCore = (() => {
     // Cappa native-zoom så URL-zoomen aldrig överstiger z19 (som finns) → annars 404.
     const deepMax = t => t.max_zoom - 1 - (L.Browser.retina ? 1 : 0);
     const esriFallback = () => CourseMap.esriLayer(TILE_OPTS).addTo(map);
-    const slug = (typeof SGRound !== "undefined" && SGRound.activeSlug()) || "malmo_burlov";
+    // opt.slug: rita EN ANNAN banas rutor än den aktiva. Behövs av rundkartan,
+    // som visar en historisk runda — den bär sin egen courseSlug, och att läsa
+    // "aktiv bana" här hade hämtat manifestet för fel bana (rutorna hade legat
+    // utanför bounds och vyn blivit tom).
+    const slug = (opt && opt.slug)
+      || (typeof SGRound !== "undefined" && SGRound.activeSlug()) || "malmo_burlov";
     fetch(SGAsset.tileManifest(slug), { cache: "no-cache" })
       .then(r => r.ok ? r.json() : null)
       .then(t => {

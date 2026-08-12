@@ -38,19 +38,6 @@
   .kpi .lbl { display:block; color:var(--dim); font-size:12px; margin-top:2px; }
   .pos { color:var(--good); }
   .neg { color:var(--danger); }
-  /* SG-staplar med nollaxel i mitten */
-  .sgrow { display:flex; align-items:center; gap:8px; margin:8px 0; }
-  .sglbl { width:64px; font-size:13px; color:var(--dim); }
-  .sgbar { flex:1; position:relative; height:14px; background:#0e3326; border-radius:7px; }
-  .sgbar::before { content:""; position:absolute; left:50%; top:-2px; bottom:-2px;
-    width:1px; background:var(--line); }
-  .sgfill { position:absolute; top:2px; bottom:2px; border-radius:5px; }
-  .sgfill.pos { left:50%; background:var(--accent); }
-  .sgfill.neg { right:50%; background:var(--danger); }
-  .sgval { width:44px; text-align:right; font-size:13px; font-weight:700; }
-  .sgtotal { border-top:1px solid var(--line); margin-top:10px; padding-top:8px;
-    display:flex; justify-content:space-between; font-size:13px; }
-  .sgtotal b { font-size:14px; }
   /* insikter */
   .insight { display:flex; gap:8px; font-size:14px; margin:7px 0; line-height:1.35; }
   .insight .ico { flex:none; }
@@ -96,7 +83,7 @@
 <script src="./nav.js"></script>
 <script src="./round.js"></script>
 <!-- Live-scoring (additivt): samma tre script som Logga slag. Ger leaderboarden. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./vendor/supabase-js.js"></script>
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
@@ -107,7 +94,6 @@
 // state (S.holes, sg_hole) använder spelarens hålnummer 1–18; banans globala
 // nummer syns bara i den lilla beskrivningen ("Gul 1").
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
-const SG_LABEL = { off_the_tee: "Utslag", approach: "Inspel", around_green: "Närspel" };
 
 /* ---------- live-leaderboard (LIVE_SCORING_SPEC.md §7, steg 4) ----------
    Läser samma match som Logga slag skriver (Store.match()). Är man med i en
@@ -160,13 +146,6 @@ window.addEventListener("pagehide", () => { if (lbUnsub) lbUnsub(); });
 // Rundan bor i Store (APPSTORE_PLAN §9.1) — synkron läsning ur minnescachen,
 // sidan bootar i Store.ready().
 const loadState = () => Store.active();
-function loadAnalysis(S) {
-  // SG-analysen sparas av index.html vid "Skicka" — visas bara för samma runda
-  try {
-    const A = JSON.parse(localStorage.getItem("sg_analysis"));
-    return A && S && A.started_at === S.startedAt ? A : null;
-  } catch (e) { return null; }
-}
 function holeScore(S, n) {
   const h = Store.holeIn(S, n);
   if (!h) return null;
@@ -180,7 +159,6 @@ function goToHole(n) {
   location.href = "./spela.html";
 }
 const fmtDiff = d => d === 0 ? "0" : (d > 0 ? "+" + d : String(d));
-const fmtSg = v => (v > 0 ? "+" : "") + v.toFixed(1);
 
 /* ---------- redigering (samma state som rundloggen) ---------- */
 let editing = null;   // spelarens hålnr (1–18) med öppen editor
@@ -231,41 +209,13 @@ function heroHtml(t) {
     </div>
   </div>`;
 }
-function sgHtml(A, played) {
-  if (!A) {
-    return played ? `<div class="card"><h2>Strokes Gained</h2>
-      <div class="insight"><span class="ico">📡</span><span>Skicka rundan till analysen
-      (Logga slag → Avsluta rundan) så visas Strokes Gained per kategori här.</span></div></div>` : "";
-  }
-  const cats = Object.keys(SG_LABEL).filter(c => A.by_category[c] != null);
-  if (!cats.length) return "";
-  const maxAbs = Math.max(0.5, ...cats.map(c => Math.abs(A.by_category[c])));
-  const rows = cats.map(c => {
-    const v = A.by_category[c];
-    const w = Math.abs(v) / maxAbs * 48;
-    return `<div class="sgrow">
-      <span class="sglbl">${SG_LABEL[c]}</span>
-      <div class="sgbar"><div class="sgfill ${v < 0 ? "neg" : "pos"}" style="width:${w.toFixed(1)}%"></div></div>
-      <span class="sgval ${v < 0 ? "neg" : "pos"}">${fmtSg(v)}</span>
-    </div>`;
-  }).join("");
-  const tot = A.total_sg != null
-    ? `<div class="sgtotal"><span>Totalt tee–green</span>
-       <b class="${A.total_sg < 0 ? "neg" : "pos"}">${fmtSg(A.total_sg)}</b></div>` : "";
-  return `<div class="card"><h2>Strokes Gained <span class="note">tee–green · mot scratch</span></h2>
-    ${rows}${tot}</div>`;
-}
-function insightsHtml(A, t) {
+/* SG per kategori visades här när PC-analysen matade `sg_analysis`. Den vägen
+   är borttagen (grundarens beslut 2026-08-06: inget PC-beroende), och kortet
+   är borta i stället för att stå kvar och be användaren om något som inte går
+   att göra längre. Siffrorna kommer tillbaka när AS5 räknar dem i telefonen —
+   [[APPSTORE_PLAN]] §9.5.4. */
+function insightsHtml(t) {
   const lines = [];
-  if (A) {
-    const cats = Object.keys(SG_LABEL).filter(c => A.by_category[c] != null)
-      .map(c => ({ c, v: A.by_category[c] })).sort((a, b) => a.v - b.v);
-    if (cats.length) {
-      const worst = cats[0], best = cats[cats.length - 1];
-      if (worst.v <= -0.5) lines.push(["🔻", `${SG_LABEL[worst.c]} kostade ${fmtSg(worst.v)} slag mot scratch — rundans största läcka.`]);
-      if (best.v >= 0.5) lines.push(["💪", `${SG_LABEL[best.c]} gav ${fmtSg(best.v)} slag — rundans styrka.`]);
-    }
-  }
   if (t.played >= 3) {
     const avg = t.totPutts / t.played;
     if (avg >= 2.2) lines.push(["⚠️", `${t.totPutts} puttar (${avg.toFixed(1)}/hål) — puttningen kostade.`]);
@@ -364,7 +314,6 @@ async function render() {
     </tr>${rel === editing ? editorRow(S, rel) : ""}`;
   }).join("");
 
-  const A = loadAnalysis(S);
   const totDiff = t.totScore - t.totPar;
   const sub = S && S.player ? `${S.player} · runda ${roundName}` : `runda ${roundName}`;
   document.getElementById("app").innerHTML = `
@@ -372,8 +321,7 @@ async function render() {
     <p class="sub">${sub}${t.played ? ` · ${t.played} hål spelade` : ""}</p>
     ${lbHtml()}
     ${heroHtml(t)}
-    ${sgHtml(A, t.played)}
-    ${insightsHtml(A, t)}
+    ${insightsHtml(t)}
     ${distHtml(t)}
     ${parHtml(t)}
     <div class="card" style="padding:6px 14px">

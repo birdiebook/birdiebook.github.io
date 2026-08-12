@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#16221e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rundkarta">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Rundkarta</title>
+<link rel="stylesheet" href="./vendor/leaflet.css">
+<link rel="stylesheet" href="./tokens.css">
+<style>
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden;
+    overscroll-behavior:none; }
+  #map { position:absolute; top:0; left:0; right:0; bottom:0; background:var(--bg); }
+  .leaflet-container { background:var(--bg); }
+
+  /* topp: tillbaka + hålväljare */
+  #top { position:absolute; top:0; left:0; right:0; z-index:1000;
+    padding:env(safe-area-inset-top) 10px 8px; }
+  .rad { display:flex; align-items:center; gap:8px; }
+  .chip { background:var(--framebg); border:1px solid var(--line); border-radius:12px;
+    padding:7px 12px; font-size:15px; font-weight:600; color:var(--ink);
+    text-decoration:none; box-shadow:0 2px 8px var(--skuggfarg); }
+  button.chip { cursor:pointer; }
+  button.chip[disabled] { opacity:.4; }
+  #halnamn { flex:1 1 auto; text-align:center; font-weight:700; font-size:16px; }
+  #halnamn small { display:block; color:var(--dim); font-weight:400; font-size:12px; }
+  #rundtxt { margin:6px 2px 0; font-size:12px; color:var(--dim);
+    text-shadow:0 0 6px var(--skuggfarg); }
+
+  /* botten: slaglistan */
+  #slag { position:absolute; left:0; right:0; bottom:0; z-index:1000;
+    padding:8px 10px calc(10px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, var(--bg) 60%, transparent);
+    max-height:42%; overflow:auto; }
+  .slagrad { display:flex; align-items:center; gap:10px; padding:5px 8px;
+    border-bottom:1px solid var(--line); font-size:14px; }
+  .slagrad:last-child { border-bottom:0; }
+  /* Slaget som analysvyns diagram pekade ut — samma markering som kartans
+     förstorade ring, så listan och kartan säger samma sak. */
+  .slagrad.vald { background:var(--framebg); border-radius:8px; }
+  .nr { width:22px; height:22px; flex:0 0 auto; border-radius:50%; color:#06180f;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700; background:#9fc4ae; }
+  .dist { margin-left:auto; font-variant-numeric:tabular-nums; }
+  .dim { color:var(--dim); font-size:12px; }
+  #meddelande { position:absolute; left:0; right:0; top:45%; z-index:1001;
+    text-align:center; padding:0 24px; color:var(--dim); font-size:15px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="top">
+  <div class="rad">
+    <a class="chip" id="tillbaka" href="./analys.html">←</a>
+    <div class="chip" id="halnamn">…<small></small></div>
+    <button class="chip" id="prev" aria-label="Föregående hål">‹</button>
+    <button class="chip" id="next" aria-label="Nästa hål">›</button>
+  </div>
+  <div id="rundtxt"></div>
+</div>
+<div id="slag"></div>
+<div id="meddelande" hidden></div>
+
+<script src="./vendor/leaflet.js"></script>
+<script src="./vendor/leaflet-rotate.js"></script>
+<script src="./coursemap.js"></script>
+<script src="./assetbas.js"></script>
+<script src="./mapcore.js"></script>
+<script src="./round.js"></script>
+<script src="./score.js"></script>
+<script src="./store.js"></script>
+<script src="./rundkarta.js"></script>
+<script>
+"use strict";
+/* Karta över en SPARAD runda: alla loggade slagpositioner, hål för hål.
+ *
+ *   rundkarta.html?round=<id>          → första spelade hålet
+ *   rundkarta.html?round=<id>&hal=<n>  → ett bestämt hål (spelarens hålnummer)
+ *
+ * Hålvalet ligger i URL:en av samma skäl som vyvalet i analys.html: bakåtknappen
+ * och en delad länk fungerar då av sig själva.
+ *
+ * Rundan läses med SIN EGEN bana (courseSlug ur rundan → data/courses.json →
+ * <slug>.json), aldrig med den bana som råkar vara aktiv i appen. Samma regel
+ * som analysvyn följer sedan §9.3 — en gammal Burlöv-runda ska ritas på Burlöv
+ * även om telefonen står på Falsterbo nu. Det gäller också KARTRUTORNA
+ * (MapCore.addOrthophoto får rundans slug).
+ *
+ * Modellen (hålval, slagrader, inramningspunkter) bor i rundkarta.js och är
+ * node-testad; här finns bara DOM och Leaflet.
+ */
+const q = new URLSearchParams(location.search);
+const roundId = q.get("round");
+const el = id => document.getElementById(id);
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function visaMeddelande(txt) {
+  const m = el("meddelande");
+  m.textContent = txt;
+  m.hidden = false;
+}
+
+let map = null, holeLayer = null, shotLayer = null;
+
+function initMap() {
+  if (map) return;
+  map = MapCore.createMap("map");
+  map.setView([55.6, 13.0], 15);          // temporärt; inramas när hålet valts
+  holeLayer = L.layerGroup().addTo(map);
+  shotLayer = L.layerGroup().addTo(map);
+}
+
+/* Banregistret — andra banors meta ligger i data/courses.json (SW-precachad,
+   alltså läsbar offline).
+
+   NAMNET GÅR FÖRE SLUGEN, och det är inte en detalj: `Store` sätter
+   `courseSlug` till den bana som var AKTIV när dokumentet skapades
+   (store.js newDoc), medan `courseName` kommer ur rundan själv. En runda som
+   hydrerats ur molnet (docFromWire) bär därför rätt NAMN men fel SLUG så fort
+   telefonen stod på en annan bana vid importen. Läser vi slugen blir följden
+   fel bandata (fel par, fel slingnamn) OCH fel kartrutor — ortofotot ritar bara
+   inom sin banas bounds, så det försvinner helt och Esri blir kvar. */
+async function metaFor(slug, namn) {
+  let lista = [];
+  try {
+    const l = await (await fetch("./data/courses.json", { cache: "no-cache" })).json();
+    lista = Array.isArray(l) ? l : [];
+  } catch (e) { lista = []; }
+  const påNamn = namn ? lista.find(c => c.name === namn) : null;
+  if (påNamn) return påNamn;
+  const påSlug = slug ? lista.find(c => c.slug === slug) : null;
+  if (påSlug) return påSlug;
+  // Registret oläsbart (offline utan cache): aktiv banas meta finns synkront.
+  if (typeof SGRound !== "undefined" && (!slug || slug === SGRound.activeSlug())) return SGRound.meta;
+  return null;
+}
+async function bandataFor(meta) {
+  if (!meta || !meta.mobile_json) return null;
+  try { return await (await fetch("./data/" + meta.mobile_json, { cache: "no-cache" })).json(); }
+  catch (e) { return null; }
+}
+
+/* Hålets vita linje ritas med RUNDANS tee (S.tee), inte med telefonens nuvarande
+   val (sg_tee) som MapCore.drawHoleGeometry läser. Därför ritas geometrin här. */
+function ritaHal(band, teeLabel) {
+  holeLayer.clearLayers();
+  if (!band) return;
+  const tees = band.tees || [];
+  const märkt = tees.find(t => t.label && t.label === teeLabel);
+  const tee = märkt ? [märkt.lat, märkt.lon]
+    : (band.line && band.line.length ? band.line[0] : null);
+  if (band.line && band.line.length > 1) {
+    let path = tee ? [tee, ...band.line.slice(1)] : band.line.slice();
+    if (band.pin) {
+      while (path.length > 1 && MapCore.hav(path[path.length - 1], band.pin) < 8) path.pop();
+      path = [...path, band.pin];
+    }
+    L.polyline(path, { color: "#fff", weight: 2, opacity: .55 }).addTo(holeLayer);
+  }
+  if (band.pin)
+    L.circleMarker(band.pin, { radius: 4, color: "#fff", fillColor: "#fff",
+      fillOpacity: 1, weight: 1 }).addTo(holeLayer);
+}
+
+function bandFrame() {
+  const top = el("top").getBoundingClientRect();
+  const slag = el("slag").getBoundingClientRect();
+  const box = el("map").getBoundingClientRect();
+  return { topY: top.height + 10, botY: box.height - slag.height - 10,
+           width: box.width, height: box.height };
+}
+
+/* Rama in hålet: tee/första slaget nederst, pin/green överst — samma band-idé
+   som hålkartan. Faller till fitBounds när ankarna saknas. */
+function rama(rec, band) {
+  const pts = Rundkarta.framePoints(rec, band);
+  if (!pts.length) return;
+  if (band) MapCore.orientToHole(map, band);
+  const skott = Rundkarta.positioned(rec);
+  const bot = skott.length ? [skott[0].lat, skott[0].lon]
+    : (band && band.line && band.line.length ? band.line[0] : null);
+  const målp = (rec && rec.pin && rec.pin.lat != null) ? [rec.pin.lat, rec.pin.lon]
+    : (band && band.pin) ? band.pin
+    : (rec && rec.green && rec.green.lat != null) ? [rec.green.lat, rec.green.lon] : null;
+  if (bot && målp && MapCore.fitBand(map, bot, målp, bandFrame())) return;
+  map.fitBounds(L.latLngBounds(pts).pad(0.35));
+}
+
+function slaglistaHtml(rec) {
+  const rader = Rundkarta.shotRows(rec);
+  if (!rader.length)
+    return `<p class="dim" style="padding:6px 8px">Inga slagpositioner loggade på det här hålet.</p>`;
+  return rader.map(r => {
+    const vald = r.nr === valtSlag ? " vald" : "";
+    const till = r.sist ? "till pin" : "till slag " + (r.nr + 1);
+    const acc = r.acc == null ? "handsatt" : "±" + Math.round(r.acc) + " m";
+    return `<div class="slagrad${vald}">
+      <span class="nr" style="background:${MapCore.accColor(r.acc)}">${r.nr}</span>
+      <span>Slag ${r.nr} <span class="dim">· ${esc(acc)}</span></span>
+      <span class="dist">${r.dist == null ? "–" : esc(Rundkarta.fmtM(r.dist))}
+        <span class="dim">${esc(r.dist == null ? "" : till)}</span></span>
+    </div>`;
+  }).join("");
+}
+
+/* `valtSlag` = slagnumret (1-baserat) som analysvyns diagram pekade ut med
+   `&slag=`. Det är HELA poängen med den länken: man ser en avvikare i
+   spridningen och vill titta närmare på just det slaget. Ett hålbyte nollar
+   den — slag 3 på nästa hål är inte samma slag, och en markering som följer
+   med skulle peka på fel boll. */
+let S = null, OPTS = [], BY_GLOBAL = {}, valtHal = null, valtSlag = null;
+
+function visaHal(n, slag) {
+  const o = OPTS.find(x => x.n === n) || OPTS[0];
+  if (!o) return;
+  valtSlag = o.n === valtHal ? (slag !== undefined ? slag : valtSlag) : (slag || null);
+  valtHal = o.n;
+  const rec = (S.holes || []).find(h => h.n === o.n) || null;
+  const band = BY_GLOBAL[o.global] || null;
+
+  el("halnamn").innerHTML = `${esc(o.label)}<small>${
+    [o.bandLabel, o.par != null ? "par " + o.par : null, "score " + o.score]
+      .filter(Boolean).map(esc).join(" · ")}</small>`;
+  el("slag").innerHTML = slaglistaHtml(rec);
+  ritaHal(band, S.tee);
+  // `selected` är 0-baserat i MapCore (slagnumret är 1-baserat).
+  MapCore.drawShots(shotLayer, rec, valtSlag ? { selected: valtSlag - 1 } : undefined);
+  rama(rec, band);
+  // Ett utpekat slag ska synas UTAN att man letar: kartan går nära och
+  // centrerar det, hålets inramning får stå tillbaka. Rotationen behålls.
+  const pekat = Rundkarta.positioned(rec)[valtSlag - 1];
+  if (pekat) map.setView([pekat.lat, pekat.lon], 19, { animate: false });
+  const raden = document.querySelector("#slag .slagrad.vald");
+  if (raden && raden.scrollIntoView) raden.scrollIntoView({ block: "nearest" });
+
+  // URL:en följer med utan att lägga en post i historiken per hålbyte —
+  // bakåtknappen ska leda tillbaka till analysen, inte stega genom 18 hål.
+  const slagDel = valtSlag ? `&slag=${valtSlag}` : "";
+  try { history.replaceState(null, "", `?round=${encodeURIComponent(S.id)}&hal=${o.n}${slagDel}`); } catch (e) {}
+}
+
+async function start() {
+  if (!roundId) { visaMeddelande("Ingen runda vald."); return; }
+  await Store.ready();
+  const live = Store.active();
+  S = live && live.id === roundId ? live : await Store.get(roundId);
+  if (!S) { visaMeddelande("Rundan finns inte på den här telefonen."); return; }
+
+  el("tillbaka").href = `./analys.html?round=${encodeURIComponent(S.id)}`;
+  el("rundtxt").textContent = [S.courseName || "", S.roundSeq ? "runda " + S.roundSeq : "",
+    S.tee ? "tee " + S.tee : ""].filter(Boolean).join(" · ");
+
+  const meta = await metaFor(S.courseSlug, S.courseName);
+  const tables = SGRound.tablesFor(meta || {});
+  const data = await bandataFor(meta);
+  BY_GLOBAL = {};
+  for (const h of (data && data.holes) || []) {
+    const b = tables.GLOBAL_BASE[h.loop];
+    if (b == null) continue;
+    BY_GLOBAL[b + h.hole] = h;
+  }
+
+  OPTS = Rundkarta.holeOptions(S, BY_GLOBAL, tables.LOOP_SHORT);
+  const medPos = OPTS.filter(o => o.harPositioner);
+  if (!OPTS.length) { visaMeddelande("Inget loggat på den här rundan än."); return; }
+  if (!medPos.length) {
+    visaMeddelande("Den här rundan har inga slagpositioner — den loggades utan GPS-lägen.");
+    return;
+  }
+
+  initMap();
+  /* Esri LIGGER ALLTID UNDER, ortofotot ovanpå (zIndex 10 i addOrthophoto).
+     Skälet är en svart karta, sedd i live-appen: ortofoto-lagret ritar bara
+     inom manifestets `bounds`, och stämmer inte rundans slug med rundans
+     koordinater hamnar hela vyn utanför dem — då renderas INGENTING, och
+     Esri-fallbacken inne i addOrthophoto hoppar inte in (manifestet hämtades ju
+     utan fel). Slugen kan gå isär med positionerna på riktigt: en runda som
+     hydrerats ur molnet får `courseSlug` från den bana som var AKTIV vid
+     importen, inte från rundan. Med Esri i botten är kartan aldrig svart —
+     i värsta fall lite grövre satellitbild. */
+  CourseMap.esriLayer({ updateWhenIdle: false, keepBuffer: 4, zIndex: 5 }).addTo(map);
+  // Slugen ur den UPPSLAGNA banan (namnet vann), inte den rundan råkar bära.
+  MapCore.addOrthophoto(map, { slug: (meta && meta.slug) || S.courseSlug });
+
+  const önskat = parseInt(q.get("hal"), 10);
+  const önskatSlag = parseInt(q.get("slag"), 10);
+  const start = OPTS.find(o => o.n === önskat) || medPos[0];
+  el("prev").onclick = () => visaHal(Rundkarta.stega(OPTS, valtHal, -1), null);
+  el("next").onclick = () => visaHal(Rundkarta.stega(OPTS, valtHal, +1), null);
+  visaHal(start.n, önskatSlag > 0 ? önskatSlag : null);
+  // Kartan ritas medan panelerna fortfarande mäts vid första målningen —
+  // rama om när layouten står still, annars kan bandet bli fel höjd.
+  setTimeout(() => { map.invalidateSize(); visaHal(valtHal); }, 120);
+}
+start();
+</script>
+</body>
+</html>

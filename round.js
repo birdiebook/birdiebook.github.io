@@ -36,7 +36,7 @@ const SGRound = (() => {
   let GLOBAL_BASE = {}; // loop-namn → kumulativ offset
   let LOOP_SHORT = {};  // loop-namn → kort visningsnamn
   let ROUND_SEQ = {};   // rundvärde → sekvens av globala hålnummer
-  let HOLES = 18;       // antal spelarhål totalt (summan av en runda-seq)
+  let courseHoles = 18; // fallback: HELA banans hål, om vald runda saknar seq
 
   function readCachedMeta() {
     try {
@@ -75,7 +75,7 @@ const SGRound = (() => {
     GLOBAL_BASE = t.GLOBAL_BASE;
     LOOP_SHORT = t.LOOP_SHORT;
     ROUND_SEQ = t.ROUND_SEQ;
-    HOLES = (m.rounds[0] && m.rounds[0].seq.length) || t.courseHoles;
+    courseHoles = t.courseHoles;
   }
 
   build(readCachedMeta() || BURLOV_META);
@@ -106,6 +106,10 @@ const SGRound = (() => {
     return first || "1-18";
   }
   function seq() { return ROUND_SEQ[roundName()]; }
+  // Antal spelarhål i AKTIVT VALD runda, inte bara bygget vid build()-tillfället
+  // — en runda kortare än courseHoles (t.ex. en 9-håls-slinga) ska begränsa
+  // hålnavigeringen till sin egen längd, inte råka ärva en annan rundas.
+  function holes() { const s = seq(); return (s && s.length) || courseHoles; }
   // spelarens hål (1–18) → globalt hålnummer, null om utanför rundan
   function relToGlobal(rel) { return seq()[rel - 1] || null; }
   // globalt hålnummer → spelarens hål (1–18), null om hålet inte ingår i rundan
@@ -113,7 +117,7 @@ const SGRound = (() => {
   // engångsmigrering: äldre versioner sparade globalt hålnummer i sg_hole
   function migrateSgHole() {
     const v = parseInt(localStorage.getItem("sg_hole"), 10);
-    if (v > HOLES) {
+    if (v > holes()) {
       const rel = globalToRel(v) || 1;
       try { localStorage.setItem("sg_hole", rel); } catch (e) {}
       return rel;
@@ -125,7 +129,7 @@ const SGRound = (() => {
     get GLOBAL_BASE() { return GLOBAL_BASE; },
     get LOOP_SHORT() { return LOOP_SHORT; },
     get ROUND_SEQ() { return ROUND_SEQ; },
-    get HOLES() { return HOLES; },
+    get HOLES() { return holes(); },
     roundName, seq, relToGlobal, globalToRel, migrateSgHole,
     mobileJson, activeSlug, setActiveCourse, courseName, tablesFor,
     BURLOV_DEFAULT: BURLOV_META,

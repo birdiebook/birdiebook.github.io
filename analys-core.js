@@ -159,7 +159,11 @@ globalThis.AnalysCore = (() => {
     const score = n + adj + putts + pen;
     const played = score > 0;
 
-    const out = { par, played, score, shots: n + adj, putts, pen, adj,
+    // `holeN` = spelarens hålnummer, buret genom analysen så en punkt i ett
+    // diagram kan länkas tillbaka till rätt hål på kartan (A9).
+    const out = { holeN: (hole && hole.n) || null,
+      par, played, score, shots: n + adj, putts, pen, adj,
+      teeLength: null,
       girKnown: false, gir: false, girObserved: false, firObserved: false,
       scrambleElig: false, scramble: false,
       precClean: pen === 0 && adj === 0,
@@ -208,7 +212,13 @@ globalThis.AnalysCore = (() => {
           // säger inget om det var greenbunkern eller klippt fairway.
           out.approach = { along: cls.along, cross: cls.cross, dist: cls.dist,
                            onGreen, edge,
-                           surface: classifyLandingSurface(landing, band) };
+                           surface: classifyLandingSurface(landing, band),
+                           // A9: HÄRIFRÅN kom slaget, och det är slag nummer k
+                           // på hålet. Utan de två går en prick i diagrammet
+                           // inte att spåra tillbaka till verkligheten — det är
+                           // hela skillnaden mellan en statistikbild och något
+                           // man kan gå tillbaka och titta på.
+                           shot: k, from: hav(start, pin) };
         }
       }
     }
@@ -220,6 +230,9 @@ globalThis.AnalysCore = (() => {
         const lat = lateralToLine(teeLanding, band.line);
         if (lat != null) out.teeLateral = lat;
       }
+      // A9: utslagets längd (tee → landning). Samma skäl som `from` ovan — en
+      // prick i korridoren säger "höger" men inte "höger på ett 240-metersslag".
+      out.teeLength = hav(shots[0], teeLanding);
       if (band && band.fairways && band.fairways.length)   // A0-data (kan saknas → null)
         out.teeFairwayHit = band.fairways.some(r => pointInPoly(teeLanding, r, teeLanding));
     }
@@ -273,7 +286,9 @@ globalThis.AnalysCore = (() => {
       if (h.approach) {
         const a = h.approach; A.approach.n++;
         A.approach.pts.push({ along: a.along, cross: a.cross, onGreen: a.onGreen,
-                              edge: a.edge, surface: a.surface });
+                              edge: a.edge, surface: a.surface,
+                              // A9: spårbarhet — hål, slagnummer och inspelets längd.
+                              hole: h.holeN, shot: a.shot, from: a.from });
         if (a.surface && A.approach.bySurface[a.surface] != null)
           A.approach.bySurface[a.surface]++;
         if (a.onGreen) A.approach.onGreen++;
@@ -287,7 +302,10 @@ globalThis.AnalysCore = (() => {
         A.tee.n++;
         // A2: punkten bär sin träff/miss så korridoren kan färgas. `hit` är
         // null när banan saknar fairway-ytor — då är det okänt, inte en miss.
-        A.tee.pts.push({ lateral: h.teeLateral, hit: h.teeFairwayHit });
+        // A9: utslaget är alltid slag 1 på hålet — pricken kan därmed öppna
+        // exakt det slaget på kartan, precis som inspelet.
+        A.tee.pts.push({ lateral: h.teeLateral, hit: h.teeFairwayHit,
+                         hole: h.holeN, shot: 1, length: h.teeLength });
         if (h.teeLateral < -3) A.tee.left++; else if (h.teeLateral > 3) A.tee.right++;
       }
       if (h.teeFairwayHit != null) { A.tee.known++; if (h.teeFairwayHit) A.tee.hit++; }

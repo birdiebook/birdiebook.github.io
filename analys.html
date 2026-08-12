@@ -31,6 +31,21 @@
   .sub { color:var(--dim); font-size:14px; margin:0 0 16px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:16px;
           padding:14px 16px; margin:12px 0; }
+  a.card { display:block; text-decoration:none; color:inherit; }
+  a.card:active { background:#164434; }
+  /* trendkortet (A5) — samma korthöjd som en rundrad, men med en liten pil så
+     det syns att det leder vidare (rundraderna har ingen egen affordance). */
+  .trendcard .tt { display:flex; align-items:center; justify-content:space-between; }
+  .trendcard h2 { margin:0; }
+  .trendcard .arrow { color:var(--dim); font-size:18px; }
+  .trendcard .sub { margin:4px 0 0; font-size:13px; }
+  /* fem trendserier — sparkline + rullande snitt, samma inline-SVG-språk som
+     greenkartan (A9): ingen Chart.js, offline och lätt. */
+  .tcard h2 { margin-bottom:4px; }
+  .tcard .n { color:var(--dim); font-weight:600; text-transform:none; letter-spacing:0; }
+  .tchart { width:100%; height:auto; display:block; margin-top:6px; }
+  .tchart circle { cursor:default; }
+  .tempty { color:var(--dim); font-size:13px; margin:6px 0 0; }
   /* hero — fyra nyckeltal */
   .kpis { display:flex; }
   .kpi { flex:1; text-align:center; position:relative; }
@@ -59,6 +74,20 @@
     background:var(--accent); opacity:.5; }
   .corridor .dot { position:absolute; top:50%; width:8px; height:8px; margin:-4px 0 0 -4px;
     border-radius:50%; }
+  /* A9: linjal var 10:e meter + tryckbara prickar. Länken är en punkt utan egen
+     yta — träffytan är prickens, förstorad till 28 px så den går att träffa med
+     en tumme (WCAG-minimum är 24). `a.slag` ärver ingen länkfärg: färgen bär
+     redan betydelse (träff/miss, landningsyta). */
+  .corridor .grid { position:absolute; top:0; bottom:0; width:1px;
+    background:var(--line); opacity:.55; }
+  .corridor .gm { position:absolute; bottom:2px; transform:translateX(-50%);
+    color:var(--dim); font-size:9px; white-space:nowrap; }
+  .corridor .gm.gr { transform:translateX(-100%); }
+  .corridor a { display:contents; }
+  .greenwrap a circle, .corridor a .dot { cursor:pointer; }
+  .greenwrap a:focus-visible circle { outline:2px solid var(--accent); }
+  .corridor a .dot::after { content:""; position:absolute; left:50%; top:50%;
+    width:28px; height:28px; transform:translate(-50%,-50%); }
   .foot { color:var(--dim); font-size:12px; line-height:1.4; margin-top:2px; }
   /* enkla rader (scorefördelning) */
   .row { display:flex; align-items:center; gap:10px; margin:9px 0; }
@@ -110,6 +139,12 @@
     background:#1a4c38; color:var(--dim); }
   .badge.lvl3 { background:#1d5c40; color:var(--good); }
   .badge.live { background:var(--accent); color:var(--accent-ink); }
+  /* Molnstatus (MOLN_PLAN §7). Säkrad är avsiktligt DÄMPAD — det normala
+     tillståndet ska inte skrika; det är "väntar" och "ej säkrad" som betyder
+     något för användaren. */
+  .badge.moln { background:transparent; border:1px solid var(--line); color:var(--dim); }
+  .badge.moln.vantar { border-color:#7a5c1e; color:#d8a63a; }
+  .badge.moln.nekad { border-color:#7a2f2f; color:#e08585; }
   .lgroup { color:var(--dim); font-size:12px; text-transform:uppercase;
     letter-spacing:.6px; margin:18px 2px 2px; }
   .back { display:inline-block; color:var(--dim); text-decoration:none; font-size:14px;
@@ -147,6 +182,7 @@
 <script src="./store.js"></script>
 <script src="./analys-core.js"></script>
 <script src="./analys-lista.js"></script>
+<script src="./analys-trend.js"></script>
 <script src="./sg.js"></script>
 <script>
 "use strict";
@@ -155,12 +191,14 @@
    Slag-modell och mått: analys-core.js (facit-speglad, se ANALYS_MOBIL_V1_BRIEF).
    Listmodellen: analys-lista.js (ren, node-testad).
 
-   TVÅ VYER (§2.6, §9.3):
+   TRE VYER (§2.6, §9.3, §10 A5):
      analys.html              → rundlistan, en rad per runda ur Store.list()
      analys.html?round=<id>   → analysen av EN runda
+     analys.html?trend=1      → trend över rundhistoriken (A5), nås från ett
+                                 kort överst i rundlistan
 
    Vyval via query-param, inte internt state: bakåtknappen och flik-länken
-   fungerar då av sig själva, och en runda går att länka till.
+   fungerar då av sig själva, och en runda (eller trenden) går att länka till.
 
    VIKTIGT — en historisk runda läses med SIN EGEN banas tabeller. Före §9.3
    läste sidan `SGRound.seq()`/`mobileJson()`/`GLOBAL_BASE`, dvs. den bana som
@@ -177,6 +215,9 @@ const m1 = v => v == null ? "–" : (v < 10 ? v.toFixed(1) : Math.round(v)) + " 
 const roundIdFromUrl = () => {
   try { return new URLSearchParams(location.search).get("round"); } catch (e) { return null; }
 };
+const trendRequested = () => {
+  try { return new URLSearchParams(location.search).get("trend") === "1"; } catch (e) { return false; }
+};
 
 /* ---------- banregistret (per slug, inte "aktiv bana") ----------
    Aktiv banas meta finns synkront i SGRound (och cachad i localStorage → funkar
@@ -191,10 +232,20 @@ function loadRegistry() {
     .catch(() => []);
   return registryP;
 }
-async function courseMetaFor(slug) {
-  if (!slug || slug === SGRound.activeSlug()) return SGRound.meta;
+/* `namn` går FÖRE `slug` när det är känt. Store sätter `courseSlug` till den
+   bana som var AKTIV när dokumentet skapades (store.js newDoc), medan
+   `courseName` kommer ur rundan själv — en runda hydrerad ur molnet
+   (docFromWire) bär därför rätt namn men fel slug om telefonen stod på en annan
+   bana vid importen. Läst på slugen blev par, slingnamn och GIR fel utan att
+   något såg trasigt ut. */
+async function courseMetaFor(slug, namn) {
   const list = await loadRegistry();
-  return list.find(c => c.slug === slug) || null;
+  const påNamn = namn ? list.find(c => c.name === namn) : null;
+  if (påNamn) return påNamn;
+  const påSlug = slug ? list.find(c => c.slug === slug) : null;
+  if (påSlug) return påSlug;
+  if (!slug || slug === SGRound.activeSlug()) return SGRound.meta;
+  return null;
 }
 
 /* Baslinjen (expected strokes) för SG. Laddas en gång; misslyckas den visas
@@ -222,11 +273,11 @@ function loadCourseData(file) {
 /* Allt en vy behöver om EN rundas bana: slingtabeller, hål-tabell och
    par-summan för hela sekvensen. Cachas per (slug, roundSeq). */
 const bandCache = {};
-function bandsFor(slug, roundSeq) {
-  const key = slug + "|" + roundSeq;
+function bandsFor(slug, roundSeq, namn) {
+  const key = slug + "|" + roundSeq + "|" + (namn || "");
   if (bandCache[key]) return bandCache[key];
   bandCache[key] = (async () => {
-    const meta = await courseMetaFor(slug);
+    const meta = await courseMetaFor(slug, namn);
     const tables = SGRound.tablesFor(meta || {});
     const seq = tables.ROUND_SEQ[roundSeq] || null;
     const data = meta ? await loadCourseData(meta.mobile_json) : null;
@@ -262,20 +313,77 @@ const SURFACE_NAMN = { green: "green", bunker: "bunker", water: "vatten",
                        fairway: "fairway", rough: "ruff" };
 
 // Green-precision: pin i mitten, inspelen placerade kort/lång × vänster/höger.
-function greenMapHtml(A) {
+/* ---------- A9: en prick ska gå att förstå OCH att gå tillbaka till ----------
+
+   Två tillägg som gäller båda precisionsdiagrammen (inspel och utslag), av
+   samma skäl: ett spridningsdiagram säger VAD som hände men inte VILKET slag
+   det var, och just den frågan är den man ställer när man ser en avvikare.
+
+   · `punktText` — hela historien i en rad. Visas som `<title>` (hovertext med
+     mus) och som `aria-label`; på en telefon finns ingen hover, och där är
+     svaret i stället ett tryck: kartan öppnas med slaget markerat, och den
+     bär samma uppgifter i slaglistan.
+   · `slaglank` — trycket. Kräver hål OCH slagnummer; saknas något ritas
+     pricken utan länk i stället för en länk som landar på fel slag. */
+function punktText(p) {
+  const bitar = [];
+  if (p.hole != null) bitar.push("Hål " + p.hole);
+  if (p.from != null) bitar.push("inspel från " + m1(p.from));
+  if (p.onGreen) bitar.push("på green");
+  else {
+    const rikt = [];
+    if (Math.abs(p.along) >= 1) rikt.push(m1(Math.abs(p.along)) + (p.along < 0 ? " kort" : " lång"));
+    if (Math.abs(p.cross) >= 1) rikt.push(m1(Math.abs(p.cross)) + (p.cross < 0 ? " vänster" : " höger"));
+    if (rikt.length) bitar.push(rikt.join(", "));
+    if (p.edge != null) bitar.push(m1(p.edge) + " utanför green");
+  }
+  if (p.surface && SURFACE_NAMN[p.surface]) bitar.push(SURFACE_NAMN[p.surface].toLowerCase());
+  return bitar.join(" · ");
+}
+
+function punktTextUtslag(p) {
+  const bitar = [];
+  if (p.hole != null) bitar.push("Hål " + p.hole);
+  if (p.length != null) bitar.push("utslag " + m1(p.length));
+  const v = p.lateral;
+  if (v != null) bitar.push(Math.abs(v) < 1 ? "på linjen"
+    : m1(Math.abs(v)) + (v < 0 ? " vänster" : " höger") + " om mittlinjen");
+  if (p.hit === true) bitar.push("på fairway");
+  else if (p.hit === false) bitar.push("utanför fairway");
+  return bitar.join(" · ");
+}
+
+function slaglank(S, p, inner, titel) {
+  if (!S || !S.id || p.hole == null || p.shot == null) return inner;
+  const url = `./rundkarta.html?round=${encodeURIComponent(S.id)}&hal=${p.hole}&slag=${p.shot}`;
+  return `<a href="${url}" aria-label="${esc(titel)}">${inner}</a>`;
+}
+
+function greenMapHtml(A, S) {
   const m = A.approach;
   if (!m.n) return `<div class="card"><h2>Greenprecision</h2>
     <p class="foot">Inga inspel med känd pin och boll-på-green än. Markera pinnen
     och boll på green när du loggar, så visas här var och hur mycket inspelen missar.</p></div>`;
 
-  const C = 140, RMAX = 112;
-  const maxDist = Math.max(12, ...m.pts.map(p => Math.hypot(p.along, p.cross)));
-  const ringM = maxDist <= 15 ? 5 : maxDist <= 30 ? 10 : 20;
-  const nRings = Math.ceil(maxDist / ringM);
-  const sc = RMAX / (nRings * ringM);
-  const rings = Array.from({ length: nRings }, (_, i) =>
-    `<circle cx="${C}" cy="${C}" r="${((i + 1) * ringM * sc).toFixed(1)}"
-      fill="none" stroke="#1a4536" stroke-width="1"/>`).join("");
+  /* A9: RINGARNA ÄR ALLTID 10 METER. Förut valdes ringavståndet efter rundans
+     värsta miss (5/10/20 m), så samma bildyta betydde olika saker från runda
+     till runda — och en prick "två ringar ut" gick inte att jämföra med gårdagens.
+     Ett fast steg gör diagrammet läsbart som en linjal: räkna ringar, multiplicera
+     med tio. Antalet ringar växer i stället med rundan, och taket (6 ringar =
+     60 m) klipper bara extremfall, som förut. */
+  const C = 140, RMAX = 112, RING_M = 10, MAX_RINGAR = 6;
+  const maxDist = Math.max(RING_M, ...m.pts.map(p => Math.hypot(p.along, p.cross)));
+  const nRings = Math.min(MAX_RINGAR, Math.max(2, Math.ceil(maxDist / RING_M)));
+  const sc = RMAX / (nRings * RING_M);
+  const rings = Array.from({ length: nRings }, (_, i) => {
+    const r = (i + 1) * RING_M * sc;
+    // Etiketten sitter på uppåtaxeln, innanför sin egen ring — så avståndet går
+    // att läsa av utan att räkna ringar.
+    return `<circle cx="${C}" cy="${C}" r="${r.toFixed(1)}"
+        fill="none" stroke="#1a4536" stroke-width="1"/>
+      <text x="${C + 3}" y="${(C - r + 11).toFixed(1)}" fill="#6f9a83" font-size="9">${
+        (i + 1) * RING_M} m</text>`;
+  }).join("");
   const dots = m.pts.map(p => {
     let x = p.cross * sc, y = -p.along * sc;
     const r = Math.hypot(x, y); if (r > RMAX) { x *= RMAX / r; y *= RMAX / r; }
@@ -283,8 +391,13 @@ function greenMapHtml(A) {
     // låg i greenbunkern och inte på klippt gräs är hela skillnaden mellan
     // "kort vänster" och ett verkligt råd.
     const col = SURFACE_COL[p.surface] || (p.onGreen ? "var(--good)" : "var(--miss)");
-    return `<circle cx="${(C + x).toFixed(1)}" cy="${(C + y).toFixed(1)}" r="4"
-      fill="${col}" fill-opacity="0.92"/>`;
+    // A9: pricken är spårbar — hovertext med hela historien, och ett tryck
+    // öppnar EXAKT det slaget på hålkartan. Utan hål och slagnummer i punkten
+    // (analys-core) vore båda omöjliga.
+    const titel = esc(punktText(p));
+    const cirkel = `<circle cx="${(C + x).toFixed(1)}" cy="${(C + y).toFixed(1)}" r="4"
+      fill="${col}" fill-opacity="0.92"><title>${titel}</title></circle>`;
+    return slaglank(S, p, cirkel, titel);
   }).join("");
   const svg = `<svg viewBox="0 0 280 280" role="img" aria-label="Green-precisionskarta">
     <line x1="${C}" y1="20" x2="${C}" y2="260" stroke="#1a4536" stroke-width="1"/>
@@ -302,50 +415,68 @@ function greenMapHtml(A) {
     ? `<p class="subline">Missarna hamnade i snitt ${m1(m.medEdge)} utanför green.</p>` : "";
   // A3: ytfördelningen i ord, med färgprick som knyter raden till kartan.
   // Bara ytor som FAKTISKT förekom listas — nollor säger ingenting.
-  const S = m.bySurface || {};
-  const ytor = Object.keys(SURFACE_NAMN).filter(k => S[k] > 0)
+  const YT = m.bySurface || {};
+  const ytor = Object.keys(SURFACE_NAMN).filter(k => YT[k] > 0)
     .map(k => `<span style="white-space:nowrap"><span style="display:inline-block;width:8px;
       height:8px;border-radius:50%;background:${SURFACE_COL[k]};margin-right:4px"></span>${
-      SURFACE_NAMN[k]} ${S[k]}</span>`).join(" · ");
+      SURFACE_NAMN[k]} ${YT[k]}</span>`).join(" · ");
   const ytrad = ytor ? `<p class="subline">${ytor}</p>` : "";
   // En insikt värd namnet: greenbunkern kostar dyrt och är åtgärdbar.
-  const bunkerRad = S.bunker >= 2
-    ? `<p class="foot">Inspelen hamnade i en greenbunker ${S.bunker} gånger — det är
+  const bunkerRad = YT.bunker >= 2
+    ? `<p class="foot">Inspelen hamnade i en greenbunker ${YT.bunker} gånger — det är
        den miss som kostar mest slag per tillfälle.</p>` : "";
   return `<div class="card"><h2>Greenprecision</h2>
     <div class="greenwrap">${svg}
       <div class="missgrid">${box(m.short, "kort")}${box(m.long, "lång")}${box(m.left, "vänster")}${box(m.right, "höger")}</div>
     </div>
     <p class="subline">${m.onGreen} av ${m.n} inspel träffade green.</p>${edge}${ytrad}${bunkerRad}
+    <p class="foot">Varje ring är 10 m. Tryck på ett slag för att se det på hålkartan.</p>
   </div>`;
 }
 
-function fairwayHtml(A) {
+function fairwayHtml(A, S) {
   const t = A.tee;
   if (!t.n) return "";
   const box = (v, l) => `<div class="cell"><div class="cv">${v}</div><div class="cl">${l}</div></div>`;
+  /* A9: korridoren har samma linjal som greenkartan — ETT streck var tionde
+     meter, ±40 m ut. Förut var bredden bara "48 % = 40 m", vilket gjorde att
+     man kunde se att ett utslag låg längre höger än ett annat men inte hur
+     mycket. Samma clamp som förut behålls, så en riktigt vild boll ligger kvar
+     i kanten i stället för att spränga skalan för alla andra. */
+  const KORR_M = 40, STEG_M = 10;
+  const px = v => 50 + Math.max(-KORR_M, Math.min(KORR_M, v)) / KORR_M * 48;
+  const grid = [-40, -30, -20, -10, 10, 20, 30, 40].map(v =>
+    `<div class="grid" style="left:${px(v).toFixed(1)}%"></div>`).join("")
+    + `<span class="gm" style="left:${px(-KORR_M).toFixed(1)}%">${KORR_M} m V</span>`
+    + `<span class="gm gr" style="left:${px(KORR_M).toFixed(1)}%">${KORR_M} m H</span>`;
   // A2: prickens färg är fairwayträffen. `hit == null` = banan saknar ytor →
   // okänt, och då behåller pricken den neutrala miss-färgen i stället för att
   // påstå en miss.
   const dots = t.pts.map(p => {
     const v = p && typeof p === "object" ? p.lateral : p;
     const hit = p && typeof p === "object" ? p.hit : null;
-    const left = 50 + Math.max(-40, Math.min(40, v)) / 40 * 48;
+    const left = px(v);
     const col = hit === true ? "var(--good)" : hit === false ? "var(--miss)" : "var(--miss)";
-    return `<div class="dot" style="left:${left.toFixed(1)}%;background:${col}"></div>`;
+    const titel = esc(punktTextUtslag(p && typeof p === "object" ? p : { lateral: v }));
+    const prick = `<div class="dot" style="left:${left.toFixed(1)}%;background:${col}" title="${titel}"></div>`;
+    return (p && typeof p === "object") ? slaglank(S, p, prick, titel) : prick;
   }).join("");
+  const linjal = `<p class="foot">Streck var 10:e meter från mittlinjen.
+    Tryck på ett utslag för att se det på hålkartan.</p>`;
   if (t.known) {                       // fairway-polygoner finns (<slug>.json v2)
     return `<div class="card"><h2>Fairway</h2>
-      <div class="corridor"><div class="mid"></div>${dots}</div>
+      <div class="corridor">${grid}<div class="mid"></div>${dots}</div>
       <div class="cells">${box(t.left, "vänster")}${box(t.hit, "fairway")}${box(t.right, "höger")}</div>
       <p class="subline">${pct(t.hitPct)} av utslagen på fairway${
         t.known < t.n ? ` (${t.known} av ${t.n} utslag har fairwaydata)` : ""}.</p>
+      ${linjal}
     </div>`;
   }
   return `<div class="card"><h2>Utslagens sidled</h2>
-    <div class="corridor"><div class="mid"></div>${dots}</div>
+    <div class="corridor">${grid}<div class="mid"></div>${dots}</div>
     <div class="cells">${box(t.left, "vänster")}${box(t.n - t.left - t.right, "mitten")}${box(t.right, "höger")}</div>
     <p class="foot">Mot hålets mittlinje. Fairwayträff visas när banans fairway-ytor lagts till.</p>
+    ${linjal}
   </div>`;
 }
 
@@ -415,6 +546,18 @@ function parHtml(A) {
   return boxes.length ? `<div class="card"><h2>Snitt per par</h2><div class="cells">${boxes.join("")}</div></div>` : "";
 }
 
+/* Vägen till rundkartan (rundkarta.html) — alla loggade slagpositioner, hål för
+   hål. Visas BARA när rundan faktiskt har positioner: en nivå 1–2-runda har
+   inga, och en knapp som leder till en tom karta är ett löfte som inte hålls. */
+function kartHtml(S) {
+  const harPos = ((S && S.holes) || []).some(h =>
+    (h.shots || []).some(s => s && s.lat != null && s.lon != null));
+  if (!harPos) return "";
+  return `<div class="card"><h2>Karta</h2>
+    <a class="btn" href="./rundkarta.html?round=${encodeURIComponent(S.id)}">Se slagen på kartan</a>
+    <p class="foot">Varje loggat slag som en punkt på hålet, i den ordning de slogs.</p></div>`;
+}
+
 function tableHtml(rows, A) {
   return `<div class="card"><table>
     <tr><th>Hål</th><th>Par</th><th>Score</th><th>Putt</th><th>GIR</th><th>+/−</th></tr>
@@ -438,10 +581,39 @@ function emptyView() {
    par-summa och fylls därför i EFTERÅT, när bandatan hämtats; listan renderas
    direkt så den aldrig väntar på nät. */
 
+/* Molnbadgens hovertext — och den enda platsen som säger vad lägena BETYDER.
+
+   "Säkrad" lovar backup, inte att rundan är analyserad någon annanstans:
+   analysen räknas i telefonen (MOLN_PLAN §1b). "Väntar" är inte ett fel och
+   ska inte låta som ett — svepet skickar den av sig själv när nätet finns
+   (§6 V2b), utan att användaren gör något. "Ej säkrad" är det enda läget som
+   kräver en människa, och då ska serverns egen text fram: den är skriven för
+   att läsas (§6 V2b, 400/413). */
+function molnTitel(s) {
+  if (!s) return "";
+  if (s.lage === "sakrad") {
+    const när = s.nar ? new Date(s.nar).toLocaleString("sv-SE", {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
+    return "Säkerhetskopierad i molnet" + (när ? " " + när : "")
+      + ". Analysen räknas i telefonen — molnet är backup.";
+  }
+  if (s.lage === "nekad") {
+    return "Kunde inte säkras: " + (s.fel || "molnet nekade rundan")
+      + ". Rundan är komplett i telefonen och går att dela därifrån.";
+  }
+  // `fel` visas MEDVETET inte här. I väntläget är det `e.message` från fetch
+  // ("Failed to fetch") eller "HTTP 500" — teknisk text i ett läge som inte är
+  // ett fel. Bara den nekade grenen har en text som är skriven för en människa.
+  return "Ligger bara i telefonen. Skickas automatiskt när nätet kommer tillbaka.";
+}
+
 function rowHtml(m) {
   const badge = m.active
     ? `<span class="badge live">pågår</span>`
     : `<span class="badge ${m.level === 3 ? "lvl3" : ""}" title="Loggning: ${esc(m.levelLong)}">${esc(m.levelShort)}</span>`;
+  const moln = m.moln
+    ? `<span class="badge moln ${m.moln.lage === "sakrad" ? "" : esc(m.moln.lage)}"
+             title="${esc(molnTitel(m.moln))}">${esc(m.moln.text)}</span>` : "";
   const meta = [
     m.holesPlayed ? `${m.holesPlayed} hål` : "inga hål loggade",
     m.tee ? `tee ${esc(m.tee)}` : null,
@@ -452,7 +624,7 @@ function rowHtml(m) {
   const parCls = m.toPar == null ? "" : m.toPar < 0 ? "pos" : m.toPar > 0 ? "neg" : "";
   return `<a class="rrow${m.empty ? " dimmed" : ""}" href="./analys.html?round=${encodeURIComponent(m.id)}">
     <span class="rmain">
-      <span class="rtop"><span class="rdate">${esc(m.dateLabel)}</span>${badge}</span>
+      <span class="rtop"><span class="rdate">${esc(m.dateLabel)}</span>${badge}${moln}</span>
       <span class="rcourse">${esc(m.courseName)}${m.roundSeq ? " · " + esc(m.roundSeq) : ""}</span>
       <span class="rmeta">${meta}</span>
     </span>
@@ -491,6 +663,17 @@ async function storageHtml() {
   return `<p class="storage">${bits.map(esc).join(" · ")}</p>`;
 }
 
+/* Kortet överst i rundlistan som leder till trenden (A5, §10 "nås från ett
+   kort överst i rundlistan"). Kräver inga rundor räknade i förväg — trendvyn
+   själv säger "du har N" om det är för få. */
+function trendCardHtml(spelade) {
+  return `<a class="card trendcard" href="./analys.html?trend=1">
+    <div class="tt"><h2>Trend</h2><span class="arrow">›</span></div>
+    <p class="sub">Score mot par, GIR, fairway, puttar och SG putt över dina rundor
+      ${spelade ? `(${spelade} ${spelade === 1 ? "runda" : "rundor"})` : ""}</p>
+  </a>`;
+}
+
 async function renderList() {
   const app = document.getElementById("app");
   const rows = AnalysLista.sortRows(await Store.list({ limit: 100 }));
@@ -506,15 +689,16 @@ async function renderList() {
   const paint = info => {
     const models = merged.map(r => AnalysLista.rowModel(r, {
       now: new Date().toISOString(),
-      par: info ? (info[r.courseSlug + "|" + r.roundSeq] || {}).par : null,
-      seqLength: info ? (info[r.courseSlug + "|" + r.roundSeq] || {}).seqLength : 0,
+      par: info ? (info[r.courseSlug + "|" + r.roundSeq + "|" + (r.courseName || "")] || {}).par : null,
+      seqLength: info ? (info[r.courseSlug + "|" + r.roundSeq + "|" + (r.courseName || "")] || {}).seqLength : 0,
     }));
     const spelade = models.filter(m => !m.empty).length;
     app.innerHTML = `<h1>Analys</h1>
       <p class="sub">${spelade} ${spelade === 1 ? "runda" : "rundor"} i telefonen · tryck för analys</p>
+      ${trendCardHtml(spelade)}
       ${models.map(rowHtml).join("")}
-      <p class="note">Rundrapport och trend över tid kommer när analysen på datorn
-        kopplas in — listan här räknas helt i telefonen.</p>
+      <p class="note">SG per kategori kommer i en senare etapp — listan och
+        trenden ovan räknas helt i telefonen.</p>
       <div id="storage"></div>`;
     storageHtml().then(h => {
       const el = document.getElementById("storage");
@@ -525,11 +709,11 @@ async function renderList() {
 
   // …och fyll i ±par när banornas par-summor finns (SW-cachade, oftast direkt).
   const keys = {};
-  for (const r of merged) keys[r.courseSlug + "|" + r.roundSeq] = r;
+  for (const r of merged) keys[r.courseSlug + "|" + r.roundSeq + "|" + (r.courseName || "")] = r;
   const info = {};
   await Promise.all(Object.keys(keys).map(async k => {
     try {
-      const b = await bandsFor(keys[k].courseSlug, keys[k].roundSeq);
+      const b = await bandsFor(keys[k].courseSlug, keys[k].roundSeq, keys[k].courseName);
       info[k] = { par: b.par, seqLength: b.seqLength };
     } catch (e) { info[k] = { par: null, seqLength: 0 }; }
   }));
@@ -552,7 +736,7 @@ async function renderDetail(id) {
     return;
   }
 
-  const B = await bandsFor(S.courseSlug, S.roundSeq);
+  const B = await bandsFor(S.courseSlug, S.roundSeq, S.courseName);
   await loadBaseline();          // SG-baslinjen; misslyckas den visas inget SG
   const LOOP_SHORT = B.tables.LOOP_SHORT;
 
@@ -605,6 +789,15 @@ async function renderDetail(id) {
     (rad.holesLevel3 < rad.holesPlayed
       ? ` — fullt underlag på ${rad.holesLevel3} av ${rad.holesPlayed} spelade hål. Måtten nedan räknas bara på hålen som har data.`
       : ` — fullt underlag på alla ${rad.holesPlayed} spelade hål.`) + `</p>`;
+  // Molnstatus i klartext (MOLN_PLAN §7). Listan har en badge med hovertext;
+  // här finns plats för hela meningen, och det är här man landar när man
+  // undrar om en gammal runda överlever ett telefonbyte. "Säkrad" nämns kort
+  // och lågmält — det normala tillståndet ska inte ta plats från analysen.
+  const molnRad = (() => {
+    const s = AnalysLista.molnStatus(rad);
+    if (!s) return "";
+    return `<p class="note">${esc(molnTitel(s))}</p>`;
+  })();
   // Bandatan kan saknas offline för en bana man inte har nedladdad — säg det
   // i stället för att visa par-lösa mått utan förklaring.
   const banvarning = B.hasData ? "" :
@@ -616,9 +809,11 @@ async function renderDetail(id) {
     <p class="sub">${sub} · ${A.nPlayed} hål</p>
     ${banvarning}
     ${täckning}
+    ${molnRad}
     ${heroHtml(A)}
-    ${greenMapHtml(A)}
-    ${fairwayHtml(A)}
+    ${kartHtml(S)}
+    ${greenMapHtml(A, S)}
+    ${fairwayHtml(A, S)}
     ${puttHtml(A, puttSGForRound(S, B.byGlobal))}
     ${distHtml(A)}
     ${parHtml(A)}
@@ -645,7 +840,144 @@ function wireDelete(S) {
   };
 }
 
+/* ================= vy 3: trend över rundhistoriken (A5) =================
+   Datavägen (§10, bindande): rundlistan läser bara indexrader (§9.1.5), men
+   trenden behöver mer (GIR, fairway, puttar, SG putt) — mått som kräver att
+   hela runddokumentet öppnas och räknas om. Lösningen: en härledd rundsam-
+   manfattning cachas i Store (`trendSummaries`, mobile/store.js) första
+   gången varje runda öppnas här, och läses därefter. Cachen bär `v`
+   (AnalysTrend.CACHE_VERSION) — matchar den inte räknas raden om, så en gammal
+   siffra aldrig lever vidare osynligt efter att måtten ändrats. */
+
+/* Sammanfattningen för EN runda — ur cachen om giltig, annars räknad ur hela
+   dokumentet och skriven till cachen. `row` = en indexrad (Store.list()). */
+async function trendSummaryFor(row) {
+  try {
+    const cached = await Store.trendSummary(row.id);
+    if (cached && cached.v === AnalysTrend.CACHE_VERSION) return cached;
+  } catch (e) { /* cache-miss är inte ett fel — räkna om */ }
+  const live = Store.active();
+  const S = (live && live.id === row.id) ? live : await Store.get(row.id);
+  if (!S) return null;
+  const B = await bandsFor(S.courseSlug, S.roundSeq, S.courseName);
+  await loadBaseline();
+  const results = (S.holes || []).slice().sort((a, b) => a.n - b.n)
+    .map(h => AnalysCore.holeAnalysis(h, B.byGlobal[h.global]));
+  const A = AnalysCore.aggregate(results);
+  const sg = puttSGForRound(S, B.byGlobal);
+  const summary = AnalysTrend.summaryFromAggregate(
+    { id: S.id, startedAt: S.startedAt, courseName: S.courseName, roundSeq: S.roundSeq },
+    A, sg);
+  Store.setTrendSummary(summary).catch(() => {});
+  return summary;
+}
+
+/* score-mot-par: heltal på varje punkt, decimal bara på det rullande snittet
+   (som är ett medelvärde av heltal och därför oftast inte blir jämnt). */
+function fmtToParTrend(v) {
+  const r = Math.round(v * 10) / 10;
+  if (Math.abs(r) < 0.05) return "E";
+  return (r > 0 ? "+" : "") + (Number.isInteger(r) ? r : r.toFixed(1));
+}
+
+/* Sparkline: punkter + (om serien har nog rundor) ett rullande snitt som linje.
+   Samma inline-SVG-språk som greenMapHtml (ingen Chart.js, se A9-kommentaren
+   ovan) — vyn förblir offline och lätt. En serie under AnalysTrend.MIN_ROUNDS
+   ritar INGEN linje (§10: en linje mellan under tre punkter är ett falskt
+   besked) — bara punkterna, plus en rad som säger hur få de är. */
+function sparklineSvg(points, opts) {
+  const o = opts || {};
+  const fmt = o.fmt || (v => String(v));
+  const drawLine = !!o.drawLine;
+  const W = 280, H = 108, PAD = 16;
+  const n = points.length;
+  const vals = points.map(p => p.value);
+  if (drawLine) for (const p of points) if (p.rollingAvg != null) vals.push(p.rollingAvg);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const xAt = i => (n <= 1 ? W / 2 : PAD + i * (W - 2 * PAD) / (n - 1));
+  const yAt = v => H - PAD - (v - lo) / (hi - lo) * (H - 2 * PAD);
+  const zeroY = (lo < 0 && hi > 0)
+    ? `<line x1="${PAD}" y1="${yAt(0).toFixed(1)}" x2="${W - PAD}" y2="${yAt(0).toFixed(1)}" stroke="#1a4536" stroke-width="1"/>`
+    : "";
+  let lineEl = "";
+  if (drawLine) {
+    const seg = points.map((p, i) => (p.rollingAvg == null ? null
+      : `${xAt(i).toFixed(1)},${yAt(p.rollingAvg).toFixed(1)}`)).filter(Boolean).join(" ");
+    lineEl = `<polyline points="${seg}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  }
+  const dots = points.map((p, i) => {
+    const när = AnalysLista.dateLabel(p.startedAt, new Date().toISOString());
+    const titel = esc(`${när}${p.courseName ? " · " + p.courseName : ""} · ${fmt(p.value)}`);
+    return `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(p.value).toFixed(1)}" r="3.4"
+      fill="var(--good)"><title>${titel}</title></circle>`;
+  }).join("");
+  return `<svg class="tchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Trend, ${n} rundor">
+    ${zeroY}${lineEl}${dots}
+  </svg>`;
+}
+
+/* Ett kort per serie. `series` = { points, n, enough } från AnalysTrend.buildSeries.
+   `n` visas ALLTID (§10:s regel som gäller alla V2-etapperna): ett mått som
+   räknas på färre rundor än det ser ut att göra ska säga det — bäst synligt just
+   här, där score-serien (bara EN rundlängd) typiskt vilar på färre rundor än
+   GIR/fairway/puttar/SG putt (som tål blandade rundlängder). */
+function seriesCardHtml(title, series, opts) {
+  const o = opts || {};
+  const fmt = o.fmt || (v => String(v));
+  if (!series.n) {
+    return `<div class="card tcard"><h2>${esc(title)}</h2>
+      <p class="tempty">Inga rundor med det här måttet än.</p></div>`;
+  }
+  const chart = sparklineSvg(series.points, { fmt, drawLine: series.enough });
+  const senaste = series.points[series.points.length - 1];
+  const linjeNot = series.enough ? "" :
+    `<p class="tempty">För få rundor för en linje — ${series.n} av ${AnalysTrend.MIN_ROUNDS} som krävs.</p>`;
+  return `<div class="card tcard">
+    <h2>${esc(title)} <span class="n">${series.n} runda${series.n === 1 ? "" : "r"}${esc(o.extra || "")}</span></h2>
+    ${chart}
+    <p class="foot">Senast: ${fmt(senaste.value)}${
+      series.enough ? ` · rullande snitt: ${fmt(senaste.rollingAvg)}` : ""}</p>
+    ${linjeNot}
+  </div>`;
+}
+
+async function renderTrend() {
+  const app = document.getElementById("app");
+  const head = `<a class="back" href="./analys.html">← Rundor</a><h1>Trend</h1>`;
+  app.innerHTML = `${head}<p class="sub">Räknar rundorna …</p>`;
+
+  // Bara AVSLUTADE rundor med minst ett spelat hål — en pågående rundas siffror
+  // är inte färdiga än, och en tom runda har inget att bidra med.
+  const rows = (await Store.list({ limit: 200 })).filter(r => r.status === "finished" && r.holesPlayed);
+  const summaries = (await Promise.all(rows.map(r => trendSummaryFor(r).catch(() => null)))).filter(Boolean);
+  const T = AnalysTrend.buildSeries(summaries);
+
+  if (!T.ready) {
+    app.innerHTML = `${head}
+      <div class="card empty">
+        <p class="big">Trend visas när tre rundor är loggade — du har ${T.total}</p>
+        <p class="txt">Logga fler rundor så visas score mot par, GIR, fairway,
+          puttar och SG putt över tid.</p>
+        <a class="btn" href="./analys.html">Till rundlistan</a>
+      </div>`;
+    return;
+  }
+
+  const scoreExtra = T.group ? ` · ${T.group}-hålsrundor` : "";
+  app.innerHTML = `${head}
+    <p class="sub">${T.total} rundor i telefonen</p>
+    ${seriesCardHtml("Score mot par", T.series.scoreToPar, { fmt: fmtToParTrend, extra: scoreExtra })}
+    ${seriesCardHtml("GIR", T.series.gir, { fmt: v => Math.round(v) + "%" })}
+    ${seriesCardHtml("Fairway", T.series.fairway, { fmt: v => Math.round(v) + "%" })}
+    ${seriesCardHtml("Puttar per hål", T.series.puttsPerHole, { fmt: v => v.toFixed(2) })}
+    ${seriesCardHtml("SG putt", T.series.sgPutt, { fmt: v => (v > 0 ? "+" : "") + v.toFixed(2) })}
+  `;
+}
+
 function render() {
+  if (trendRequested()) return renderTrend();
   const id = roundIdFromUrl();
   return id ? renderDetail(id) : renderList();
 }

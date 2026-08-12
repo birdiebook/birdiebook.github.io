@@ -36,6 +36,14 @@
   --dim: #a8bdb2;          /*  8,3:1 mot --bg */
   --accent-ink: #06180f;
 
+  /* Flikradens yta. EGEN token, inte --card: chrome-färgerna här är medvetet
+     avmättade och kyligare än gräset (regel 4), men flikraden är samma
+     komponent på alla rundans vyer, och de andra sidorna bär sin egen grönare
+     ton. Med --card blev kartans flikrad synligt gråare än Logga slag och
+     Översikt — knappt märkbart förut, tydligt när skalet blev fullskärm och
+     remsan växte (2026-08-10). Värdet är rundvyernas gröna kortfärg. */
+  --flikrad-yta: #123c2d;
+
   /* Genomskinlig chrome-yta: banan ska synas IGENOM panelen, inte bakom en
      opak platta (§3.3). Avmättningen ligger i ytan, inte i en ny färg. */
   --framebg: rgba(22, 34, 30, .62);

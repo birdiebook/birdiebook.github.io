@@ -10,10 +10,20 @@
  *   inbäddad    planvy.html sätter window.__VY_EMBED = true FÖRE importen och
  *               driver `laddaHal()` ur Vylage; ingen hålväljare, ingen autostart
  *
- * Allt annat (scenen, lägena, panelerna, U6/U9/U15/U16/U17/U18) är oförändrat —
- * DOM-id:na är desamma i båda sidorna och elementen slås upp med `el()` som
- * förut. Saknas ett element i värdsidan är lyssnaren tyst utebliven, inte ett
- * krasch (se `pa()` nedan).
+ * Allt annat (scenen, lägena, panelerna, U6/U9/U15/U16/U17/U18) är oförändrat
+ * och elementen slås upp med `el()` som förut. Men sidorna har INTE exakt samma
+ * DOM, och det är en fälla värd sin egen rad: GP2 (2026-08-01) band
+ * `el('sProfil').addEventListener` på toppnivå mot en knapp som bara
+ * planeringsvyn har. `el()` svarade null, `null.addEventListener` kastade, och
+ * eftersom kastet skedde när MODULEN evaluerades blev hal3d.html helt svart —
+ * inget ritades, och `window.__hal3d.hal()` svarade `ReferenceError: Cannot
+ * access 'laddGen' before initialization` (TDZ), så inte ens felsökningskroken
+ * gick att nå. Planeringsvyn var opåverkad, så felet syntes inte i appen.
+ *
+ * Regeln som följer av det: **ett element som bara en av värdsidorna har får
+ * bara nås defensivt** — lyssnare genom `pa()`, ritande bakom en tidig kontroll
+ * (se `ritaKlubbval`). `tests/js/test_hal3d_laddning.mjs` §7 fäller den som
+ * glömmer, genom att jämföra id:na i hal3d.js mot BÅDA sidornas markup.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
@@ -29,6 +39,14 @@ const status = t => { const e = el('status'); if (e) e.textContent = t || ''; };
    (hittat vid verifieringen 2026-08-01). Skriv aldrig rakt på ett element som
    bara en av värdsidorna har. */
 const fakta = t => { const e = el('fakta'); if (e) e.textContent = t; };
+
+/* Lyssnare på ett element som bara EN av värdsidorna har. Finns det inte blir
+   lyssnaren tyst utebliven i stället för ett kast på modulens toppnivå — och
+   ett kast där tar hela sidan, inte bara knappen (se filhuvudet). Använd `el()`
+   rakt för allt som finns i BÅDA sidorna: en tyst utebliven lyssnare på ett
+   element som borde finnas är en bugg som inte syns, och den vill vi ha kvar
+   som ett kast. */
+const pa = (id, handelse, fn) => { const e = el(id); if (e) e.addEventListener(handelse, fn); };
 
 /* Inbäddad i planeringsvyn? Då äger Vylage hålvalet och den här modulen håller
    sig till scenen: ingen hålväljare, ingen autoladdning. Flaggan läses EN gång,
@@ -194,20 +212,362 @@ const TRAD_OPS = BF ? BF.parse(TRAD_FILTER) : null;
    <colorspace_fragment>. Där är gl_FragColor sRGB — samma färgrum som CSS-
    filtren verkar i — så matten blir identisk med webbläsarens. Läggs den före
    färgrumskonverteringen räknar den på linjärt ljus och ger fel ton. */
-function filtrera(mat, ops, namn) {
+function filtrera(mat, ops, namn, fore) {
   if (!mat || !ops || mat.userData.__bildfilter) return;
   mat.userData.__bildfilter = namn;
   const fn = BF.glsl(ops, namn);
   mat.onBeforeCompile = shader => {
+    if (fore) fore(shader);            // tongainen först, i samma sRGB-rum
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <colorspace_fragment>',
-      `#include <colorspace_fragment>\n  gl_FragColor.rgb = ${namn}(gl_FragColor.rgb);`
+      `#include <colorspace_fragment>\n${mat.userData.__tonRad || ''}  gl_FragColor.rgb = ${namn}(gl_FragColor.rgb);`
     ).replace('void main() {', `${fn}\nvoid main() {`);
   };
   mat.needsUpdate = true;
 }
 
-const filtreraMark = obj => obj?.traverse(c => filtrera(c.material, MARK_KORR, 'markKorr'));
+/* ---- GLB-texturen ligger för mörkt: lyft den till tiles gräston -------------
+ *
+ * ORTOFOTO_FARG.md §Känt gap. Tiles tonkalibreras så varje banas GRÄS hamnar på
+ * `ortofoto_ton.json`:s frysta `target_rgb`; holes3d-GLB:erna är bakade med den
+ * GAMLA pipelinen och fick aldrig den behandlingen. Uppmätt på Burlöv: texturens
+ * gräs ligger på 0,71 av måstonen, och kvoten är nästan lika i alla tre band —
+ * alltså en ren LJUSHETSMISS, inte en färgvridning (nyansen skiljer 2,0°).
+ *
+ * Följden är att 2D och 3D visar samma gräs 27 % olika ljust, vilket är hela den
+ * skillnad man ser när man byter vinkel. Grundaren 2026-08-10: "jag vill uppleva
+ * minimal skillnad när jag byter mellan 2d och 3d".
+ *
+ * GAINEN MÄTS, den knådas inte. Vi läser texturens EGET gräs och delar måstonen
+ * med det — samma princip som `MARK_KORR` (härledd ur de två filtersträngarna,
+ * aldrig handsatt). Då gäller den för vilken bana som helst, och den blir 1,0 av
+ * sig själv den dag GLB:erna byggs om rätt. Klampen finns för att en textur utan
+ * gräs (eller en trasig mätning) aldrig ska få lysa upp eller släcka vyn.
+ *
+ * Gräsmasken är avsiktligt grov — grönt dominerar, inte utbränt, inte svart —
+ * och MEDIANEN används, inte medelvärdet: en bunker eller ett tak i urvalet ska
+ * inte kunna dra tonen. Mätningen görs EN gång per material, på en nedskalad
+ * kopia (max 512 px bred), och kostar då någon millisekund vid hålbytet. */
+const GRAS_MAL = (typeof CourseMap !== 'undefined' && CourseMap.GRASS_TARGET) || null;
+const TON_GAIN_MIN = 0.8, TON_GAIN_MAX = 2.0;
+
+function grasMedian(img) {
+  const bredd = Math.min(512, img.width || 0);
+  if (!bredd) return null;
+  const hojd = Math.max(1, Math.round((img.height / img.width) * bredd));
+  const cv = document.createElement('canvas');
+  cv.width = bredd; cv.height = hojd;
+  const ctx2 = cv.getContext('2d', { willReadFrequently: true });
+  if (!ctx2) return null;
+  ctx2.drawImage(img, 0, 0, bredd, hojd);
+  let d;
+  try { d = ctx2.getImageData(0, 0, bredd, hojd).data; } catch (_) { return null; }
+  const R = [], G = [], B = [];
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (d[i + 3] < 200) continue;
+    if (!(g > r && g > b && g > 25 && g < 215)) continue;   // grovt gräs
+    R.push(r); G.push(g); B.push(b);
+  }
+  if (R.length < 500) return null;          // för lite gräs → mät inte, gissa inte
+  const med = a => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  return [med(R), med(G), med(B)];
+}
+
+/* Returnerar en `fore`-krok till `filtrera`, eller null när gainen inte behövs. */
+function tonlyft(mat) {
+  if (!GRAS_MAL || !mat || !mat.map || !mat.map.image) return null;
+  const uppmatt = grasMedian(mat.map.image);
+  if (!uppmatt) return null;
+  const gain = GRAS_MAL.map((m, i) =>
+    Math.min(TON_GAIN_MAX, Math.max(TON_GAIN_MIN, m / uppmatt[i])));
+  mat.userData.__tonGain = gain;
+  mat.userData.__tonMatt = uppmatt;
+  mat.userData.__tonRad =
+    '  gl_FragColor.rgb = clamp(gl_FragColor.rgb * uTonGain, 0.0, 1.0);\n';
+  return shader => {
+    shader.uniforms.uTonGain = { value: new THREE.Vector3(gain[0], gain[1], gain[2]) };
+    shader.fragmentShader =
+      shader.fragmentShader.replace('void main() {', 'uniform vec3 uTonGain;\nvoid main() {');
+  };
+}
+
+/* ---- ljuset ska INTE ändras när överdriften ändras (ORTOFOTO_FARG.md) -----
+ *
+ * `applyExag` sätter `ground.scale.y = exag`. Det är en ICKE-UNIFORM skalning,
+ * och marken kommer ur GLB:en utan normal-attribut — three.js flat-shadar den
+ * alltså ur geometrin. Sträcks höjden 5× blir sluttningarna verkligen brantare,
+ * en korrekt normal fångar solen annorlunda, och hela bilden byter ljushet mitt
+ * under ett drag i reglaget. Uppmätt med LÅST kamera: solens bidrag faller 43 %
+ * mellan 1× och 5× (6,0 → 3,4 luminansenheter på en fairwayruta).
+ *
+ * Renderingen var inte fel — den var fysikaliskt riktig för en terräng vi själva
+ * förvrängt. Grundarens beslut 2026-08-10: **ljussätt den SANNA geometrin.**
+ * Överdriften är en läshjälp för formen, inte ett påstående om ljuset; bilden
+ * ska upplevas stabil och förutsägbar.
+ *
+ * MATEMATIKEN. För en yta y = h(x, z) är normalen ∝ (−hₓ, 1, −h_z). Med
+ * överdriften k ritas y = k·h, vars normal är ∝ (−k·hₓ, 1, −k·h_z). Den sanna
+ * normalen fås alltså tillbaka genom att dela de VÅGRÄTA leden med k:
+ *
+ *     n_sann ∝ ( n_ritad.x / k ,  n_ritad.y ,  n_ritad.z / k )
+ *
+ * Det måste ske i VÄRLDSRUMMET (där y är upp), inte i vyrummet där three.js
+ * räknar ljus — därför vändningen fram och tillbaka med `viewMatrix`. Dess
+ * rotationsdel är ortonormal, så transponatet är inversen: `vec4(n,0) *
+ * viewMatrix` är vy→värld utan att någon matris behöver skickas in.
+ *
+ * Uniformen delas med materialet och uppdateras av `applyExag` — kompileras om
+ * gör den aldrig, så ett drag i reglaget kostar ingenting. */
+const _sannNormal = new Set();
+function ljussattSannGeometri(mat) {
+  if (!mat || mat.userData.__sannNormal) return;
+  mat.userData.__sannNormal = true;
+  const u = { value: exag };
+  mat.userData.__uExag = u;
+  const forra = mat.onBeforeCompile;      // kedja: markKorr är redan lagd
+  mat.onBeforeCompile = shader => {
+    if (forra) forra(shader);
+    shader.uniforms.uExag = u;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform float uExag;\nvoid main() {')
+      .replace('#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>
+  {
+    vec3 nW = normalize( ( vec4( normal, 0.0 ) * viewMatrix ).xyz );   // vy -> värld
+    nW = normalize( vec3( nW.x / uExag, nW.y, nW.z / uExag ) );        // bort med överdriften
+    normal = normalize( ( viewMatrix * vec4( nW, 0.0 ) ).xyz );        // tillbaka till vyn
+  }`);
+  };
+  _sannNormal.add(mat);
+  mat.needsUpdate = true;
+}
+const sannNormalUppdatera = () =>
+  _sannNormal.forEach(m => { if (m.userData.__uExag) m.userData.__uExag.value = exag; });
+
+/* F1: MARKEN ÄR MATT. Gräs speglar inte, och den hinna som syntes när kameran
+ * lades ner mot horisonten var den speglande termen, inte dis.
+ *
+ * `MeshStandardMaterial` ger varje yta en dielektrisk grundreflex på 4 %
+ * (`material.specularColor = mix(vec3(0.04), diffus, metalness)` i
+ * `<lights_physical_fragment>`) och Fresnel lyfter den mot 100 % vid strykande
+ * infall. `roughness = 1` breddar loben men tar inte bort den. Följden är att
+ * marken blir ljusare OCH mindre mättad ju lägre kameran ligger — exakt
+ * grundarens beskrivning "ljusare mark och mindre grön, som en tunn hinna".
+ *
+ * Uppmätt i browsern på Burlöv blue_1 (egen kamera, samma bildruta, samma
+ * pixlar, enda skillnaden den här injektionen), som kvot med/utan spegling på
+ * SAMMA världspunkt: 1,040 rakt uppifrån → 1,061 vid 5° över horisonten, och
+ * mättnaden vid 5° 0,397 med mot 0,433 utan. Termen växer alltså 55 % relativt
+ * när blicken läggs ner, och den gör det genom att bleka gräset.
+ *
+ * Dis var huvudmisstanken och är UTESLUTEN i samma mätning: `scene.fog = null`
+ * gav bit-identiska tal vid alla vinklar (marken ligger ~233 m från kameran,
+ * dimman börjar på 900).
+ *
+ * Injektionen kedjas efter de andra av samma skäl som de: allt som rör markens
+ * material ska ligga i EN kedja, annars skriver den sista över de tidigare. */
+function mattMark(mat) {
+  if (!mat || mat.userData.__mattMark) return;
+  mat.userData.__mattMark = true;
+  const forra = mat.onBeforeCompile;      // kedja: markKorr + sannNormal ligger före
+  mat.onBeforeCompile = shader => {
+    if (forra) forra(shader);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_physical_fragment>',
+      '#include <lights_physical_fragment>\n  material.specularColor = vec3( 0.0 );');
+  };
+  mat.needsUpdate = true;
+}
+
+const filtreraMark = obj => obj?.traverse(c => {
+  filtrera(c.material, MARK_KORR, 'markKorr', tonlyft(c.material));
+  ljussattSannGeometri(c.material);      // EFTER filtrera: onBeforeCompile kedjas
+  mattMark(c.material);                  // F1: sist i kedjan, samma skäl
+  ljusniva(c.material);                  // F2: allra sist — den läser markKorr-raden
+});
+
+/* ---- F2: LJUSNIVÅN — självkalibrering mot 2D-kartans gräs ------------------
+ *
+ * `tonlyft` lägger texturens gräs på den frysta måstonen, men 2D-kartan är en
+ * BILD och 3D-marken är LJUSSATT. Kvar efter tonlyftet var därför en ren
+ * nivåskillnad: uppmätt ljusfaktor 0,803 av neutral (ORTOFOTO_FARG §"Kvar: de
+ * sista 19 procenten"), och det är hela den skillnad man ser vid ett vinkelbyte.
+ *
+ * DEN ANALYTISKA VÄGEN ÄR STÄNGD, och det är mätt: summeras ljusriggen för hand
+ * (hemisfär på uppåtnormal + riktat ljus × dot) blir svaret 1,759 mot uppmätta
+ * 0,803 — 2,19× fel. three.js egna faktorer (π-hantering, ljusmodell,
+ * tonemapping) följer inte den naiva modellen, så en konstant härledd så vore en
+ * siffra som SER härledd ut men är gissad.
+ *
+ * Så vi frågar bilden i stället. Marken renderas EN gång med allt annat dolt
+ * (träden är också gröna och skulle förorena gräsmasken), gräsets median läses
+ * ur bilden och jämförs med `MARK_KORR(GRAS_MAL)` — alltså måstonen sedd genom
+ * exakt den korrigering marken redan bär. Kvoten blir `uF2`.
+ *
+ * FYRA saker gör det säkert, och tre av dem är dyrköpta:
+ *   · Kameran är ORTOGRAFISK och rakt uppifrån. Det är samma blick som
+ *     2D-kartan har, och den enda vinkel där frågan "ser gräset likadant ut?"
+ *     ens är välställd.
+ *   · Mätningen går på CANVASEN, inte i ett rendermål (färgrymden — se
+ *     `matGrasIBilden`).
+ *   · Kontrollmätningen använder SAMMA pixlar som förmätningen (masken — se
+ *     `grasMedianBuffert`).
+ *   · Klampen är densamma som tonlyftets. En textur utan gräs ger ingen
+ *     kalibrering alls (`null`) — mät inte, gissa inte.
+ *
+ * Dagen GLB:erna byggs om mot den frysta måstonen (U28 / väg 1) blir både
+ * tonlyftets gain och den här kvoten 1,0 av sig själva. Ingen kod behöver ändras
+ * för det, vilket är hela poängen med att mäta i stället för att knåda. */
+const F2_MIN = 0.5, F2_MAX = 2.0;
+let f2Rest = null;              // sista mätningens kvarvarande fel, för ?dbg=1
+
+/* Ljusnivåns gain ligger SIST i markens fragmentkedja, efter `markKorr` — och
+ * det är ett mätt beslut, inte en smaksak.
+ *
+ * Planen sa "vik in kvoten i samma gain som `tonlyft` redan sätter". Prövat och
+ * förkastat: `tonlyft` verkar FÖRE `markKorr`, och `markKorr` är affin (gain och
+ * OFFSET — den är inversen av en CSS-filterkedja). Att multiplicera insignalen
+ * med k multiplicerar därför inte utsignalen med k, och en omgång tog gräset
+ * 71 → 82 mot målet 96,8. Itererat konvergerade det först efter sex varv och
+ * krävde en total texturgain nära 2,9× — som hade bränt ut sand och tak.
+ *
+ * Läggs gainen EFTER korrigeringen är den däremot precis vad den utger sig för
+ * att vara: en multiplikation av det som visas. Då stämmer planens ord "det är
+ * multiplikativt rakt igenom, så det konvergerar i ett steg" — men om utsignalen,
+ * inte om texturen. */
+function ljusniva(mat) {
+  if (!mat || mat.userData.__uF2) return;
+  const u = { value: new THREE.Vector3(1, 1, 1) };
+  mat.userData.__uF2 = u;
+  const forra = mat.onBeforeCompile;      // kedjas SIST: markKorr-raden ska finnas
+  mat.onBeforeCompile = shader => {
+    if (forra) forra(shader);
+    shader.uniforms.uF2 = u;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform vec3 uF2;\nvoid main() {')
+      .replace('  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);',
+               '  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);\n'
+               + '  gl_FragColor.rgb = clamp(gl_FragColor.rgb * uF2, 0.0, 1.0);');
+  };
+  mat.needsUpdate = true;
+}
+
+/* Gräsets median i en RGBA-buffert (samma grova mask som `grasMedian`).
+ *
+ * `mask` = indexlistan från en TIDIGARE mätning, och den är hela skillnaden
+ * mellan en kontrollmätning som betyder något och en som ljuger. Räknas masken
+ * om efter att gainen lagts på flyttar sig POPULATIONEN: villkoret `g < 215`
+ * släpper ut de pixlar som just blivit ljusare, och medianen stiger då mindre
+ * än gainen. Uppmätt med omräknad mask: en gain på 1,363 flyttade medianen
+ * 71 → 85, alltså 1,197× — vilket ser ut som att multiplikationen inte biter,
+ * fast det är urvalet som bytts ut. Samma pixlar före och efter, alltid. */
+function grasMedianBuffert(buf, mask) {
+  const R = [], G = [], B = [], idx = [];
+  const med = a => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  if (mask) {
+    for (const i of mask) { R.push(buf[i]); G.push(buf[i + 1]); B.push(buf[i + 2]); }
+    if (!R.length) return null;
+    return { rgb: [med(R), med(G), med(B)], mask };
+  }
+  for (let i = 0; i < buf.length; i += 4) {
+    const r = buf[i], g = buf[i + 1], b = buf[i + 2];
+    if (buf[i + 3] < 200) continue;
+    if (!(g > r && g > b && g > 25 && g < 215)) continue;
+    R.push(r); G.push(g); B.push(b); idx.push(i);
+  }
+  if (R.length < 500) return null;
+  return { rgb: [med(R), med(G), med(B)], mask: idx };
+}
+
+/** Renderar `obj` rakt uppifrån och mäter gräsmedianen i bilden.
+    `mask` återanvänder ett tidigare urval — se `grasMedianBuffert`. */
+function matGrasIBilden(obj, mask) {
+  if (!obj) return null;
+  const box = new THREE.Box3().setFromObject(obj);
+  const mitt = box.getCenter(new THREE.Vector3());
+  const stl = box.getSize(new THREE.Vector3());
+  const halv = Math.max(stl.x, stl.z) * 0.5;
+  if (!(halv > 0)) return null;
+
+  const cam = new THREE.OrthographicCamera(-halv, halv, halv, -halv, 0.1, halv * 8 + 1000);
+  cam.position.set(mitt.x, box.max.y + halv * 2 + 50, mitt.z);
+  cam.up.set(0, 0, -1);                    // rakt uppifrån: "upp" i bild = -z
+  cam.lookAt(mitt.x, mitt.y, mitt.z);
+
+  const dolda = [];
+  scene.traverse(o => {
+    if (o === scene || o.isLight) return;
+    if (o === obj || obj.getObjectById(o.id)) return;
+    if (o.parent === scene && o.visible) { dolda.push(o); o.visible = false; }
+  });
+  /* Bakgrunden byts mot magenta under mätningen, och det är inte kosmetik:
+     disfärgen `#a9c2c0` PASSERAR gräsmasken (g > r, g > b, g < 215), så en
+     himmel runt marken räknades som gräs och drog medianen mot himlen. Uppmätt
+     med den kvar: median (101, 138, 134) — ett blågrönt tal som inget gräs har.
+     Magenta har g = 0 och faller alltså på första villkoret. */
+  const bgFore = scene.background;
+  scene.background = new THREE.Color(0xff00ff);
+  /* MÄTNINGEN GÅR PÅ CANVASEN, inte i en WebGLRenderTarget — och det är mätt,
+     inte en smaksak. Ett rendermål är LINJÄRT som default, och då är
+     `<colorspace_fragment>` en no-op: både `markKorr` och den här gainen räknar
+     då i fel rum (de injiceras efter det chunket just för att arbeta i sRGB,
+     som CSS-filtren gör). Att sätta `rt.texture.colorSpace` hjälpte inte i den
+     three-version vi kör. Symptomet var lömskt: en gain på 1,363 flyttade
+     medianen bara 1,17× (≈ kvadratroten), alltså "multiplikationen biter inte"
+     — fast den bet i linjärt ljus och lästes efter en gammakodning. På canvasen
+     är samma serie exakt linjär: gain 1,2 / 1,5 / 2,0 gav 1,194 / 1,495 / 2,00.
+
+     Priset är en bildruta där bara marken syns. Den kostar ingenting: nästa
+     rAF-ruta ritar om hela scenen, och kalibreringen körs en gång per hål. */
+  const gl = renderer.getContext();
+  renderer.render(scene, cam);
+  const bredd = gl.drawingBufferWidth, hojd = gl.drawingBufferHeight;
+  const buf = new Uint8Array(bredd * hojd * 4);
+  gl.readPixels(0, 0, bredd, hojd, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  scene.background = bgFore;
+  dolda.forEach(o => { o.visible = true; });
+  return grasMedianBuffert(buf, mask);
+}
+
+/** F2: mät `obj` i bilden, jämför med måstonen och sätt dess `uF2`.
+ *
+ * Ett steg, och sedan en KONTROLLMÄTNING. Kontrollen är inte kosmetik — den är
+ * beviset för att ett steg räcker, och den enda plats där ett framtida steg som
+ * bryter multiplikativiteten skulle synas i stället för att tyst ligga kvar.
+ * `?dbg=1` → `f2()` bär det kvarvarande felet per band.
+ *
+ * KJOLEN KALIBRERAS FÖR SIG, och det är inte en detalj. Första versionen mätte
+ * bara hålets mark, och då blev sömmen ett LJUSBYTE: marken lyftes 1,33× medan
+ * kjolen låg kvar på 1,0, alltså precis den skillnad U15 punkt 4 byggdes för att
+ * dölja (grundarens skärmbild 2026-08-12 — högupplöst band ljust, kjolen mörk).
+ * De två har dessutom olika texturupplösning och olika innehåll, så att kopiera
+ * hålets gain hade varit en gissning; båda mäts mot SAMMA måston i stället, och
+ * då landar de på samma ton av konstruktion. */
+function sjalvkalibrera(obj) {
+  if (!GRAS_MAL || !MARK_KORR || !obj || !BF) return null;
+  const mal = BF.apply(MARK_KORR, GRAS_MAL.map(v => v / 255)).map(v => v * 255);
+  const uniformer = [];
+  obj.traverse(c => {
+    const u = c.material && c.material.userData.__uF2;
+    if (u && !uniformer.includes(u)) uniformer.push(u);
+  });
+  if (!uniformer.length) return null;
+
+  const fore = matGrasIBilden(obj);
+  if (!fore) return null;                        // för lite gräs → gissa inte
+  const f2 = mal.map((m, i) =>
+    Math.min(F2_MAX, Math.max(F2_MIN, m / Math.max(1, fore.rgb[i]))));
+  uniformer.forEach(u => u.value.set(f2[0], f2[1], f2[2]));
+
+  const efter = matGrasIBilden(obj, fore.mask);  // SAMMA pixlar som före
+  const rad = { mal: mal.map(v => +v.toFixed(1)), fore: fore.rgb,
+                efter: efter && efter.rgb, pixlar: fore.mask.length,
+                f2: f2.map(v => +v.toFixed(3)),
+                fel: efter ? mal.map((m, i) => +((efter.rgb[i] - m) / m).toFixed(4)) : null };
+  f2Rest = Object.assign({}, f2Rest, { [obj === ground ? 'mark' : 'kjol']: rad });
+  return rad;
+}
 const filtreraTrad = obj => filtrera(obj?.material, TRAD_OPS, 'tradTon');
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 4000);
@@ -224,6 +584,16 @@ const controls = new CameraController(camera, renderer.domElement, {
 if (new URLSearchParams(location.search).get('dbg') === '1') {
   window.__hal3d = {
     ctl: controls, camera, scene, renderer,
+    /* U25: hålets identitet OCH vad scenen faktiskt bär. U24 mätte värdsidans
+       `h3dLaddat` och gick därför miste om att scenen kunde bära TVÅ hål
+       samtidigt — flaggan sa "hål 8" medan hål 7:s mark låg kvar bakom den.
+       `mark`/`kjol` räknar noder, inte flaggor, och ska ALLTID vara 1/0..1. */
+    hal: () => ({
+      slug: (meta && meta.slug) || null,
+      gen: laddGen, laddar: laddar && laddar.slug,
+      mark: scene.children.filter(o => o.name === MARK_NAMN).length,
+      kjol: scene.children.filter(o => o.name === KJOL_NAMN).length,
+    }),
     // U7: bildfrekvens + rendererns egen räknare. `fps()` ger median och p95 på
     // bildrutetiden; `nollstallFps()` före en mätning så uppstarten inte räknas.
     fps: fpsStat, nollstallFps,
@@ -246,6 +616,10 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
     /* U7: scenens finish verifieras i scengrafen, inte i en skärmdump — en
      * skuggkarta som inte är påslagen och en skugga som faller åt fel håll ser
      * likadana ut i en pixelbild om man inte vet vad man letar efter. */
+    // F2: vad självkalibreringen mätte på det här hålet — mål, före, efter och
+    // kvoten. `efter` ska ligga på `mal`; gör den inte det är kedjan inte längre
+    // multiplikativ och en omgång räcker inte.
+    f2: () => f2Rest,
     finish: () => ({
       skuggkarta: { pa: renderer.shadowMap.enabled, typ: renderer.shadowMap.type,
                     storlek: [sol.shadow.mapSize.x, sol.shadow.mapSize.y] },
@@ -604,6 +978,10 @@ renderer.setAnimationLoop(tick);
 // SANN höjd oavsett överdrift (samma grepp som PC-vyn): deras instans-
 // matriser räknas om — bara markfoten (groundY) följer skalan.
 const loader = new GLTFLoader();
+/* Namnen är scenens egen bokföring (U25): med dem går det att RÄKNA hur många
+   marker och kjolar som ligger i scenen, i stället för att lita på en flagga i
+   värdsidan. Det ska alltid vara högst en av varje — se `__hal3d.hal()`. */
+const MARK_NAMN = 'hal-mark', KJOL_NAMN = 'u15-wide';
 let ground = null, treeParts = [], lineObj = null, markers = [], hojdMarker = null;
 let wide = null;              // U15 vidvinkeln: terrängen bortom korridoren
 let meta = null;
@@ -611,14 +989,25 @@ let exag = 3;
 
 const CROWN_GREENS = [0x4a6741, 0x587644, 0x405c3a, 0x62804e];
 
+/* Kasta ett scenobjekt och dess GPU-minne. Bruten ur clearHole eftersom en
+   AVBRUTEN laddning (U25) måste kunna slänga en glb som aldrig kom in i
+   scenen — den syns inte i någon variabel och skulle annars ligga kvar i
+   drivrutinen tills fliken stängs. */
+function slangObjekt(o) {
+  if (!o) return;
+  scene.remove(o);
+  o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
+}
+
 function clearHole() {
   for (const o of [ground, wide, lineObj, hojdMarker, ...treeParts, ...markers,
-                   ...shotObjs]) {
-    if (!o) continue;
-    scene.remove(o);
-    o.traverse?.(c => { c.geometry?.dispose(); c.material?.map?.dispose?.(); c.material?.dispose?.(); });
-  }
+                   ...shotObjs]) slangObjekt(o);
   ground = null; wide = null; lineObj = null; treeParts = []; markers = []; hojdMarker = null;
+  /* U25: metan hör till hålet och MÅSTE följa med i tömningen. Låg den kvar
+     efter en misslyckad laddning svarade `konv()` med FÖRRA hålets affin medan
+     appen visade det nya — en punkt satt i 3D hamnade då på fel gräs i 2D, och
+     ingenting i bilden avslöjade det. */
+  meta = null;
   markIndex = null;                       // hör till hålet, inte till vyn
   shotObjs = []; KEDJA = [];
   rensaSlope(); slopeHal = null;          // U13: lutningen hör till hålet
@@ -1079,13 +1468,16 @@ function ritaVindPanel() {
   // rör vinden UTAN att röra slagen (panelen öppnas) schemalägger siktet själva.
 }
 
-async function hamtaVind() {
+async function hamtaVind(gen) {
   vindHamtad = null;
   if (!meta || !meta.ll2xz || !meta.line) { ritaVindPanel(); return; }
   const mitt = meta.line[Math.floor(meta.line.length / 2)];
   const [lat, lon] = xzLL(mitt[0], mitt[2]);
   try {
     const w = await PlayAs.fetchWind(lat, lon);
+    // U25: nätet är långsammare än ett hålbyte. Utan generationen skrevs det
+    // förra hålets vind in på det nya, och kedjan räknades om med den.
+    if (!aktuell(gen)) return;
     if (w) vindHamtad = { ms: w.ms, dir: w.dir, gust: w.gust, ts: Date.now() };
   } catch { /* utan nät: vindHamtad förblir null och panelen säger det */ }
   ritaVindPanel();
@@ -1115,22 +1507,86 @@ let slagTal = [];
 /* En ellips på marken vid NEDSLAGET b, orienterad efter slagriktningen a→b:
    halvaxeln `aCross` tvärs banan, `aAlong` längs den. Bruten ur W3:s
    byellips när U17 behövde rita en andra (spelarens antagna spridning) —
-   två ellipser med samma form ska inte ha två ritvägar som kan glida isär. */
-function ritaEllips(a, b, aCross, aAlong, farg, opacity, namn) {
+   två ellipser med samma form ska inte ha två ritvägar som kan glida isär.
+
+   `biasAlong` skjuter CENTRUM längs slaget (− = kort, mot a). Spridningen och
+   biasen är två olika påståenden om samma fördelning — hur brett, och var — och
+   den som bara ritar det första ritar en ellips som ligger på fel ställe. */
+function ritaEllips(a, b, aCross, aAlong, farg, opacity, namn, biasAlong = 0) {
   const langd = Math.hypot(b.x - a.x, b.z - a.z) || 1;
   const fx = (b.x - a.x) / langd, fz = (b.z - a.z) / langd;   // framåt
+  const cx = b.x + fx * biasAlong, cz = b.z + fz * biasAlong;
   const kurva = new THREE.EllipseCurve(0, 0, aCross, aAlong, 0, 2 * Math.PI);
   const pts = kurva.getPoints(48).map(p => {
-    const x = b.x + fx * p.y + (-fz) * p.x;
-    const z = b.z + fz * p.y + (fx) * p.x;
+    const x = cx + fx * p.y + (-fz) * p.x;
+    const z = cz + fz * p.y + (fx) * p.x;
     return new THREE.Vector3(x, surfaceYAt(x, z, 0) + LINE_OFFSET, z);
   });
   const ring = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(pts),
     new THREE.LineBasicMaterial({ color: farg, transparent: true, opacity }));
   ring.name = namn;
+  // Centrum bärs som data och inte bara som 48 punkter i en buffert: det är så
+  // en scengraf-verifiering kan MÄTA att biasen faktiskt flyttade ellipsen
+  // (samma bokföring som förslagsringens `userData.mitt`).
+  ring.userData.mitt = { x: cx, z: cz };
+  ring.userData.biasAlong = biasAlong;
   scene.add(ring); shotObjs.push(ring);
   return ring;
+}
+
+/* U26 — två HDR-konturer (50 %, 90 %) i stället för 1σ-ellipsen. En 1σ-ellips
+   rymmer bara 39 % av nedslagen utan att säga det, och sedan M0c (GP1:s
+   hinkar fick en missmodell) har fördelningen en tät kärna och en tjock
+   svans som en ellips ljuger om. `mobile/fordelning.js` räknar konturerna ur
+   SAMMA punktmoln (`Strategi.punktmoln`) som redan prissätter slaget — den
+   här funktionen bara roterar in dem i scenen, exakt som `ritaEllips` gjorde.
+
+   `eff`: SlagJust.effektiv()-formen — `sprCross`/`sprAlong` är BREDDERNA
+   (σ), `sprBiasAlong` centrum (− = kort, redan bar av `alongMean`), `miss`
+   fördelningens FORM (eller null ⇒ ren normalfördelning). Byellipsen (W3)
+   rörs INTE av den här funktionen — den är ett vindspann och inte en
+   sannolikhetsfördelning, och ritas fortfarande med `ritaEllips`. */
+function ritaFordelning(a, b, eff, namn, farg) {
+  const langd = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+  const fx = (b.x - a.x) / langd, fz = (b.z - a.z) / langd;   // framåt
+  const alongSd = eff.sprAlong || 0.1, acrossSd = eff.sprCross || 0.1;
+  const biasAlong = eff.sprBiasAlong || 0;
+  const { konturer } = Fordelning.hdr({
+    alongMean: biasAlong, acrossMean: 0,
+    alongSd, acrossSd, miss: eff.miss || null, n: 2048,
+  });
+  const objs = [];
+  for (const k of konturer) {
+    const ytre = k.q >= 0.9;
+    const pts = [];
+    for (const [al0, ac0, al1, ac1] of k.segment) {
+      // Samma rotation som ritaEllips: p.x tvärs (across), p.y längs (along).
+      const x0 = b.x + fx * al0 + (-fz) * ac0, z0 = b.z + fz * al0 + fx * ac0;
+      const x1 = b.x + fx * al1 + (-fz) * ac1, z1 = b.z + fz * al1 + fx * ac1;
+      pts.push(new THREE.Vector3(x0, surfaceYAt(x0, z0, 0) + LINE_OFFSET, z0));
+      pts.push(new THREE.Vector3(x1, surfaceYAt(x1, z1, 0) + LINE_OFFSET, z1));
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    // Inre: hel och tydlig. Yttre: samma kulör, tunnare och mer genomskinlig
+    // — konturerna skiljs åt med opacitet/tjocklek och inte med streck, för
+    // en streckad linje kräver ordnade punkter och marching-squares-segment
+    // är avsiktligt INTE hopsydda till en ring (§5 U26).
+    const mat = new THREE.LineBasicMaterial({
+      color: farg, transparent: true, opacity: ytre ? 0.35 : 0.8,
+      linewidth: ytre ? 1 : 2 });
+    const obj = new THREE.LineSegments(geo, mat);
+    obj.name = `${namn}-q${Math.round(k.q * 100)}`;
+    // Samma bokföring som ritaEllips fick 2026-08-12: centrum och bias som
+    // DATA, inte bara punkter i en buffert, så en scengraf-verifiering kan
+    // mäta att biasen flyttade konturen.
+    obj.userData.mitt = { x: b.x + fx * biasAlong, z: b.z + fz * biasAlong };
+    obj.userData.biasAlong = biasAlong;
+    obj.userData.q = k.q;
+    scene.add(obj); shotObjs.push(obj);
+    objs.push(obj);
+  }
+  return objs;
 }
 
 /* ------------------------------------------- U8: hinderlagret --------------
@@ -1483,18 +1939,20 @@ function buildShots() {
                                y0 + (y1 - y0) * t + h,
                                a.z + (b.z - a.z) * t + sido[1] * off);
     });
-    // W3: byigheten gör nedslaget till en fördelning, inte en punkt.
+    // W3: byigheten gör nedslaget till en fördelning, inte en punkt. Ingen bias:
+    // en by drar inte systematiskt åt ett håll. (`gustE.skew` finns och skjuter
+    // centrum nedvinds i PC-vyn — att den inte används här är en KÄND skillnad
+    // mot rundor3d.js, inte något biasen råkade göra.)
     if (rad.gustE)
-      ritaEllips(a, b, rad.gustE.aCross, rad.gustE.aAlong, 0x9fc4ae, 0.7, `slag-by-${i}`);
-    // U17 + GP1: spridningsellipsen. Två olika saker med samma form, och de
-    // får inte se likadana ut: profilens tal är en MODELL (spelprofilens hink),
-    // spelarens egen siffra ett ANTAGANDE. Färgen och namnet i scengrafen
-    // skiljer dem, och panelen skriver ut vilket det är.
+      ritaEllips(a, b, rad.gustE.aCross, rad.gustE.aAlong, 0x9fc4ae, 0.7, `slag-by-${i}`, 0);
+    // U17 + GP1 + U26: fördelningens konturer. Två olika saker med samma
+    // form, och de får inte se likadana ut: profilens tal är en MODELL
+    // (spelprofilens hink), spelarens egen siffra ett ANTAGANDE. Färgen och
+    // namnet i scengrafen skiljer dem, och panelen skriver ut vilket det är.
     const eff = rad.eff;
     if (eff.sprCross > 0 || eff.sprAlong > 0)
-      ritaEllips(a, b, eff.sprCross || 0.1, eff.sprAlong || 0.1,
-                 eff.sprKalla === "egen" ? 0xffcf4d : 0x8fd6ff, 0.75,
-                 `slag-spridning-${eff.sprKalla}-${i}`);
+      ritaFordelning(a, b, eff, `slag-spridning-${eff.sprKalla}-${i}`,
+                      eff.sprKalla === "egen" ? 0xffcf4d : 0x8fd6ff);
     // U17: ett ändrat slag ska SE ändrat ut (annars tror spelaren att den
     // skruvade bågen är modellens svar), och det valda ska synas som valt. Det
     // första är en ärlighetsregel, det andra bara UI — därför olika medel:
@@ -1771,11 +2229,28 @@ function ritaSlagPanel() {
   el('sSprC').value = e.sprCross; el('sSprA').value = e.sprAlong;
   el('sSprCV').textContent = e.sprCross ? `${e.sprCross} m` : 'av';
   el('sSprAV').textContent = e.sprAlong ? `${e.sprAlong} m` : 'av';
+  // U26: panelen talar inte längre om spridningen som ett löfte i meter — en
+  // ellips (eller en enda siffra) sa aldrig hur säkert det talet var. Raden
+  // säger i stället vad de TVÅ RITADE KONTURERNA påstår, samma tal som
+  // ritaFordelning räknat: hälften resp. nio av tio av slagen innanför.
+  if (el('sprbeskrivning')) {
+    el('sprbeskrivning').textContent = (e.sprCross > 0 || e.sprAlong > 0)
+      ? 'hälften av dina slag innanför den inre konturen, nio av tio innanför den yttre'
+      : '';
+  }
+  // Biasen står UTSKRIVEN. En fördelning som tyst ligger elva meter bakom
+  // siktet läses som ett ritfel; samma fördelning med "ligger 11 m kort"
+  // bredvid är modellens svar på varför man missar green på framkanten. Under
+  // en meter sägs ingenting — då är det avrundningsbrus och inte kunskap.
+  const bias = e.sprBiasAlong || 0;
   el('sprkalla').textContent =
-    e.sprKalla === 'klubba' ? `ur klubbtrappan (${t.klubba ? t.klubba.label : 'vald klubba'})`
-    : e.sprKalla === 'profil' ? 'ur din spelprofil'
-    : e.sprKalla === 'egen' ? 'ditt eget antagande'
-    : 'ingen profil än — fyll i den under Profil';
+    (e.sprKalla === 'klubba' ? `ur klubbtrappan (${t.klubba ? t.klubba.label : 'vald klubba'})`
+     : e.sprKalla === 'profil' ? 'ur din spelprofil'
+     : e.sprKalla === 'egen' ? 'ditt eget antagande'
+     : 'ingen profil än — fyll i den under Profil')
+    + (Math.abs(bias) >= 1
+        ? ` · fördelningen ligger ${Math.abs(bias).toFixed(0)} m ${bias < 0 ? 'kort' : 'långt'}`
+        : '');
   el('sAter').disabled = !t.andrad;
   el('sAterAlla').disabled = SlagJust.antalAndrade(slagJust) === 0;
   ritaKlubbval(t);
@@ -1815,6 +2290,13 @@ const listNamn = (lista, id, standard) =>
   (lista.find(o => o.id === (id || standard)) || { label: '' }).label.toLowerCase();
 
 function ritaKlubbval(t) {
+  /* Sidan utan GP2-panel (hal3d.html) har inget klubbval att rita — kollen står
+     FÖRST, för allt nedanför skriver rakt i element som bara planeringsvyn har
+     (`kl.innerHTML`, `box.innerHTML` i ritaChiprad). Den fristående sidan når
+     inte hit idag — dess slagkedja är alltid tom, eftersom `sattPlanLegs` bara
+     anropas av planvy.html — men det är ett svagt skydd att luta sig mot: det
+     håller bara så länge ingen ger den fristående sidan en plan. */
+  if (!el('valKlubba')) return;
   const listor = Spelprofil.valListor();
   const trappa = Spelprofil.klubbtrappa(Store.profile());
   const visa = !!(listor && trappa);
@@ -1920,8 +2402,12 @@ el('slagstang').addEventListener('click', () => valjSlag(null));
 /* GP2: `Återställ till min profil` tar bort HELA slagets val — klubba, form,
    ansats och höjd på en gång. Att bara nollställa ett fält i taget hade
    lämnat spelaren att gissa vilka som fortfarande avvek, och panelen markerar
-   avvikelsen på slaget och inte per rad. */
-el('sProfil').addEventListener('click', () => {
+   avvikelsen på slaget och inte per rad.
+
+   `pa()` och inte `el()`: knappen finns bara i planeringsvyn (den fristående
+   sidan har ingen plan att välja klubba i). Ett rakt uppslag följt av en
+   lyssnare här släckte hela hal3d.html 2026-08-01 → 2026-08-12. */
+pa('sProfil', 'click', () => {
   if (valtSlag == null) return;
   delete planSlagval[valtSlag];
   if (slagvalPa) slagvalPa(valtSlag, null);
@@ -2120,6 +2606,7 @@ function applyExag(forra) {
   // träd och slag är dyra och schemaläggs till nästa bildruta (U18).
   if (ground) ground.scale.y = exag;
   if (wide) wide.scale.y = exag;      // kjolen följer marken, annars glider den
+  sannNormalUppdatera();   // ljuset ska stå stilla när formen sträcks (se ovan)
   spannUpp();     // U7: höjdskalan flyttar kronorna → skuggkameran måste följa
   omTrad();
   omLinje();
@@ -2448,36 +2935,120 @@ function sattPlanLegs(plan) {
    går igenom. Två skepnader in, en punkt ut (§5 U11). */
 let tappPa = null;
 
-async function loadHole(slug) {
+/* ---- U25: EN laddning åt gången äger scenen -------------------------------
+ *
+ * Två hålladdningar kunde vara i luften samtidigt, och den som blev klar SIST
+ * skrev sin mark i `ground` — den andras mark låg kvar i scenen utan att någon
+ * variabel längre pekade på den, alltså utom räckhåll för `clearHole`. Två
+ * ortofoton på samma djup gnager på varandra (z-fighting), och det är hela
+ * förklaringen till "allt blir suddigt och jag måste gå ur planeringsvyn och
+ * in igen": en sidomladdning var enda sättet att bli av med den.
+ *
+ * Uppmätt i browsern 2026-08-11 (Burlöv, `planvy.html?dbg=1`), se §9.11:
+ * ett klick på 3D + ett på nästa hål i samma tick gav TVÅ markgrupper och TVÅ
+ * kjolar; med 1,8 s fördröjning på ett håls json stod appen på hål 8 med hål 7:s
+ * mark kvar i scenen — alltså fel håls bild, precis som rapporterat.
+ *
+ * Två spärrar, och båda behövs:
+ *   generationen  varje laddning tar ett nummer. Efter VARJE await kollas att
+ *                 numret fortfarande är det senaste; annars slängs det som
+ *                 hämtats och laddningen avbryter utan att röra scenen.
+ *   dedupen       ett andra anrop för hålet som redan laddas får SAMMA löfte i
+ *                 stället för en andra laddning. Värdsidan har flera anropare
+ *                 (hålbyte, vinkelbyte, ny landningspunkt) och de kan komma
+ *                 tätt — det var den vägen dubbletten av samma hål uppstod.
+ *
+ * Returnerar `true` bara när hålet FAKTISKT ligger i scenen. Förr svaldes varje
+ * fel (`catch` skrev en statusrad och löftet resolvade ändå), så värdsidan
+ * markerade ett hål som laddat som aldrig kom in — och sparade sedan
+ * kamerakontrollens startvärden som "spelarens vinkel på hålet".
+ */
+let laddGen = 0;                  // varje ny laddning ogiltigförklarar de förra
+let laddar = null;                // { slug, p } — laddningen som pågår just nu
+/** Är laddningen `gen` fortfarande den som gäller? */
+const aktuell = gen => gen === laddGen;
+
+function loadHole(slug) {
+  if (laddar && laddar.slug === slug) return laddar.p;   // redan på väg — vänta på den
+  const p = laddaHalet(slug).finally(() => {
+    if (laddar && laddar.p === p) laddar = null;
+  });
+  laddar = { slug, p };
+  return p;
+}
+
+async function laddaHalet(slug) {
+  const gen = ++laddGen;
   clearHole();
   status('laddar ' + slug.replace('_', ' ') + '…');
   fakta('');
   try {
-    meta = await (await fetch(SGAsset.holes3d(`${slug}.json`))).json();
-    const gltf = await loader.loadAsync(SGAsset.holes3d(meta.glb));
+    const m = await (await fetch(SGAsset.holes3d(`${slug}.json`))).json();
+    if (!aktuell(gen)) return false;
+    meta = m;
+    const gltf = await loader.loadAsync(SGAsset.holes3d(m.glb));
+    if (!aktuell(gen)) { slangObjekt(gltf.scene); return false; }
     ground = gltf.scene;
+    ground.name = MARK_NAMN;                      // scengraf-verifiering, ?dbg=1
     ground.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
     // U7: marken TAR EMOT skuggor men kastar inga — den är en enda yta, så en
     // självskugga blir akne och inte relief. Reliefen kommer från solvinkeln.
     ground.traverse(c => { if (c.isMesh) { c.receiveShadow = true; c.castShadow = false; } });
+    skarpTextur(ground);           // U25: ortofotot ska hålla ihop i lutning
     filtreraMark(ground);          // ortofotot ska matcha 2D-kartan
     scene.add(ground);
     byggMarkindex();     // U18: EN gång per hål, före första ombyggnaden
     applyExag();
     sattSol(solLage);    // U7: solen hör till banans position — sätt om per hål
     spannUpp();          // U7: skuggkameran spänns kring DET här hålet
+    /* F2: mät ljusnivån mot 2D-kartans gräs och vik in kvoten.
+       ORDNINGEN ÄR KRITISK och kostade en felmätning: kalibreringen RENDERAR
+       scenen, så solen och skuggkameran måste redan stå på DET HÄR hålet. Lagd
+       före `sattSol`/`spannUpp` mätte den föregående håls ljus och svarade att
+       marken var 30 % för mörk (gräsmedian 71 mot 102 en bildruta senare) —
+       ett fel som ser ut som ett riktigt resultat. */
+    f2Rest = null;                    // ny hålladdning → nya mätvärden
+    sjalvkalibrera(ground);
     stopFly();
-    placeCamera();       // startvyn = överblicken, aldrig en flygning
+    /* U25: kameran har EN ägare per körläge. Den fristående sidan har ingen
+       annan som placerar den, så där är överblicken startvyn. Inbäddad äger
+       värdsidan valet (sparad hålvinkel eller överblick) och sätter den direkt
+       efter det här löftet — placerade motorn kameran också, hann en försenad
+       laddning rama in fel hål EFTER att värdsidan satt rätt vinkel. */
+    if (!EMBED) placeCamera();
     buildHojdMarker();   // U6: ny grupp per hål (clearHole tog bort förra)
     buildHojdPanel();    // bygger om profil-SVG:n och nollställer hojdS
     fakta(`${fmtDh(meta.delta_h)} · ${meta.length_m} m`);
     status('');
-    if (meta.wide) loadWide(meta.slug, meta.wide);   // U15, efter hålet
-    laddaSpridning().then(buildShots);               // U19 + GP1, efter hålet
-    hamtaVind();                                     // U16, kräver nät (§1 p3)
+    if (meta.wide) loadWide(gen, meta.wide);         // U15, efter hålet
+    laddaSpridning().then(() => { if (aktuell(gen)) buildShots(); });  // U19 + GP1
+    hamtaVind(gen);                                  // U16, kräver nät (§1 p3)
+    return true;
   } catch (e) {
+    if (!aktuell(gen)) return false;   // ett avbrott är inget fel att visa
+    meta = null;                       // ingen halv sanning kvar att fråga
     status('kunde inte ladda hålet — är det exporterat? (' + e.message + ')');
+    return false;
   }
+}
+
+/* ---- U25: marken ska vara skarp när kameran lutar -------------------------
+ *
+ * Texturerna hade `anisotropy = 1` (maskinen klarar 16, uppmätt). Vid vyns egen
+ * lutning på 55° ser GPU:n marken i skarp vinkel, väljer en grov mipnivå och
+ * suddar ut allt bortom några tiotal meter. Det är en ANNAN suddighet än
+ * dubbelmarkens — den försvinner inte av en omladdning, och den finns i varje
+ * bild. 8 är ett medvetet tak: skillnaden mot 16 syns knappt, och kostnaden
+ * betalas av varje markpixel i varje bildruta på en telefon. */
+const ANISOTROPI = 8;
+function skarpTextur(obj) {
+  const tak = Math.min(ANISOTROPI, renderer.capabilities.getMaxAnisotropy?.() || 1);
+  obj?.traverse(c => {
+    const t = c.material?.map;
+    if (!t || t.anisotropy >= tak) return;
+    t.anisotropy = tak;
+    t.needsUpdate = true;
+  });
 }
 
 // U15 vidvinkeln. Laddas EFTER hålets glb och inväntas aldrig: hålet ska vara
@@ -2490,20 +3061,28 @@ async function loadHole(slug) {
 // decimeringen plockar finrutans sampel (tools/hole_gltf.py build_wide_glb).
 const SKIRT_DROP_M = 0.3;
 
-async function loadWide(slug, file) {
+async function loadWide(gen, file) {
   try {
     const gltf = await loader.loadAsync(SGAsset.holes3d(file));
-    if (!meta || meta.slug !== slug) return;      // användaren bytte hål under laddningen
+    /* U25: samma generation som hålet, inte en egen jämförelse på slug. Kjolen
+       laddas ju för en BESTÄMD laddning av hålet — laddas samma hål om blir
+       slugen lika medan objektet hör till en scen som redan är tömd. */
+    if (!aktuell(gen)) { slangObjekt(gltf.scene); return; }
     wide = gltf.scene;
-    wide.name = 'u15-wide';                       // scengraf-verifiering, ?dbg=1
+    wide.name = KJOL_NAMN;                        // scengraf-verifiering, ?dbg=1
     wide.traverse(c => { if (c.material) { c.material.roughness = 1; c.material.metalness = 0; } });
     // U7: kjolen tar emot skuggor (annars slutar terrängen få relief precis där
     // hålet tar slut, och sömmen syns som ett ljusbyte) men kastar inga.
     wide.traverse(c => { if (c.isMesh) { c.receiveShadow = true; c.castShadow = false; } });
+    skarpTextur(wide);             // U25: samma skärpa som hålets mark
     filtreraMark(wide);            // samma korrigering som hålets mark — annars syns sömmen som ett färgbyte
     wide.scale.y = exag;
     wide.position.y = -SKIRT_DROP_M;
     scene.add(wide);
+    /* F2: kjolen kalibreras mot SAMMA måston som hålets mark, och först här —
+       den laddas efter hålet, så hålets kalibrering hade inget att sätta.
+       Utan detta blir sömmen ett ljusbyte i stället för ett osynligt överlapp. */
+    sjalvkalibrera(wide);
   } catch { /* ingen kjol för hålet — dagens vy gäller */ }
 }
 
@@ -2548,6 +3127,11 @@ const posen = () => ({
   heading: controls.state.heading, tilt: controls.state.tilt,
 });
 const sattPosen = p => { if (p && p.target) controls.setState(p); };
+/* U25: hålets överblick, för värdsidan. Inbäddad placerar motorn inte kameran
+   själv (se laddaHalet) — men värdsidan måste kunna be om SAMMA startvy som den
+   fristående sidan får, annars är "första besöket på ett hål" två olika bilder
+   beroende på vilken ingång man kom in genom. */
+const overblick = () => placeCamera();
 
 /** Finns hålet i 3D för aktiv bana? Värdsidan döljer 3D-knappen om inte. */
 async function harIndex() {
@@ -2638,7 +3222,7 @@ let bildrutaPa = null;
 const paBildruta = fn => { bildrutaPa = fn; };
 
 export { loadHole as laddaHal, sattExag, sattSynlig, setLage as sattLage,
-         sattPlanLegs, posen, sattPosen, harIndex, paTapp, paExag, paLage,
+         sattPlanLegs, posen, sattPosen, overblick, harIndex, paTapp, paExag, paLage,
          lageNu, metaNu, konv, markY, yRefPlan, flygTill, flygerNu, skarmAv, rita1,
          paKedja, kedjanNu, kedjaFor, valtNu, valjFran2d, vindenNu, sattSlope, harSlope,
          baringNu, paBildruta, paSlagval, sattHinder, sattForslag };

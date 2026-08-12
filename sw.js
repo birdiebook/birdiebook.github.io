@@ -39,9 +39,11 @@
 // så service workern och appen kan aldrig få olika uppfattning om saken.
 importScripts("assetbas.js");
 
-// Bumpas per deploy för att slå igenom ny kod. Kan sättas för hand eller
-// injiceras av ett publiceringsskript (ersätt strängen med kort commit-sha).
-const VERSION = "2026-08-05-assetbas";
+// Versionen ägs av version.js — samma sträng som appen skickar med varje runda
+// som `client.app_version` (MOLN_PLAN §6 V2). Bumpas DÄR, inte här: två
+// versionssträngar hade kunnat glida isär utan att något går sönder synligt.
+importScripts("version.js");
+const VERSION = SG_APP_VERSION;
 
 const SHELL_CACHE  = "sg-shell-v" + VERSION;
 const DATA_CACHE   = "sg-data";
@@ -49,7 +51,6 @@ const TILES_CACHE  = "sg-tiles";
 const HOLES3D_CACHE = "sg-holes3d";
 
 // App-shell: allt som behövs för att sidorna ska rendera offline.
-// (Supabase-js laddas från CDN och faller tyst tillbaka offline — ingår ej.)
 const SHELL_ASSETS = [
   "./",
   // index.html är HUBBEN sedan AS-IA steg 3 (§2.8.0) — appens rot och
@@ -66,6 +67,9 @@ const SHELL_ASSETS = [
   "oversikt.html",
   "oversikt-analys.html",
   "analys.html",
+  // Kartan över en sparad rundas slagpositioner. Ska fungera på banan (man
+  // tittar på gårdagens hål medan man står på dagens) — alltså i shell-cachen.
+  "rundkarta.html",
   "uppsattning.html",
   "profil.html",
   "tokens.css",
@@ -79,6 +83,7 @@ const SHELL_ASSETS = [
   "round.js",
   "analys-core.js",
   "analys-lista.js",
+  "rundkarta.js",
   "spelformer.js",
   "sg.js",
   "coursemap.js",
@@ -117,15 +122,28 @@ const SHELL_ASSETS = [
   // Identiteten (MOLN_PLAN §6 V1). Måste finnas offline av samma skäl som
   // live.js: profil.html laddar den, och en saknad fil hade tagit hela sidan.
   "konto.js",
+  // Klientvägen till servern (MOLN_PLAN §6 V2b). Saknas den offline kan
+  // spela.html inte köra — samma skäl som konto.js och live.js ovan.
+  "molnrunda.js",
+  // Versionssträngen. Service workern importerar den redan vid start, men den
+  // måste finnas i cachen också: annars dör SW:n vid nästa offline-start.
+  "version.js",
   "offline-download.js",
   "vendor/leaflet.js",
   "vendor/leaflet.css",
   "vendor/leaflet-rotate.js",
+  // Supabase-klienten. Lag pa jsdelivr fram till 2026-08-10 och blockerade da
+  // sju sidor: ett synkront <script> mot en doman som varken star i
+  // WKAppBoundDomains eller finns nar tackningen ar dalig. Den maste ligga
+  // har av samma skal som live.js - utan den kan sidorna inte kora offline.
+  "vendor/supabase-js.js",
   "manifest.json",
   "data/courses.json",
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",
+  "golfare.png",       // hubbens profil-ring (index.html) + entréns märke
+  "entre.html",        // entrégrinden (MOLN_PLAN §S1)
 ];
 
 // ── install: precacha shell ──────────────────────────────────────────────
@@ -136,7 +154,7 @@ self.addEventListener("install", (event) => {
     await Promise.all(SHELL_ASSETS.map(async (url) => {
       try {
         const res = await fetch(url, { cache: "reload" });
-        if (res.ok) await cache.put(url, res);
+        if (res.ok) await cache.put(url, await utanOmdirigering(res));
       } catch (_) { /* offline vid install — fylls lazy vid nästa online-besök */ }
     }));
     await self.skipWaiting();
@@ -181,6 +199,26 @@ const isData = (url) =>
   /\/data\/strategi\/[^/]+\/[^/]+\.json$/.test(url.pathname) ||
   /\/data\/green_slope\.[^/]+\.geojson$/.test(url.pathname) ||
   /\/tiles\/[^/]+\/manifest\.json$/.test(url.pathname);
+
+// Ett svar som FÖLJT en omdirigering bär flaggan `redirected`, och ett sådant
+// svar får inte serveras på en navigering — webbläsaren vägrar med
+// "Response served by service worker has redirections" och sidan dör helt.
+//
+// Det biter oss därför att Cloudflare serverar sidorna utan ändelse: precachen
+// hämtar "karta.html", får 307 till "/karta", och lagrar ett märkt svar. Så
+// länge navigering var network-first användes cachen aldrig och felet låg dolt.
+//
+// Lösningen är att bygga om svaret till ett rent 200 innan det sparas. Kroppen
+// och rubrikerna följer med; bara omdirigeringshistoriken faller bort.
+async function utanOmdirigering(res) {
+  if (!res || !res.redirected) return res;
+  const kropp = await res.blob();
+  return new Response(kropp, {
+    status: 200,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
 
 // cache-first: serva ur cache, annars nät + spara. Används för tiles + shell-assets.
 async function cacheFirst(request, cacheName) {
@@ -240,19 +278,54 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigering (HTML): network-first → alltid senaste koden online (fixar
-  // "gammal HTML"-buggen), fallback till cachad shell offline.
+  // Navigering (HTML): cachen först, uppdatering i bakgrunden.
+  //
+  // VAR network-first fram till 2026-08-10, och det gjorde varje sidbyte
+  // beroende av ett nätverkssvar. Fallbacken till cachen låg bakom ett
+  // catch — men en långsam mobiluppkoppling KASTAR inget, den dröjer. Den
+  // gamla sidan blev därför kvar på skärmen tills svaret kom, och trycket
+  // såg ut att inte ha tagit. Värst i det native skalet (TestFlight), där
+  // bytet karta -> Logga slag hängde varje gång; hemskärms-PWA:n märkte det
+  // knappt, vilket dolde felet.
+  //
+  // Att servera HTML ur cachen är inte mer riskabelt än det vi redan gör:
+  // JS och CSS är cache-first sedan tidigare, och hela shell-cachen töms vid
+  // VERSION-bump. Skillnaden är att sidan nu ritas direkt och den färska
+  // versionen hämtas hem under tiden — den syns vid nästa navigering.
   if (req.mode === "navigate" || url.pathname.endsWith(".html")) {
     event.respondWith((async () => {
-      try {
-        return await networkFirst(req, SHELL_CACHE);
-      } catch (_) {
-        const cache = await caches.open(SHELL_CACHE);
-        return (await cache.match(req)) ||
-               (await cache.match("index.html")) ||
-               (await cache.match("./")) ||
-               Response.error();
+      const cache = await caches.open(SHELL_CACHE);
+
+      // Cloudflare serverar sidorna UTAN ändelse (/karta), medan precachen
+      // lagrar dem MED (karta.html) — se nav.js filnamn(). Utan den här
+      // översättningen missar uppslaget varje gång och vi står kvar på nätet,
+      // vilket var precis felet som skulle bort.
+      let hit = await cache.match(req);
+      if (!hit && !url.pathname.endsWith(".html")) {
+        const sista = url.pathname.split("/").pop();
+        if (sista) hit = await cache.match(sista + ".html");
+        else hit = await cache.match("index.html");
       }
+
+      // Uppdatera i bakgrunden. waitUntil håller service workern vid liv tills
+      // den är klar, utan att sidan väntar på den.
+      const fardsk = fetch(req)
+        .then(async (res) => {
+          if (res && res.ok) await cache.put(req, await utanOmdirigering(res.clone()));
+          return res;
+        })
+        .catch(() => null);
+
+      // En äldre cache kan bära märkta svar; serva dem inte råa.
+      if (hit && !hit.redirected) { event.waitUntil(fardsk); return hit; }
+      if (hit) { event.waitUntil(fardsk); return utanOmdirigering(hit); }
+
+      // Inte cachad (t.ex. första besöket på en sida): då måste vi vänta.
+      const svar = await fardsk;
+      if (svar) return svar;
+      return (await cache.match("index.html")) ||
+             (await cache.match("./")) ||
+             Response.error();
     })());
     return;
   }

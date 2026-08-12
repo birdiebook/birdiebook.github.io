@@ -76,10 +76,10 @@ const SlagJust = (() => {
 
   /* Vad slaget FAKTISKT ska ritas med. `bas` bär det uppmätta/hämtade:
        { vind }  — hålets vind (hämtad eller spelarens hål-override), får vara null.
-       { spr }   — spelprofilens spridning för avståndet (GP1), {cross, along}
-                   eller null. Skickas IN i stället för att slås upp här: modulen
-                   ska förbli ren, och den ska inte känna till vare sig Store
-                   eller spelprofilen.
+       { spr }   — spelprofilens spridning för avståndet (GP1),
+                   {cross, along, alongBias, miss} eller null. Skickas IN i stället för
+                   att slås upp här: modulen ska förbli ren, och den ska inte
+                   känna till vare sig Store eller spelprofilen.
      Returnerar alltid samma form, så ritkoden aldrig behöver fråga om det finns
      en justering: utan justering är svaret basen. */
   function effektiv(bas, ov) {
@@ -94,6 +94,18 @@ const SlagJust = (() => {
       vind: o.vind !== undefined ? o.vind : ((bas && bas.vind) || null),
       apexFaktor: o.apexFaktor !== undefined ? o.apexFaktor : 1,
       sprCross, sprAlong,
+      // Ellipsens CENTRUM längs slaget (− = kort). Kommer alltid ur basen och
+      // aldrig ur `ov`: U17:s reglage är två BREDDER, och de säger ingenting om
+      // var fördelningen ligger. Drar spelaren i dem betyder det "så här brett
+      // sprider jag", inte "och jag har slutat komma kort" — så modellens
+      // centrum står kvar även när källan blivit `egen`.
+      sprBiasAlong: (spr && spr.alongBias) || 0,
+      // U26: fördelningens FORM (missandel + riktad svans) — precis som
+      // biasen kommer den ALLTID ur basen och aldrig ur `ov`. U17:s reglage är
+      // två BREDDER; de skalar fördelningen, de byter inte formen (§5 U26).
+      // `null` när ingen profil/klubbtrappa svarat — ritkoden faller då
+      // tillbaka på en ren normalfördelning (miss.p = 0), samma bild som förut.
+      miss: (spr && spr.miss) || null,
       // Varifrån spridningen kommer avgör vad panelen får PÅSTÅ: profilens tal
       // är en modell, spelarens är ett antagande. De får inte se lika säkra ut.
       sprKalla: (o.sprCross !== undefined || o.sprAlong !== undefined) ? "egen"

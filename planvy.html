@@ -35,12 +35,16 @@
 <script src="./vylage.js"></script>
 <script src="./vybro.js"></script>   <!-- U12: bron Leaflet ↔ camctl -->
 <script src="./planslag.js"></script> <!-- U19: EN beräkning av planens slag -->
-<script src="./kompass.js"></script>  <!-- U22: norr och vinden -->
+<!-- U27a tog bort kompass-WIDGETEN ur vyn, men modulen laddas kvar: `hal3d.js`
+     bygger sin `baringNu()` på `Kompass.vyBaringAvHeading` (gridnorr-termen),
+     och den används av kamerabron. Vinkelmatematiken är alltså inte kosmetik. -->
+<script src="./kompass.js"></script>
 <!-- SP2–SP4: planens FÖRSLAG, räknat i telefonen. sg.js bär baslinjen som
      motorn värderar mot, strategi.js är motorn och forslag.js lagret som vet
      vad som får ritas och skrivas. Ordningen är ett beroende, inte en smak. -->
 <script src="./sg.js"></script>
 <script src="./strategi.js"></script>
+<script src="./fordelning.js"></script> <!-- U26: HDR-konturer ur Strategi.punktmoln -->
 <script src="./forslag.js"></script>
 <link rel="stylesheet" href="./tokens.css">
 <style>
@@ -97,44 +101,44 @@
   #vinkel button[aria-pressed="true"] { background:var(--accent-ui-fyll); color:var(--accent-ink); }
   #vinkel button:disabled { opacity:.35; }
 
-  /* ---- botten i 2D: slagkedjan, lutningen, ångra ---- */
+  /* ---- botten i 2D: EN rad text ----
+     U27d: slagkedjelistan och Ångra bodde här. Listan sa om i ord vad kartan
+     redan visar (numrerade pinnar + avståndschip per segment), och Ångra var
+     enda vägen att ta bort ett slag — nu ligger den vägen på slaget självt.
+     Kvar är tipsraden, och den ska vara nästan osynlig: den lär ut en gest en
+     gång och ska inte äta bana resten av rundan. Ingen ram, ingen platta,
+     tätt mot nederkanten. */
   #bottom2d { position:fixed; left:0; right:0; z-index:1000;
-    bottom:var(--nedre);
-    display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 12px; }
-  .hint { color:var(--dim); font-size:12px; background:var(--framebg);
-    border:1px solid var(--line); border-radius:10px; padding:6px 12px; }
-  #legs { max-width:min(92vw, 420px); max-height:22vh; overflow-y:auto;
-    background:var(--framebg); border:1px solid var(--line); border-radius:10px;
-    padding:6px 10px; font-size:13px; display:none; }
-  #legs.show { display:block; }
-  #legs .leg { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
-  #legs .leg b { color:var(--ink); }
-  #legs .leg span { color:var(--dim); display:flex; align-items:center; gap:6px; }
-  /* U19: samma val som i 3D, markerat på samma sätt som scenen markerar bågen. */
-  #legs .leg { border-radius:6px; padding:2px 4px; margin:0 -4px; cursor:pointer; }
-  #legs .leg.vald { background:var(--accent-ui-tval); }
+    bottom:calc(var(--nedre) + 2px);
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    padding:0 12px; pointer-events:none; }
+  #bottom2d > * { pointer-events:auto; }
+  .hint { color:var(--dim); font-size:11px; letter-spacing:.01em;
+    text-shadow:0 0 3px var(--overlay-kontur), 0 0 3px var(--overlay-kontur); }
   /* U8: avståndschip på segmentet. Mörk kontur runt texten så den läses mot
      ljus sand i solljus — samma regel som numren och som 3D-chipet. */
   .segchip { position:absolute; transform:translate(-50%,-50%);
     background:var(--framebg); color:var(--ink); border:1px solid var(--overlay-kontur);
     border-radius:9px; padding:2px 7px; font:700 11px/1.4 inherit; white-space:nowrap;
     text-shadow:0 0 2px var(--overlay-kontur), 0 0 2px var(--overlay-kontur); }
-  #legs .klubba { font-style:normal; color:var(--accent-ui-ljus); font-weight:600; }
-  #legs .leg i { font-style:normal; color:var(--dim-svag); font-weight:400; }
-  #legs .legX { background:transparent; border:1px solid var(--line); color:var(--dim);
-    font-size:11px; line-height:1; width:18px; height:18px; border-radius:50%; padding:0; }
-  #legRow { display:flex; gap:8px; }
-  #undoBtn { background:var(--framebg); border:1px solid var(--line); color:var(--ink);
-    font-size:13px; padding:10px 16px; border-radius:14px; box-shadow:0 2px 8px var(--skuggfarg); }
-  #undoBtn:disabled { opacity:.4; }
-  /* Ångra i 3D-vinkeln: samma knapp, annan plats (bottenmitten är upptagen av
-     överdriftsreglaget). Kedjan syns i scenen, så listan behövs inte här. */
-  #undo3d { position:fixed; z-index:6; left:10px;
-    bottom:var(--nedre);
+  /* U27d: bekräftelsen för att radera ett slag. Den ligger där ögat redan är —
+     nere i bild, ovanför tipsraden — och inte som en systemdialog mitt över
+     hålet. Den är en panel av samma familj som de andra (`dold` styr den). */
+  #raderapanel { position:fixed; left:10px; right:10px; z-index:7;
+    bottom:calc(var(--nedre) + 26px);
+    max-width:340px; margin:0 auto;
     background:var(--panel); border:1px solid var(--panelkant); color:var(--ink);
-    border-radius:12px; padding:8px 12px; font:600 12px inherit;
-    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
-  #undo3d:disabled { opacity:.38; }
+    border-radius:14px; padding:10px 12px;
+    backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+    box-shadow:0 10px 32px var(--skuggfarg);
+    display:flex; align-items:center; gap:10px; }
+  #raderapanel.dold { display:none; }
+  #raderatext { flex:1; font:600 13px inherit; }
+  #raderapanel button { border-radius:11px; padding:8px 14px; font:600 12px inherit;
+    border:1px solid var(--panelkant); background:transparent; color:var(--ink);
+    cursor:pointer; }
+  #raderaJa { border-color:var(--accent-ui-kant); color:var(--accent-ui-ljus); }
 
   /* ---- 3D-chromet: SAMMA id:n och samma regler som hal3d.html ---- */
   #status { position:fixed; inset:0; display:flex; align-items:center;
@@ -148,30 +152,35 @@
     display:flex; align-items:center; gap:10px; }
   #botten label { font-size:13px; color:var(--dim); white-space:nowrap; }
   #exag { flex:1; accent-color:var(--accent-ui); }
-  /* U22: kompassen ligger överst i högerkolumnen och verktygen under den —
-     samma kolumn, så blicken har ETT ställe att gå till för "var är jag och
-     vad kan jag göra". Finns i båda vinklarna. */
+  /* U27b: toggeln ligger överst i högerkolumnen och verktygen under den —
+     samma kolumn, så blicken har ETT ställe att gå till. Finns i båda
+     vinklarna. (Kompassen låg här före U27a.) */
   /* U3: kolumnen är EN kolumn, inte två element med varsitt handräknat `top`.
-     De två talen (54 och 128) förutsatte en exakt kompasshöjd; växte kompassen
-     la sig verktygsraden ovanpå den (uppmätt 11 px överlapp). En flexkolumn
-     kan inte glida isär på det sättet. */
+     De två talen (54 och 128) förutsatte en exakt höjd på det översta
+     elementet; växte det la sig verktygsraden ovanpå (uppmätt 11 px överlapp).
+     En flexkolumn kan inte glida isär på det sättet. */
   #hogerkolumn { position:fixed; right:10px; z-index:6;
     /* Toppen mäts ur toppremsan (--topphojd, satt av `mattToppremsa`) i stället
-       för att gissas till 54px — den gissningen lät kompassen krocka 4px med
+       för att gissas till 54px — den gissningen lät kolumnen krocka 4px med
        vinkelväxeln. Fallback:en gäller bara tills första mätningen kört. */
     top:calc(var(--topphojd, 79px) + 8px);
     display:flex; flex-direction:column; gap:8px; align-items:flex-end;
     pointer-events:none; }
   #hogerkolumn > * { pointer-events:auto; }
-  #kompass { width:64px; padding:6px 4px 5px; text-align:center;
-    background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
-    backdrop-filter:blur(12px) saturate(.88) brightness(.94);
+  /* Toggeln är smalare och lägre än ett verktyg — den ska läsas som en kant på
+     raden, inte som ännu en knapp i den. */
+  #vFall { width:44px; height:26px; padding:0; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--panel); color:var(--dim); border:1px solid var(--panelkant);
+    border-radius:13px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
-    box-shadow:0 10px 32px var(--skuggfarg); cursor:pointer; }
-  #kompass svg { width:40px; height:40px; display:block; margin:0 auto; }
-  #kompassText { font:600 8.5px/1.2 inherit; color:var(--dim);
-    letter-spacing:.04em; text-transform:uppercase; margin-top:2px; }
-  #kompass.tom #kompassText { color:var(--dim-svagare); }
+    box-shadow:0 10px 32px var(--skuggfarg); }
+  #vFall svg { width:18px; height:18px; fill:none; stroke:currentColor;
+    stroke-width:2.1; stroke-linecap:round; stroke-linejoin:round;
+    transition:transform .16s ease; }
+  #hogerkolumn.hopfalld #vFall svg { transform:rotate(180deg); }
+  #hogerkolumn.hopfalld #verktyg { display:none; }
+  @media (prefers-reduced-motion: reduce) { #vFall svg { transition:none; } }
   #verktyg { display:flex; flex-direction:column; gap:8px; }
   #verktyg button { width:64px; padding:7px 4px 6px; cursor:pointer;
     display:flex; flex-direction:column; align-items:center; gap:3px;
@@ -196,18 +205,25 @@
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     box-shadow:0 10px 32px var(--skuggfarg); }
   #hojdpanel.dold { display:none; }
-  #vindpanel, #slagpanel { position:fixed; left:10px; right:10px; z-index:5;
+  #vindpanel, #slagpanel, #teepanel { position:fixed; left:10px; right:10px; z-index:5;
     bottom:var(--nedre);
     background:var(--panel); border:1px solid var(--panelkant); border-radius:14px;
     padding:9px 12px 10px; backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     -webkit-backdrop-filter:blur(12px) saturate(.88) brightness(.94);
     box-shadow:0 10px 32px var(--skuggfarg); }
   #slagpanel { max-height:62vh; overflow-y:auto; }
-  #vindpanel.dold, #slagpanel.dold { display:none; }
-  #vindrad { display:flex; justify-content:space-between; align-items:baseline;
+  #vindpanel.dold, #slagpanel.dold, #teepanel.dold { display:none; }
+  #vindrad, #teerad { display:flex; justify-content:space-between; align-items:baseline;
     font-size:13px; color:var(--dim); gap:8px; margin-bottom:6px; }
-  #vindrad b { color:var(--ink); font-size:15px; font-weight:700; }
+  #vindrad b, #teerad b { color:var(--ink); font-size:15px; font-weight:700; }
   #vindalder { font-size:11px; color:var(--dim); }
+  #teeUnderrubrik { font-size:11px; color:var(--dim); }
+  #teeChips { display:flex; gap:6px; flex-wrap:wrap; }
+  #teeChips button { flex:0 0 auto; min-height:34px; padding:6px 12px;
+    border-radius:9px; border:1px solid var(--panelkant); background:none;
+    color:var(--ink); font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  #teeChips button[aria-pressed="true"] {
+    border-color:var(--accent-ui-kant); color:var(--accent-ui-ljus); background:var(--accent-ui-tval); }
   #vindpanel .reg, #slagpanel .reg { display:grid; grid-template-columns:56px 1fr 50px;
     align-items:center; gap:8px; font-size:12px; color:var(--dim); margin-top:3px; }
   #vindpanel input[type=range], #slagpanel input[type=range] { width:100%; accent-color:var(--accent-ui); }
@@ -332,15 +348,15 @@
 <!-- 2D-vinkelns botten. Green-lutningen flyttade härifrån till verktygsraden
      (U20) — den hör till vad man kan SE på hålet, inte till kedjan. -->
 <div id="bottom2d">
-  <div id="legs"></div>
-  <div id="legRow">
-    <button id="undoBtn" disabled>↩ Ångra</button>
-  </div>
   <div class="hint" id="hint">Tappa på kartan för att lägga ett slag</div>
 </div>
-
-<!-- U22: kompassen. Ringen bär norr, nålen bär vinden — två olika saker, och
-     de ska inte se ut som ett. Ett tryck öppnar vindpanelen. -->
+<!-- U27d: ett tryck på en landningspunkt frågar om slaget ska bort. Frågan
+     ställs där slaget ligger, inte i en lista över slag. -->
+<div id="raderapanel" class="dold">
+  <span id="raderatext"></span>
+  <button id="raderaNej" type="button">Avbryt</button>
+  <button id="raderaJa" type="button">Radera</button>
+</div>
 
 <!-- 3D-vinkelns chrome. Samma markup som hal3d.html — motorn i hal3d.js slår
      upp exakt de här id:na, och det är hela skälet att de heter likadant. -->
@@ -358,26 +374,21 @@
   <label>överdrift <span id="exagv">3×</span></label>
   <input id="exag" type="range" min="1" max="5" step="0.5" value="3">
 </div>
-<button id="undo3d" class="chrome3d" type="button" disabled>↩ Ångra slaget</button>
+<!-- U27d: `#undo3d` låg här. Ångra fanns i båda vinklarna; tas den i den ena
+     ska den tas i den andra, annars beror det på kameravinkeln vad appen kan.
+     I 3D är vägen till ett slag Slaget-läget, och där sitter Radera nu. -->
 <!-- Verktygsraden finns i BÅDA vinklarna (U19/U20). `bara3d` märker de verktyg
      som handlar om KAMERAN — de har ingen mening i 2D. Resten (lutningen,
      slagen, slaget, vinden) hör till modellen och gäller båda. -->
-<!-- U3: kompassen och verktygen ar EN kolumn i markupen, inte tva
+<!-- U3: toggeln och verktygen ar EN kolumn i markupen, inte tva
      fristaende element med varsitt handraknat `top`. -->
 <div id="hogerkolumn">
-<button id="kompass" type="button" title="Vindriktning · tryck för vindpanelen">
-  <svg viewBox="0 0 40 40" aria-hidden="true">
-    <circle cx="20" cy="20" r="17" fill="none" style="stroke:var(--panelkant)" stroke-width="1.4"/>
-    <g id="kompassRing">
-      <text x="20" y="9.6" text-anchor="middle" font-size="8" font-weight="700"
-            style="fill:var(--dim)" font-family="-apple-system,Segoe UI,Roboto,sans-serif">N</text>
-      <line x1="20" y1="31" x2="20" y2="34.5" style="stroke:var(--panelkant)" stroke-width="1.4"/>
-    </g>
-    <g id="kompassNal">
-      <path d="M20 6 L25 24 L20 20.5 L15 24 Z" style="fill:var(--accent-ui-ljus)"/>
-    </g>
-  </svg>
-  <div id="kompassText">vind saknas</div>
+<!-- U27b: hela raden fälls ihop. Toggeln står kvar (annars finns ingen väg
+     tillbaka) och den är AVSIKTLIGT liten — den är inte ett verktyg, den är
+     dörren till dem. Den ligger där kompassen låg, alltså överst i kolumnen. -->
+<button id="vFall" type="button" aria-expanded="true"
+        aria-controls="verktyg" title="Fäll ihop verktygen">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
 </button>
 <div id="verktyg" role="group" aria-label="Verktyg">
   <button id="vFlyover" class="bara3d" type="button" title="Svep langs hallinjen"><svg viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M5 15l5-8 4 6 2-3 3 5"/></svg><span>Flyover</span></button>
@@ -388,6 +399,10 @@
   <button id="vSlag" type="button" disabled title="Planens slag pa halet"><svg viewBox="0 0 24 24"><path d="M4 19c4-1 6-6 8-9s4-5 8-6"/><circle cx="4" cy="19" r="1.8"/><circle cx="12" cy="10" r="1.8"/><circle cx="20" cy="4" r="1.8"/></svg><span>Slag</span></button>
   <button id="vForslag" type="button" title="Planens forslag pa halet"><svg viewBox="0 0 24 24"><path d="M4 20l6-16"/><path d="M10 4l8 4-8 4"/><circle cx="4" cy="20" r="1.6"/></svg><span>Plan</span></button>
   <button id="vVind" type="button" title="Vindens verkan pa bollbanan"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 13h15a3 3 0 1 1-3 3"/><path d="M3 18h8"/></svg><span>Vind</span></button>
+  <!-- SP4: vilken tee spelaren FAKTISKT slår från — hela poängen med varför
+       plan/förslag ska räkna rätt (§2.2). Etiketten i knappen visar valet utan
+       att panelen behöver öppnas. -->
+  <button id="vTee" type="button" title="Vilken tee spelar du fran?"><svg viewBox="0 0 24 24"><path d="M12 21V9"/><ellipse cx="12" cy="21" rx="7" ry="1.6"/><path d="M12 9l6-3-6-3v6z"/></svg><span id="vTeeLabel">Tee</span></button>
   <div id="slaginfo" hidden></div>
 </div>
 </div>
@@ -404,6 +419,12 @@
     <span class="varde" id="vDirV">N</span></div>
   <button id="vindater" type="button">Återställ till hämtad vind</button>
   <div class="siktrad"></div>
+</div>
+<!-- SP4: samma val som spela.html:s rundstart (`sg_tee`, delat mellan sidorna)
+     — men bara HÄR går det att ändra utan att gå tillbaka och starta om. -->
+<div id="teepanel" class="dold">
+  <div id="teerad"><b id="teeNu">–</b><span id="teeUnderrubrik"></span></div>
+  <div id="teeChips" class="chips" role="group" aria-label="Tee"></div>
 </div>
 <div id="slagpanel" class="dold">
   <div id="slagrubrik"><b id="slagnr">Slaget</b><span id="slagandrad" hidden>ändrad</span>
@@ -444,9 +465,17 @@
   <div class="reg"><label for="sSprA">i längd</label>
     <input id="sSprA" type="range" min="0" max="40" step="1" value="0">
     <span class="varde" id="sSprAV">av</span></div>
+  <!-- U26: konturerna ritas i stället för en 1σ-ellips, och raden nedan säger
+       vad de PÅSTÅR — inte ett löfte i meter (en ellips rymde bara 39 % av
+       nedslagen utan att säga det). -->
+  <div id="sprbeskrivning"></div>
   <div class="knappar">
     <button id="sAter" type="button">Återställ slaget</button>
     <button id="sAterAlla" type="button">Återställ alla</button>
+    <!-- U27d: 3D-vinkelns väg till en radering. I 2D trycker man på pinnen;
+         i 3D är vägen till ett slag Slaget-läget, och då är det här slaget
+         redan det man tittar på. Samma fråga, samma funktion. -->
+    <button id="sTaBort" type="button" disabled>Ta bort punkten</button>
   </div>
   <div class="siktrad"></div>
   <div id="slaghjalp">Justeringarna gäller det här slaget i den här planen —
@@ -528,10 +557,53 @@ const finns3d = h => !!(h3dIndex && h3dIndex.holes.some(x => x.slug === slugFor(
 function updateHeader() {
   const h = halNu();
   if (!h) { $("holeName").textContent = "—"; return; }
-  const meter = h.length_m ? ` - ${Math.round(h.length_m)}m` : "";
+  // Rubrikens meter ska vara SPELARENS, inte scorekortets generiska tal —
+  // hittas hens tee i hålets egen box-lista används dess dist_to_pin_m
+  // (samma SP4-princip som `forslagsIndata`), annars faller den tillbaka.
+  const vald = localStorage.getItem("sg_tee") || "";
+  const aktivTee = (h.tees || []).find(t => t.label === vald);
+  const langd = aktivTee && aktivTee.dist_to_pin_m != null
+    ? aktivTee.dist_to_pin_m : h.length_m;
+  const meter = langd ? ` - ${Math.round(langd)}m` : "";
   $("holeName").textContent = `Hål ${hi + 1} - Par ${h.par ?? "–"}${meter}`;
   $("prev").disabled = hi <= 0;
   $("next").disabled = hi >= ROUND.length - 1;
+}
+
+/* SP4: tee-valet. Knappen visar etiketten direkt (ingen panel att öppna för
+   att se vad som är valt); panelen listar hålets EGNA boxar — samma lista
+   `MapCore.teePoint` slår upp mot — så ett val här alltid träffar en riktig
+   box och aldrig rang-gissningen. */
+function ritaTeeval() {
+  const h = halNu();
+  const tees = (h && h.tees) || [];
+  const vald = localStorage.getItem("sg_tee") || "";
+  const chips = $("teeChips");
+  chips.innerHTML = "";
+  tees.forEach(t => {
+    if (!t.label) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = t.label;
+    b.setAttribute("aria-pressed", String(t.label === vald));
+    b.onclick = () => valjTee(t.label);
+    chips.appendChild(b);
+  });
+  const aktiv = tees.find(t => t.label === vald);
+  $("vTeeLabel").textContent = vald || "Tee";
+  $("teeNu").textContent = vald ? `Tee ${vald}` : "Ingen tee vald";
+  $("teeUnderrubrik").textContent = aktiv && aktiv.dist_to_pin_m != null
+    ? `${Math.round(aktiv.dist_to_pin_m)} m till pin${aktiv.approx ? " (uppskattad box)" : ""}` : "";
+}
+
+/* Samma nyckel som spela.html:s rundstart (`sg_tee`) — ett byte här gäller
+   alltså även när man går tillbaka dit, och tvärtom. EN rittväg (`rita`):
+   allt som läser teen (geometri, ram, förslag) räknar om sig självt. */
+function valjTee(label) {
+  localStorage.setItem("sg_tee", label);
+  $("teepanel").classList.add("dold");
+  $("vTee").setAttribute("aria-pressed", "false");
+  rita("hal");
 }
 
 /* Vinden har EN ägare (§5 U19). Finns 3D-motorn är det den som hämtar och som
@@ -540,12 +612,11 @@ function updateHeader() {
    kunde ha gett två vindar, och då hade 2D och 3D sagt olika om samma slag. */
 async function loadWind() {
   const h = halNu();
-  if (H3) { WIND = H3.vindenNu(); uppdateraKompass(); ritaForslag(); return; }
+  if (H3) { WIND = H3.vindenNu(); ritaForslag(); return; }
   const loc = (h && h.green_center) || [55.618, 13.07];
   WIND = await PlayAs.fetchWind(loc[0], loc[1]);
   updateHeader();
   drawLegs();
-  uppdateraKompass();
   ritaForslag();
 }
 
@@ -657,29 +728,34 @@ function syncSlope() {
   if (H3) H3.sattSlope(VY.slope && VY.vinkel === "3d", h);
 }
 
-// -------------------------------------------------------- U22: kompassen ---
-/* Ett rent visningslager: ringen bär norr, nålen bär vinden. I 2D drivs den av
-   kartans bearing (Leaflet äger den och ändrar den bara vid rotation), i 3D av
-   kamerans heading i renderloopens egen tick (§2:s ritregel). */
-function ritaKompass(vyBaring) {
-  const v = H3 ? H3.vindenNu() : WIND;
-  const a = Kompass.vinklar(vyBaring, v ? v.dir : null);
-  $("kompassRing").setAttribute("transform", `rotate(${a.norr.toFixed(1)} 20 20)`);
-  const nal = $("kompassNal");
-  nal.style.display = a.vind == null ? "none" : "";
-  if (a.vind != null) nal.setAttribute("transform", `rotate(${a.vind.toFixed(1)} 20 20)`);
-  $("kompass").classList.toggle("tom", !v);
-  // Utan nät finns ingen vind, och då SÄGER kompassen det (§1 princip 3).
-  $("kompassText").textContent = v
-    ? `${v.ms.toFixed(0)} m/s ${Kompass.streck(v.dir)}` : "vind saknas";
+/* U27b: verktygsraden fälls ihop så hela hålet syns. Samma mönster som U20:s
+   toggle — tillståndet bor i Vylage, här ritas bara konsekvensen.
+
+   Panelerna stängs via SINA EGNA knappar och inte genom att lägga på `dold`
+   för hand: vind- och slagpanelen ägs av `hal3d.js`, som håller sitt eget
+   öppet/stängt-läge. En panel som göms bakom ryggen på ägaren är fortfarande
+   "öppen" för honom, och nästa tryck hade då stängt en redan osynlig panel —
+   alltså en knapp som inte gör något första gången man trycker på den. */
+function syncVerktyg() {
+  const ute = VY.verktyg;
+  $("hogerkolumn").classList.toggle("hopfalld", !ute);
+  const b = $("vFall");
+  b.setAttribute("aria-expanded", String(ute));
+  b.title = ute ? "Fäll ihop verktygen" : "Visa verktygen";
+  b.setAttribute("aria-label", b.title);
+  if (ute) return;
+  if (!$("teepanel").classList.contains("dold")) $("vTee").click();
+  if (!$("vindpanel").classList.contains("dold")) $("vVind").click();
+  if (!$("slagpanel").classList.contains("dold")) $("slagstang").click();
 }
 
-/** Bäringen som pekar uppåt i bild, i den vinkel som visas just nu. */
-function vyBaring() {
-  if (VY.vinkel === "3d" && H3) return H3.baringNu();
-  return Kompass.vyBaringAvLeaflet(map && map.getBearing ? map.getBearing() : 0);
-}
-const uppdateraKompass = () => ritaKompass(vyBaring());
+/* U27a: KOMPASSEN ÄR BORTA UR PLANERINGSVYN (grundarens beslut 2026-08-12).
+   U22 la den uppe till höger i båda vinklarna; den ritade vinden relativt
+   blicken och var samtidigt en genväg till vindpanelen. Den genvägen var allt
+   den gjorde vid tryck (`$("vVind").click()`), och chromet åt bilden man kom
+   för att se. Vinden finns kvar där den hör hemma: under Vind-knappen, i
+   bollbanan och i "spelar som". `mobile/kompass.js` och kompassen i
+   fristående `hal3d.html` är ORÖRDA — det är bara den här vyn som blev tystare. */
 
 function legIcon(n) {
   return L.divIcon({ className: "legpin", iconSize: [26, 26], iconAnchor: [13, 13],
@@ -698,8 +774,6 @@ function legIcon(n) {
 function drawLegs() {
   const legs = VY.legs();
   const h = halNu();
-  $("undoBtn").disabled = legs.length === 0;
-  $("undo3d").disabled = legs.length === 0;
   // U19: 3D-motorn får hela planen — tee, kedjan och green — och räknar EN
   // gång. Talen nedan hämtas sedan ur just den beräkningen (`ritaLista`).
   if (H3) H3.sattPlanLegs({ tee: MapCore.teePoint(h) || (h && h.line && h.line[0]),
@@ -707,23 +781,30 @@ function drawLegs() {
                             slagval: VY.allaSlagval() });
 
   legLayer.clearLayers();
-  const box = $("legs");
-  const tomt = () => { box.classList.remove("show"); box.innerHTML = ""; };
-  if (!h || !h.green_center) return tomt();
+  // Punkterna kan ha försvunnit under fingret (hålbyte, förslag mottaget) —
+  // en fråga om ett slag som inte finns kvar ska inte stå kvar och vänta.
+  if (raderaIdx != null && raderaIdx >= legs.length) stangRadera();
+  if (!h || !h.green_center) return;
   const origin = MapCore.teePoint(h) || (h.line && h.line[0]);
-  if (!origin) return tomt();
+  if (!origin) return;
 
   // Tee-pinnen väljer slag 1; landningspunkt i väljer slag i+2 — precis som
   // kulan gör i 3D (`userData.slagIdx`), så samma tryck betyder samma sak.
   L.marker(origin, { icon: legIcon(1) }).addTo(legLayer)
-    .on("click", () => valjSlag2d(0));
+    .on("click", () => { stangRadera(); valjSlag2d(0); });
   legs.forEach((p, i) => {
     const mk = L.marker(p, { icon: legIcon(i + 2), draggable: true }).addTo(legLayer);
     mk.on("dragend", () => {
       const ll = mk.getLatLng();
+      stangRadera();
       VY.flyttaPunkt(i, [ll.lat, ll.lng]);
     });
-    mk.on("click", () => valjSlag2d(i + 1));
+    /* U27d: trycket gör BÅDA sakerna. Slagvalet är U19:s kontrakt (samma tryck
+       betyder samma sak i 2D och 3D, och Slaget-panelen arbetar på det valet),
+       och raderingsfrågan läggs ovanpå — den ersätter inte valet, den följer
+       med det. Tappas valet här hade en radering också nollställt vad panelen
+       tittade på. */
+    mk.on("click", () => { valjSlag2d(i + 1); fragaRadera(i); });
   });
   const solid = [origin, ...legs];
   if (solid.length > 1) L.polyline(solid, { color: TOK("--accent-ui"), weight: 3 }).addTo(legLayer);
@@ -785,9 +866,13 @@ function kedjan() {
   return h3Klar() ? H3.kedjanNu() : kedjaFor(halNu(), VY.legs(), VY.allaSlagval());
 }
 
+/* U27d: LISTAN ÄR BORTA — chipen är kvar. Listan skrev i ord vad bilden redan
+   visar: numret står på pinnen, sträckan på chipet, klubban och "spelar som"
+   i Slaget-panelen. Det den var ENSAM om var raderingsknappen (✕), och den
+   flyttade till slaget självt (`fragaRadera`). Funktionen heter kvar `ritaLista`
+   därför att den är `paKedja`:s mottagare på tio ställen — och för att chipen
+   MÅSTE ritas just här, se nedan. */
 function ritaLista() {
-  const h = halNu();
-  const box = $("legs");
   const rader = kedjan();
   /* U8: avståndschipen ritas HÄR och inte i `drawLegs`, och det är inte
      kosmetik. I 3D äger motorn kedjan och bygger om den på nästa bildruta —
@@ -802,36 +887,39 @@ function ritaLista() {
     L.marker(mitt, { icon: chipIcon(`${r.spelarSom} m`), interactive: false })
       .addTo(chipLayer);
   });
-  if (!h || !rader.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
+  syncTaBort();
+}
+
+/* Slagpanelens raderingsknapp följer VALET. `valjSlag` bygger om bågarna, vilket
+   avslutas med `paKedja` → hit — alltså finns det ingen ny avisering att lägga
+   till för att hålla knappen i takt. Slaget mot green har ingen egen punkt
+   (det slutar i greenmitten), så där finns inget att ta bort. */
+function syncTaBort() {
   const valt = H3 ? H3.valtNu() : null;
-  let rows = "";
-  rader.forEach(r => {
-    const kvar = Planslag.kvarEfter(r, h.green_center, { hav });
-    const geo = Math.round(r.dist);
-    // "Spelar som" är talet spelaren agerar på; det geometriska står bredvid
-    // bara när vind eller höjd faktiskt skilt dem åt.
-    const namn = r.tillGreen ? `Slag ${r.nr} (green)` : `Slag ${r.nr}`;
-    rows += `<div class="leg${valt === r.idx ? " vald" : ""}" data-slag="${r.idx}">`
-      + `<b>${namn}: ${r.spelarSom} m${geo !== r.spelarSom ? ` <i>(${geo})</i>` : ""}`
-      + `${r.andrad ? " ✎" : ""}</b><span>`
-      // GP2: klubban står i listan när spelaren VALT en. Ett förslag skrivs inte
-      // ut här — listan ska visa spelarens beslut, inte modellens gissning, och
-      // en klubba per rad som ingen valt hade sett ut som en plan.
-      + (r.val && r.klubba ? `<em class="klubba">${r.klubba.label}</em> ` : "")
-      + (r.tillGreen ? "" : `${kvar} m kvar `)
-      + (r.tillGreen ? "" : `<button class="legX" data-i="${r.idx}" aria-label="ta bort slag ${r.nr}">✕</button>`)
-      + `</span></div>`;
-  });
-  box.innerHTML = rows;
-  box.classList.add("show");
-  box.querySelectorAll(".legX").forEach(btn => {
-    btn.onclick = ev => { ev.stopPropagation(); VY.taBortPunkt(parseInt(btn.dataset.i, 10)); };
-  });
-  // U19: slaget går att välja i BÅDA vinklarna. I 3D genom att trycka på bågen,
-  // i 2D genom att trycka på benet i listan eller på dess pin på kartan.
-  box.querySelectorAll(".leg[data-slag]").forEach(rad => {
-    rad.onclick = () => valjSlag2d(parseInt(rad.dataset.slag, 10));
-  });
+  const n = VY.legs().length;
+  $("sTaBort").disabled = !(valt != null && valt >= 0 && valt < n);
+}
+
+/* ---- U27d: radera ett slag där det ligger -------------------------------
+   Punkt `i` är landningen för slag `i + 1` (tee→punkt 0 är slag 1), samma
+   räkning som listans ✕ hade: `taBortPunkt(idx)` tar bort slaget med nummer
+   `idx + 1`. Frågan ställs alltid — en punkt man petar på av misstag ska inte
+   försvinna, och det finns ingen Ångra kvar att rädda den med. */
+let raderaIdx = null;
+
+function stangRadera() {
+  raderaIdx = null;
+  $("raderapanel").classList.add("dold");
+}
+
+/* Texten säger PUNKTENS nummer, inte slagets. Pinnen man just tryckte på bär
+   `i + 2` (den är slaget man spelar HÄRIFRÅN), medan punkten är landningen för
+   slag `i + 1`. Frågan ska handla om det man rörde vid — "Radera slag 2?" på en
+   pinne märkt 3 är rätt i modellen och fel i handen. */
+function fragaRadera(i) {
+  raderaIdx = i;
+  $("raderatext").textContent = `Ta bort punkt ${i + 2}?`;
+  $("raderapanel").classList.remove("dold");
 }
 
 /* Valet bor i 3D-motorn (den äger `SlagJust` och panelen), men det är PLANENS
@@ -1355,8 +1443,11 @@ async function sakerstall3d() {
   // U19: räknar motorn om kedjan (vind hämtad, reglage draget) skriver
   // 2D-listan om sig ur SAMMA rader. Ingen andra beräkning, inget att synka.
   H3.paKedja(() => { WIND = H3.vindenNu(); ritaLista(); updateHeader();
-                     uppdateraKompass(); ritaForslag(); });
-  H3.paBildruta(() => { if (VY.vinkel === "3d") uppdateraKompass(); });
+                     ritaForslag(); });
+  /* U27a: `paBildruta` registrerades bara för kompassen — den var det enda i
+     vyn som behövde kamerans heading varje bildruta. Utan den finns inget att
+     rita per tick här, och en tom callback i renderloopen är en kostnad utan
+     mottagare. */
   U13 = true;                                  // motorn kan rita lutningen (U13)
   return H3;
 }
@@ -1391,11 +1482,22 @@ async function visaHalI3d(opt) {
      *     laddningen sin pose, sina slag och sitt förslag ovanpå rätt hål.
      */
     h3dLaddat = null;
-    await H3.laddaHal(slug);
+    const laddat = await H3.laddaHal(slug);
     if (min !== h3dGen) return;          // spelaren bytte hål under laddningen
+    /* (3) U25: en laddning som INTE gick igenom får inte räknas som klar.
+     *     Motorn svalde förr sina fel, så `h3dLaddat` sattes för ett hål som
+     *     aldrig kom in i scenen: `h3Klar()` ljög, och `sparaPose` lade undan
+     *     kamerakontrollens startvärden som "spelarens vinkel på hålet"
+     *     (uppmätt 2026-08-11 — hål 1 fick `{target 0,0,0, range 300}` efter en
+     *     hämtning som 404:ade). */
+    if (!laddat) return;
     h3dLaddat = slug;
+    /* U25: kameran sätts HÄR, av värdsidan, och bara här. Finns en sparad
+       vinkel för hålet gäller den; annars hålets överblick — samma startvy som
+       den fristående sidan ger. Motorn placerar inte längre kameran själv i
+       inbäddat läge, så en försenad laddning kan inte rama in fel hål efteråt. */
     const p = (opt && opt.posefri) ? null : VY.pose();
-    if (p) H3.sattPosen(p);
+    if (p) H3.sattPosen(p); else H3.overblick();
   }
   // Hela planen, inte bara punkterna: motorn räknar kedjan och behöver tee och
   // green för att veta var slag 1 börjar och var sista slaget tar vägen (U19).
@@ -1413,8 +1515,13 @@ async function visaHalI3d(opt) {
 /* Kameran hör till hålet man lämnar. Sparas BARA om scenen faktiskt står på det
    hålet — annars vore det kontrollerns startvärden vi lade undan som "spelarens
    vinkel på hål 1", och nästa besök skulle återställa en pose ingen valt. */
+/* U25: inte heller mitt i en kamerarörelse. En pågående `flyTo` är på VÄG
+   någonstans — sänkningen ner i 3D, tee-vyns resa — och ett läge halvvägs dit
+   är ingens valda vinkel. `Vylage` avvisar dessutom en pose som inte kan komma
+   från en gest, så en platt kartpose aldrig kan lagras som hålets 3D-vinkel. */
 function sparaPose() {
-  if (H3 && VY.vinkel === "3d" && h3dLaddat && h3dLaddat === slugFor(halNu()))
+  if (H3 && VY.vinkel === "3d" && h3dLaddat && h3dLaddat === slugFor(halNu())
+      && !H3.flygerNu())
     VY.sattPose(H3.posen());
 }
 
@@ -1430,6 +1537,7 @@ function goTo(rel) {
    ingen knapp ritar sin egen konsekvens. */
 function rita(vad) {
   const h = halNu();
+  syncVerktyg();
   $("v3d").disabled = !finns3d(h);
   $("v3d").title = finns3d(h) ? "Se hålet i 3D"
     : "3D saknas för det här hålet (kör tools/hole_gltf.py)";
@@ -1440,6 +1548,7 @@ function rita(vad) {
     MapCore.drawHoleGeometry(layers, h);
     PlayAs.loadElev3d(h, () => { updateHeader(); drawLegs(); });
     updateHeader();
+    ritaTeeval();
     syncSlope();
     if (VY.vinkel === "2d") frameHole();
     loadWind();
@@ -1460,7 +1569,6 @@ function rita(vad) {
   if (H3 && H3.lageNu() !== VY.lage) H3.sattLage(VY.lage);
   if (vad === "vinkel" || vad === "batch") syncSlope();
   drawLegs();
-  uppdateraKompass();
   // Förslaget sist: det läser teen, vinden och pinnen, och `forslagsNyckel`
   // ser till att bara en ÄNDRING av dem kostar en omräkning.
   ritaForslag();
@@ -1490,6 +1598,18 @@ async function init() {
   $("prev").onclick = () => goTo(hi);
   $("next").onclick = () => goTo(hi + 2);
   $("vSlope").onclick = () => VY.sattSlope(!VY.slope);
+  // Tee-panelen delar bottenplats med vind/slag (samma regel som hal3d.js
+  // redan följer för de två) — bara en av dem åt gången.
+  $("vTee").onclick = () => {
+    const nuDold = $("teepanel").classList.toggle("dold");
+    $("vTee").setAttribute("aria-pressed", String(!nuDold));
+    if (!nuDold) {
+      ritaTeeval();
+      $("vindpanel").classList.add("dold");
+      $("vVind").setAttribute("aria-pressed", "false");
+      $("slagpanel").classList.add("dold");
+    }
+  };
   // SP3: förslaget går att stänga av — men det är PÅ tills spelaren gör det.
   $("vForslag").onclick = () => VY.sattForslag(!VY.forslag);
   $("fAnvand").onclick = anvandForslag;
@@ -1500,32 +1620,44 @@ async function init() {
     $("fMer").textContent = oppen ? "▴" : "▾";
     mattForslag();
   };
-  // U22: kompassen är en genväg till vindpanelen — vinden är det den visar, och
-  // det man vill göra åt den är att titta närmare på den.
-  $("kompass").onclick = () => $("vVind").click();
   /* Vindpanelens REGLAGE ägs av 3D-motorn, men markupen bor här — och vinden
-     är en förutsättning för både kompassen och förslaget. Motorn aviserar via
-     `paKedja`, men bara när den byggt om sina bågar: står man i 2D-vinkeln
-     händer det inte, och då stod kompassen kvar på den hämtade vinden medan
-     spelaren dragit reglaget till 14 m/s (uppmätt 2026-08-03). Lyssnaren
-     ligger på PANELEN och inte på varje reglage: den bubblar, alltså kör den
-     efter motorns egen hanterare, och den fångar också återställningsknappen. */
+     är en förutsättning för förslaget. Motorn aviserar via `paKedja`, men bara
+     när den byggt om sina bågar: står man i 2D-vinkeln händer det inte, och då
+     räknade förslaget på den hämtade vinden medan spelaren dragit reglaget till
+     14 m/s (uppmätt 2026-08-03). Lyssnaren ligger på PANELEN och inte på varje
+     reglage: den bubblar, alltså kör den efter motorns egen hanterare, och den
+     fångar också återställningsknappen. */
   ["input", "click"].forEach(typ => $("vindpanel").addEventListener(typ, () => {
     if (H3) WIND = H3.vindenNu();
-    uppdateraKompass();
     ritaForslag();
   }));
-  // Leaflet äger 2D-bäringen; den ändras bara av en rotation, så en lyssnare är
-  // rätt här (kompassen är chrome och inte något som sitter fast i marken).
-  map.on("rotate move zoomend", uppdateraKompass);
   /* Spelarens EGNA kartflyttningar märks, så nästa storleksändring inte kastar
      dem (`omStorlek`). Leaflet skiljer inte på vem som ringde — `ritarVy` är
      det som gör skillnaden mellan spelarens finger och vår egen inramning. */
   map.on("dragend zoomend rotate", () => { if (!ritarVy) egenVy = true; });
-  $("undoBtn").onclick = () => VY.angra();
-  $("undo3d").onclick = () => VY.angra();
+  /* U27d: Ångra är borta i båda vinklarna. `VY.angra()` finns kvar i Vylage —
+     den är historiken, och den kostar inget att låta ligga. */
+  $("raderaJa").onclick = () => {
+    const i = raderaIdx;
+    stangRadera();
+    if (i != null) VY.taBortPunkt(i);
+  };
+  $("raderaNej").onclick = stangRadera;
+  $("sTaBort").onclick = () => { const v = H3 ? H3.valtNu() : null;
+                                 if (v != null) fragaRadera(v); };
+  // Ett tryck någon annanstans avbryter — samma gest som stänger vilken annan
+  // fråga som helst, och den ska inte kunna lämnas hängande över hålet.
+  ["click", "touchstart"].forEach(typ =>
+    document.addEventListener(typ, ev => {
+      if (raderaIdx == null) return;
+      if (ev.target.closest("#raderapanel") || ev.target.closest(".legpin")) return;
+      stangRadera();
+    }, true));
   $("v2d").onclick = () => VY.sattVinkel("2d");
   $("v3d").onclick = () => VY.sattVinkel("3d");
+  /* U27b: toggeln. Läget bor i Vylage (`sg_plan_vy`) — den äger allt annat som
+     överlever ett hålbyte, och en variabel här hade tappats vid nästa. */
+  $("vFall").onclick = () => VY.sattVerktyg(!VY.verktyg);
 
   try {
     const course = await MapCore.loadCourse();
@@ -1541,7 +1673,7 @@ async function init() {
      — en knapp som laddar och misslyckas är sämre än ingen knapp (samma regel
      som avstängda `Slaget` i U4). Uppslaget kräver inte att motorn laddas. */
   try {
-    const r = await fetch(`data/holes3d/index.${SGRound.activeSlug()}.json`);
+    const r = await fetch(SGAsset.holes3d(`index.${SGRound.activeSlug()}.json`));
     const idx = r.ok ? await r.json() : null;
     if (idx && (idx.holes || []).length) h3dIndex = idx;
   } catch (e) { h3dIndex = null; }

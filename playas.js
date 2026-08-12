@@ -74,7 +74,7 @@ const PlayAs = (() => {
     const slug = holeSlug(h);
     if (ELEV3D[slug] !== undefined) return;
     ELEV3D[slug] = null;
-    fetch(`data/holes3d/${slug}.json`).then(r => r.json()).then(m => {
+    fetch(SGAsset.holes3d(`${slug}.json`)).then(r => r.json()).then(m => {
       if (m && m.ll2xz && m.profile) { ELEV3D[slug] = m; if (onReady) onReady(); }
     }).catch(() => {});
   }

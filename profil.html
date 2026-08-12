@@ -63,6 +63,25 @@
   .btn.ghost { background:none; border:1px solid var(--line); color:var(--dim);
     font-weight:600; }
 
+  /* Vippa: en installning per rad, hela raden tryckbar (samma tryckyta som
+     .rad). Reglagen fran slagloggningens halvy bor har nu. */
+  .vippa { display:flex; justify-content:space-between; align-items:center; gap:14px;
+    width:100%; appearance:none; background:none; border:0;
+    border-bottom:1px solid var(--line); color:var(--ink); font:inherit;
+    text-align:left; padding:12px 0; min-height:56px; cursor:pointer; }
+  .vippa:last-of-type { border-bottom:0; }
+  .vippa .txt { font-size:15px; font-weight:600; }
+  .vippa .txt em { display:block; margin-top:3px; color:var(--dim); font-size:12.5px;
+    font-style:normal; font-weight:400; line-height:1.4; }
+  .vippa .knob { flex:0 0 46px; height:28px; border-radius:999px;
+    background:#0e3326; border:1px solid var(--line); position:relative;
+    transition:background .15s, border-color .15s; }
+  .vippa .knob::after { content:""; position:absolute; top:3px; left:3px;
+    width:20px; height:20px; border-radius:50%; background:#cfe6d8;
+    transition:transform .15s; }
+  .vippa[aria-checked="true"] .knob { background:var(--accent); border-color:var(--accent); }
+  .vippa[aria-checked="true"] .knob::after { transform:translateX(18px); }
+
   /* Sammanfattningen: en rad per fraga, hela raden ar tryckbar. */
   .rad { display:flex; justify-content:space-between; align-items:center; gap:10px;
     width:100%; appearance:none; background:none; border:0; border-bottom:1px solid var(--line);
@@ -108,9 +127,13 @@
      enda supabase-klienten och konto.js lånar den (två klienter skriver över
      varandras token-förnyelser). supabase-js kommer från CDN och faller tyst
      bort offline — kontokortet säger det då, resten av sidan är opåverkad. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./vendor/supabase-js.js"></script>
 <script src="./live.js"></script>
 <script src="./konto.js"></script>
+<!-- Molnets läsväg (MOLN_PLAN §6 V4a): en lyckad inloggning HÄR ska hämta hem
+     hela historiken direkt, inte vänta till nästa gång spela.html öppnas. -->
+<script src="./version.js"></script>
+<script src="./molnrunda.js"></script>
 <script>
 /* profil.html — spelprofilens guide och översikt (UPPGRADERING_3D §GP1 del 2).
  *
@@ -260,6 +283,27 @@ function sammanfattningHtml(profil) {
           </select>
         </div>
       </details>
+    </div>
+    <!-- Kartinställningarna bor här av SAMMA skäl som offline-banorna nedan:
+         de gäller över tid och ändras någon gång, inte per hål. Förut satt de
+         som två reglage på slagloggningens hålvy, där de tog plats i den vy man
+         använder mest och med handske på — men de är inte ett val i ögonblicket.
+         Nycklarna (sg_autozoom, sg_slope) är oförändrade, så hålkartan läser dem
+         precis som förut. -->
+    <div class="card">
+      <h2>Hålkartan</h2>
+      <button class="vippa" id="azT" role="switch"
+        aria-checked="${localStorage.getItem("sg_autozoom") !== "off"}">
+        <span class="txt">Auto-zoom
+          <em>Kartan följer med och ramar in mot green under rundan.</em></span>
+        <span class="knob"></span>
+      </button>
+      <button class="vippa" id="slT" role="switch"
+        aria-checked="${localStorage.getItem("sg_slope") !== "off"}">
+        <span class="txt">Green-lutning
+          <em>Lutningspilar på greenen när du är nära.</em></span>
+        <span class="knob"></span>
+      </button>
     </div>
     <!-- Offline-banor bor i Profil (APPSTORE_PLAN §2.1d, beslut 2026-08-02):
          det är en INSTÄLLNING som gäller över tid, inte ett val i ögonblicket.
@@ -423,6 +467,11 @@ function kopplaKonto(el) {
       // Kontot är nytt men profilen finns redan lokalt — lyft upp den direkt,
       // annars är kontot tomt tills något annat råkar synka.
       await Konto.synkaProfil().catch(() => {});
+      // Utlösare för molnets läsväg (MOLN_PLAN §6 V4a): efter lyckad
+      // inloggning, inte bara vid nästa appstart i spela.html — en gäst som
+      // just skapade konto ska se sin historik direkt. Tyst vid fel/utan nät,
+      // precis som svep().
+      if (typeof Moln !== "undefined") Moln.hamta().catch(() => {});
       render();
       return;
     } catch (e) { kontoLage = Object.assign({}, kontoLage, { fel: e.message }); }
@@ -523,6 +572,21 @@ function koppla(profil) {
   /* Namnet sparas UTAN render(): en omritning mitt i inmatningen skulle rycka
      fokus ur fältet. Spelprofil.normalisera trimmar strängen. */
   on("namn", "onchange", e => { Store.setProfile({ namn: e.target.value }); });
+
+  /* Kartinställningarna. De bor i localStorage och INTE i spelprofilen: de
+     beskriver den här telefonens karta, inte spelaren — en gammal mobil med
+     seg GPU kan mycket väl vilja ha auto-zoom av medan den nya har den på.
+     Profilen synkas till molnet, och då hade valet följt med till fel enhet.
+     Hålkartan läser värdena vid laddning (flikbyte = full sidladdning), så
+     ingen omritning behövs här — bara vippan själv. */
+  const vippa = (id, nyckel) => on(id, "onclick", e => {
+    const knapp = e.currentTarget;
+    const pa = localStorage.getItem(nyckel) !== "off";
+    localStorage.setItem(nyckel, pa ? "off" : "on");
+    knapp.setAttribute("aria-checked", String(!pa));
+  });
+  vippa("azT", "sg_autozoom");
+  vippa("slT", "sg_slope");
 }
 
 Store.ready().then(() => {

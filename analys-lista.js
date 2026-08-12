@@ -115,8 +115,36 @@ globalThis.AnalysLista = (() => {
       // En runda utan ett enda spelat hål är ett tomt utkast — värd att visa
       // (den går att radera) men inte att räkna som runda.
       empty: played === 0,
-      uploaded: !!(r.sync && r.sync.uploadedAt),
+      moln: molnStatus(r),
     };
+  }
+
+  /* Molnstatus per runda (MOLN_PLAN §7).
+
+     §7 avfärdar den kvarvarande risken i molnvägen med orden "en runda kan
+     ligga oskickad i telefonen, och det är synligt och ofarligt". Den var inte
+     synlig: `Store.list()` har burit fältet sedan V2b, men ingen vy läste det,
+     så efter avslutningsskärmen fanns ingen väg tillbaka till svaret "kom den
+     fram?". En runda som fastnat såg exakt ut som en som låg tryggt i R2.
+
+     Ersätter `uploaded` (byggd på `sync.uploadedAt` — PC-tunnelns status, död
+     sedan 2026-08-06 och aldrig renderad).
+
+     En PÅGÅENDE runda får ingen status: den är inte skickad än, med flit
+     (svepet tar bara `finished`), och en "väntar"-stämpel på den man just nu
+     spelar hade varit en uppmaning att göra något åt en sak som inte är fel. */
+  function molnStatus(r) {
+    if (!r || r.status === "active") return null;
+    const m = r.moln || null;
+    if (m && m.sant)  return { lage: "sakrad", text: "säkrad", nar: m.sant, fel: null };
+    // `nekad` sätts bara vid 400/413 (V2b): kroppen duger inte, och att försöka
+    // igen är meningslöst. Det är det enda läget som kräver något av användaren.
+    if (m && m.nekad) return { lage: "nekad", text: "ej säkrad", nar: null,
+                               fel: (m && m.sistFel) || null };
+    // Inkluderar rundor som är äldre än molnvägen (`moln` saknas helt) — de är
+    // faktiskt oskickade, och svepet tar dem när nätet finns.
+    return { lage: "vantar", text: "väntar på nät", nar: null,
+             fel: (m && m.sistFel) || null };
   }
 
   const rowModels = (rows, optsFor) =>
@@ -137,7 +165,7 @@ globalThis.AnalysLista = (() => {
   const fmtToPar = d => (d == null ? null : d === 0 ? "E" : d > 0 ? "+" + d : String(d));
 
   return { LEVELS, levelInfo, dateLabel, parForSeq, byGlobalFrom,
-           rowModel, rowModels, sortRows, fmtToPar };
+           rowModel, rowModels, sortRows, fmtToPar, molnStatus };
 })();
 
 /* node-testbarhet: exportera även som CommonJS när modulen läses i node. */

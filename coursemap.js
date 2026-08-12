@@ -12,6 +12,15 @@ window.CourseMap = {
   // pane) men INTE på overlayPane, så banytornas vektorfärger lämnas orörda.
   // Justera hela kartans ljus/färg genom att ändra denna enda rad.
   MAP_FILTER: "brightness(1.60) saturate(1.44) contrast(0.92) sepia(0.05)",
+  // Måstonen som ALLA banors ortofoto-tiles kalibreras till (gräs = fairway+
+  // green). Ägs av `data/courses/ortofoto_ton.json` → `target_rgb`, som är FRYST
+  // med flit; den här raden är en spegel så telefonen slipper hämta en PC-fil,
+  // och `tests/test_mobile_graston.py` kräver att de två är identiska.
+  //
+  // 3D använder den för att lyfta GLB-texturen till samma gräston som tiles har
+  // (ORTOFOTO_FARG.md §Känt gap): texturerna är bakade med den gamla pipelinen
+  // och ligger ~27 % för mörkt, vilket är hela skillnaden man ser vid 2D↔3D.
+  GRASS_TARGET: [81.3155, 91.9361, 55.5041],
   _filterInjected: false,
   applyImageFilter() {
     if (this._filterInjected || typeof document === "undefined") return;

@@ -118,22 +118,55 @@ globalThis.SG = (() => {
      `water` fallit på fallback-lie av en SLUMP — samma svar som PC:n får via
      sitt alias, men av fel skäl. En dag när aliaset ändras skiljer de sig. */
   const SURFACE_TO_LIE = { green: "green", bunker: "bunker", water: "water_hazard",
-                           fairway: "fairway", rough: "rough", tee: "tee" };
+                           fairway: "fairway", rough: "rough", tee: "tee",
+                           // Bunt v3 bär dem (SPELPLAN_PLAN §SP0, 2026-08-03).
+                           // `Strategi.klassa()` returnerar redan baslinjens
+                           // namn, så de här två är identiteter — de finns för
+                           // att en anropare inte ska behöva veta vilken väg
+                           // ytan kom.
+                           heavy_rough: "heavy_rough", ob: "ob",
+                           water_hazard: "water_hazard" };
   const lieFromSurface = surface => SURFACE_TO_LIE[surface] || null;
 
-  /* Ytor PC:n kan klassa men mobilbunten inte bär. En SG-siffra räknad på en
-     runda som rört dem är fel utan att synas — därför går de att fråga om. */
-  const OSYNLIGA_YTOR = ["heavy_rough", "ob", "recovery"];
-  function lieParityWarnings() {
-    return OSYNLIGA_YTOR.map(y =>
+  /* ---------- vad som fortfarande INTE går att lita på ----------
+     Listan var hårdkodad till ["heavy_rough", "ob", "recovery"]. Två av dem är
+     inte längre sanna: banbunten bär `heavy_rough`, `ob` och `tee` sedan
+     version 3, och `Strategi.klassa()` är PC:ns tvåpassade klassificerare i JS
+     (99,48 % överensstämmelse på 10 800 punkter, tests/test_export_lie_lager.py).
+
+     Men de är bara sanna för en bunt som FAKTISKT är v3. En telefon kan ha en
+     äldre bunt liggande i offline-cachen, och då är ytorna osynliga igen utan
+     att något går sönder — SG-siffran blir bara tyst fel. Varningarna räknas
+     därför ur bunten när den skickas in, i stället för att stå i en lista här.
+
+     `recovery` varnar vi alltid för: den finns i baslinjetabellen men klassas
+     inte av någondera sidan. */
+  const KLASSADE_YTOR = ["heavy_rough", "ob", "tee"];
+  const ALLTID_OSYNLIGA = ["recovery"];
+
+  /* `bandataHal` = ett hål ur banbunten (samma objekt `Strategi.ytorFor()` tar).
+     Utelämnas den kan vi inte veta vad bunten bär — då varnas för allt, för
+     tystnad ska aldrig vara defaultsvaret på en fråga vi inte ställt. */
+  function lieParityWarnings(bandataHal) {
+    const saknade = bandataHal === undefined
+      ? KLASSADE_YTOR.slice()
+      : KLASSADE_YTOR.filter(y => !ytaFinns(bandataHal, y));
+    return saknade.concat(ALLTID_OSYNLIGA).map(y =>
       `${y}: PC-sidan klassar denna yta men bandatan i mobilen bär den inte` +
       (y === "heavy_rough" ? ` (${D ? D.heavyRoughCost : 0.55} slag skiljer)` : ""));
   }
 
+  /* Bunt v3 lägger ytorna under `lies`; hazards låg där redan i v2. */
+  function ytaFinns(hal, typ) {
+    const h = hal || {};
+    return (h.lies || []).concat(h.hazards || [])
+      .some(p => p && p.type === typ && p.poly && p.poly.length >= 3);
+  }
+
   return { load, loaded, names, labels, defaultName,
            expectedStrokes, category, strokesGained, puttingGained,
-           lieFromSurface, lieParityWarnings,
-           AROUND_GREEN_M, SURFACE_TO_LIE, OSYNLIGA_YTOR };
+           lieFromSurface, lieParityWarnings, ytaFinns,
+           AROUND_GREEN_M, SURFACE_TO_LIE, KLASSADE_YTOR, ALLTID_OSYNLIGA };
 })();
 
 /* node-testbarhet: exportera även som CommonJS när modulen läses i node. */

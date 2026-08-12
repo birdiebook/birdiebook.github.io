@@ -31,6 +31,21 @@
 <script src="./playas.js"></script>
 <script src="./vind3d.js"></script>   <!-- efter playas.js: delegerar dit -->
 <script src="./slagjust.js"></script> <!-- U17: justeringar som visningslager -->
+<!-- hal3d.js kör i BÅDA sidorna och slår upp de här två som globaler. De låg
+     bara i planvy.html, så den fristående sidan kastade `Planslag is not
+     defined` vid varje hålladdning (buildShots → planKedja) — dolt bakom GP2:s
+     krasch tills den rättades 2026-08-12. Båda är fristående: planslag.js får
+     allt injicerat och kompass.js rör bara Math. -->
+<script src="./planslag.js"></script> <!-- U19: EN beräkning av planens slag -->
+<script src="./kompass.js"></script>  <!-- U22: norr och vinden (baringNu) -->
+<!-- U26: HDR-konturer i stället för 1σ-ellips. `fordelning.js` drar sitt
+     punktmoln ur `Strategi.punktmoln`, så strategi.js MÅSTE ligga före den —
+     annars kastar den fristående sidan `Strategi is not defined` första gången
+     en fördelning ritas. Ordningen är alltså ett krav, inte en städning, och
+     båda värdsidorna bär nu samma uppsättning (U26 skrevs innan den fristående
+     sidans saknade script rättades och antog att gapet fanns kvar). -->
+<script src="./strategi.js"></script>   <!-- före fordelning.js: punktmolnet bor där -->
+<script src="./fordelning.js"></script>
 
 <title>SG Hål i 3D</title>
 <link rel="stylesheet" href="./tokens.css">
@@ -245,6 +260,10 @@
   <div class="reg"><label for="sSprA">i längd</label>
     <input id="sSprA" type="range" min="0" max="40" step="1" value="0">
     <span class="varde" id="sSprAV">av</span></div>
+  <!-- U26: konturerna ritas i stället för en 1σ-ellips, och raden nedan säger
+       vad de PÅSTÅR — inte ett löfte i meter (en ellips rymde bara 39 % av
+       nedslagen utan att säga det). -->
+  <div id="sprbeskrivning"></div>
   <div class="knappar">
     <button id="sAter" type="button">Återställ slaget</button>
     <button id="sAterAlla" type="button">Återställ alla</button>

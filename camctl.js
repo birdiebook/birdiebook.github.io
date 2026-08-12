@@ -54,6 +54,22 @@ const TWIST_SIGN = -1;
 // Hur brant tilten ändras av två fingrars gemensamma lodräta rörelse.
 const TILT_PER_PX = 0.30 * DEG;
 
+/* U25: hur mycket fingrarna måste säga innan vridning respektive lutning
+   kopplas in under ett nyp. Ett nyp är aldrig rent — handen vrider sig några
+   grader och mittpunkten glider ett par tiotal pixlar av sig själv — och utan
+   trösklarna betyder varje zoom också en liten vridning och en liten lutning.
+   Se `_pinchTwistTilt` för varför detta INTE är en dämpning. */
+const VRID_TROSKEL = 8 * DEG;
+const LUTA_TROSKEL_PX = 20;
+
+/** Kortaste signerade vinkelskillnaden a − b, i (−π, π]. */
+function vinkelDelta(a, b) {
+  let d = a - b;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
 export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 export const clampTilt = t => clamp(t, LIMITS.tiltMin, LIMITS.tiltMax);
 /** Klampning för TILT som användaren drar fram — se LIMITS.tiltMaxGesture. */
@@ -450,6 +466,11 @@ export class CameraController {
       base.dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       base.angle = Math.atan2(b.y - a.y, b.x - a.x);
       base.midY = (a.y + b.y) / 2;
+      // U25: vridningen och lutningen är AVSTÄNGDA tills fingrarna säger något
+      // annat — se _pinchTwistTilt. Baslinjen för respektive axel sätts när den
+      // kopplas in, inte här.
+      base.vridPa = false; base.lutaPa = false;
+      base.vridBas = base.angle; base.lutaBas = base.midY;
     }
     this._grip = base;
   }
@@ -524,6 +545,24 @@ export class CameraController {
    * Två fingrar är EN gest, inte tre: avstånd → range, vinkel → heading,
    * mittpunktens lodräta rörelse → tilt. Delas de upp i separata lyssnare
    * rycker panoreringen så fort två av dem sker samtidigt, vilket de alltid gör.
+   *
+   * U25: ZOOMEN är omedelbar, VRIDNINGEN och LUTNINGEN har en tröskel.
+   *
+   * Skälet är att ett nyp aldrig är rent: fingrarna vrider sig några grader och
+   * mittpunkten glider ett par tiotal pixlar bara av att handen håller
+   * telefonen. Utan tröskel betyder alltså varje zoom också en liten vridning
+   * och en liten lutning — vyn "hoppar runt" när man zoomar, vilket är precis
+   * vad grundaren rapporterade 2026-08-11.
+   *
+   * Tröskeln är INTE en dämpning (§2 förbjuder dämpning på den axel man drar i,
+   * och det förbudet gäller): axeln är antingen av eller helt med. När den
+   * kopplas in sätts baslinjen DÄR, så rörelsen fortsätter från fingrets
+   * nuvarande läge utan att hoppa och utan att tappa de grader som förbrukades
+   * på att komma över tröskeln. Väl inkopplad stannar axeln på resten av
+   * greppet — annars skulle den slå av och på mitt i en vridning.
+   *
+   * Talen är valda för att rymma handens darr men inte en avsiktlig rörelse.
+   * Känns de fel är det HÄR de ändras, som TWIST_SIGN ovan.
    */
   _pinchTwistTilt(pts) {
     const g = this._grip;
@@ -534,11 +573,38 @@ export class CameraController {
     const midY = (a.y + b.y) / 2;
 
     this.state.range = clampRange(g.state.range * (g.dist / dist));
-    let dAng = angle - g.angle;
-    if (dAng > Math.PI) dAng -= TAU;
-    if (dAng < -Math.PI) dAng += TAU;
-    this.state.heading = wrapHeading(g.state.heading + TWIST_SIGN * dAng);
-    this.state.tilt = clampTiltGesture(g.state.tilt - (midY - g.midY) * TILT_PER_PX);
+
+    /* --- vridningen ---
+       Baslinjen sätts vid TRÖSKELN, inte vid fingrets nuvarande läge. Skillnaden
+       syns bara när en enda händelse bär hela rörelsen (en snabb vridning, eller
+       hopslagna pointermove-händelser): baslinjen i nuläget hade svalt just den
+       rörelsen helt. Vid tröskeln är bidraget noll — alltså lika hoppfritt — och
+       allt därutöver räknas. */
+    if (!g.vridPa) {
+      const d = vinkelDelta(angle, g.angle);
+      if (Math.abs(d) > VRID_TROSKEL) {
+        g.vridPa = true;
+        g.vridBas = g.angle + Math.sign(d) * VRID_TROSKEL;
+        g.vridStart = this.state.heading;
+      }
+    }
+    if (g.vridPa) {
+      this.state.heading =
+        wrapHeading(g.vridStart + TWIST_SIGN * vinkelDelta(angle, g.vridBas));
+    }
+
+    // --- lutningen --- (baslinjen vid tröskeln, av samma skäl som ovan)
+    if (!g.lutaPa) {
+      const d = midY - g.midY;
+      if (Math.abs(d) > LUTA_TROSKEL_PX) {
+        g.lutaPa = true;
+        g.lutaBas = g.midY + Math.sign(d) * LUTA_TROSKEL_PX;
+        g.lutaStart = this.state.tilt;
+      }
+    }
+    if (g.lutaPa) {
+      this.state.tilt = clampTiltGesture(g.lutaStart - (midY - g.lutaBas) * TILT_PER_PX);
+    }
   }
 
   _bind() {

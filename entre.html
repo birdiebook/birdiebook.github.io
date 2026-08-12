@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c2e22"><!-- = --bg nedan; meta läser inte CSS-variabler -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Birdiebook">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="./boot.js"></script>
+<title>Birdiebook</title>
+<style>
+  :root { --bg:#0c2e22; --ink:#e8f5ec; --dim:#cfe6d8; --warn:#ffd873; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; }
+  /* Samma mörkgröna --bg som hubben och resten av appen. Entrén är första
+     intrycket; den får inte se ut som en annan app än den man kommer in i —
+     därför följde den med när hubben lämnade loggans gradient 2026-08-07. */
+  body { color:var(--ink);
+    background:var(--bg);
+    font-family:-apple-system,"Segoe UI",Roboto,sans-serif;
+    touch-action:manipulation; overscroll-behavior:none;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right)
+            env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #app { max-width:480px; margin:0 auto; padding:28px 22px 24px;
+    min-height:100%; display:flex; flex-direction:column; }
+
+  /* Märket: samma ring och samma golfare som hubbens fot, men utan mätaren —
+     här finns ingen profil att mäta ännu. */
+  .marke { position:relative; width:112px; height:112px; margin:22px auto 18px; }
+  .marke svg { position:absolute; inset:0; width:100%; height:100%; }
+  .marke img { position:absolute; left:50%; top:50%;
+    transform:translate(calc(-50% - 5px), -50%); width:auto; height:60%; }
+
+  h1 { font-size:32px; font-weight:600; letter-spacing:-.5px;
+    margin:0 0 4px; text-align:center; }
+  .sub { color:var(--dim); font-size:15px; margin:0 0 26px; text-align:center; }
+
+  /* Kortet bär e-postvägen. Samma glas som hubbens val, så entrén och hubben
+     känns som samma yta. */
+  .kort { position:relative; overflow:hidden;
+    background:linear-gradient(160deg, rgba(255,255,255,.20), rgba(255,255,255,.09));
+    border:1px solid rgba(255,255,255,.30); border-radius:22px;
+    box-shadow:0 10px 26px rgba(0,0,0,.20),
+               0 0 22px rgba(190,238,205,.10),
+               inset 0 1px 0 rgba(255,255,255,.45);
+    -webkit-backdrop-filter:blur(12px) saturate(1.2);
+    backdrop-filter:blur(12px) saturate(1.2);
+    padding:20px; }
+  .kort::before { content:""; position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(120% 90% at 12% -30%, rgba(255,255,255,.30), rgba(255,255,255,0) 60%),
+      linear-gradient(to bottom, rgba(255,255,255,.10), rgba(255,255,255,0) 52%); }
+  .kort > * { position:relative; }
+
+  input { width:100%; font-size:17px; font-family:inherit; color:#0d2b1e;
+    background:rgba(255,255,255,.92); border:1px solid rgba(255,255,255,.6);
+    border-radius:14px; padding:15px 16px; }
+  input::placeholder { color:#6d8a7a; }
+  input#kod { text-align:center; letter-spacing:8px; font-size:22px;
+    font-variant-numeric:tabular-nums; }
+
+  .btn { width:100%; margin-top:12px; font-size:17px; font-weight:600;
+    font-family:inherit; color:#06180f; background:#8fd9a8;
+    border:0; border-radius:14px; padding:15px 16px;
+    box-shadow:0 6px 16px rgba(0,0,0,.18); }
+  .btn:active { transform:scale(.99); }
+  .btn[disabled] { opacity:.6; }
+  .btn.tyst { background:transparent; color:var(--dim); font-weight:400;
+    box-shadow:none; padding:11px 8px; margin-top:6px; }
+
+  label { display:block; font-size:14px; color:var(--dim); margin:2px 2px 8px; }
+  label + input { margin-bottom:16px; }
+
+  /* Handicapet frågas som ETT EXAKT TAL på två hjul: heltalet och decimalen.
+     Förr stod sju hinkar här ("11–15", "Vet inte"). Hjulen är valda 2026-08-07
+     för att spelaren VET sitt index på tiondelen och hinken kastade bort den
+     precisionen — och för att ett hjul inte kräver tangentbord ute på banan.
+     Plus-handicap visas som "+2" och sparas negativt (WHS-semantik).
+     Den som inte vill svara trycker "Hoppa över"; det blir samma breda prior
+     som "Vet inte" gav (Spelprofil.kombination faller tillbaka på den). */
+  .hjul { position:relative; display:flex; align-items:center; justify-content:center;
+    gap:4px; height:160px; margin:0 0 4px; }
+  /* Bandet markerar mitten — raden som gäller är den som ligger i det. */
+  .hjul .band { position:absolute; left:50%; transform:translateX(-50%);
+    width:186px; top:60px; height:40px; border-radius:12px;
+    background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.26);
+    pointer-events:none; }
+  .kolumn { height:160px; overflow-y:scroll; scroll-snap-type:y mandatory;
+    padding:60px 0; text-align:center; touch-action:pan-y;
+    scrollbar-width:none; -ms-overflow-style:none;
+    /* Tonar ut mot kanterna så hjulet läses som ett hjul och inte som en lista. */
+    -webkit-mask-image:linear-gradient(180deg, transparent, #000 28%, #000 72%, transparent);
+    mask-image:linear-gradient(180deg, transparent, #000 28%, #000 72%, transparent); }
+  .kolumn::-webkit-scrollbar { display:none; }
+  .kolumn div { height:40px; line-height:40px; scroll-snap-align:center;
+    font-size:26px; font-variant-numeric:tabular-nums;
+    color:rgba(234,246,238,.42); transition:color .12s ease; }
+  .kolumn div.mitt { color:#fff; }
+  .kolumn#hel { width:96px; text-align:right; padding-right:6px; }
+  .kolumn#dec { width:66px; text-align:left; padding-left:6px; }
+  .hjul .komma { font-size:26px; color:#fff; }
+
+  .liten { color:var(--dim); font-size:13px; line-height:1.5; margin:12px 2px 0; }
+  .fel { color:var(--warn); font-size:14px; line-height:1.45; margin:12px 2px 0; }
+
+  /* Gästvägen bor UTANFÖR kortet och är nedtonad — den ska vara lätt att hitta
+     och ändå läsas som andrahandsvalet (MOLN_PLAN §S1). */
+  .gast { margin-top:auto; padding-top:26px; text-align:center; }
+  .gast button { font-size:16px; font-family:inherit; color:#eaf6ee;
+    background:transparent; border:0; padding:12px 18px;
+    text-decoration:underline; text-underline-offset:4px; }
+  .gast .liten { text-align:center; margin-top:2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="marke">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,.22)"
+              stroke-width="4.5"/>
+    </svg>
+    <img src="./golfare.png" alt="" width="329" height="640">
+  </div>
+
+  <h1>Birdiebook</h1>
+  <p class="sub">Strokes gained-analys på riktigt</p>
+
+  <div class="kort" id="kort"></div>
+
+  <div class="gast" id="gastrad">
+    <button id="gastknapp" type="button">Fortsätt som gäst</button>
+    <p class="liten">Allt fungerar direkt. Du kan lägga till e-post när du vill.</p>
+  </div>
+</div>
+
+<script src="./vendor/supabase-js.js"></script>
+<script src="./live.js"></script>
+<script src="./konto.js"></script>
+<script src="./spelprofil.js"></script>
+<script src="./store.js"></script>
+<script>
+"use strict";
+/* ENTRÉN — första besöket och utloggat läge (MOLN_PLAN §3 S1, §4).
+ *
+ * Sidan äger INGEN auth-logik. Allt flödet gör är att ropa på `konto.js`, som
+ * redan bär de två reglerna som är lätta att göra fel: att e-post på en
+ * gästsession är en UPPGRADERING som behåller uid:t, och att verifieringens
+ * `type` måste spegla vilken av vägarna som togs. Duplicerad den logiken här
+ * hade gett två ställen som kan glida isär om Supabase ändrar sig.
+ *
+ * GÄST ÄR ETT FULLGOTT VAL, inte ett andrahandsval (APPSTORE_PLAN §12.4).
+ * Därför står gästknappen alltid framme och kräver noll formulärfält. Den är
+ * nedtonad för att e-post är det vi REKOMMENDERAR — inte för att gästläget
+ * skulle vara sämre.
+ *
+ * ENTRÉN FÅR ALDRIG BLI EN VÄGG. Appen räknar allt lokalt och kräver inget
+ * konto. Går molnet inte att nå — CDN blockerad, flygplansläge, Supabase nere —
+ * ska sidan fortfarande släppa in: gästknappen skriver klarmarkeringen och går
+ * till hubben även när ingen session kunde skapas. Ett fel i molnet får kosta
+ * en synk, aldrig tillgången till appen.
+ */
+
+/* Klarmarkeringen. Hubben läser den SYNKRONT i sitt <head> för att avgöra om
+   entrén ska visas — därför localStorage och inte Store/IndexedDB, som är
+   asynkrona och hade gett en blinkning av hubben före entrén. */
+const KLAR = "sg_entre_klar";
+function slappIn() {
+  try { localStorage.setItem(KLAR, "1"); } catch (_) {}
+  location.replace("./index.html");
+}
+
+/* Steg 2 — namn och handicap. BARA de två.
+ *
+ * De två är med för att de behövs på scorekortet och för netto, och för att de
+ * gör att uppsättningen i spela.html slipper fråga om namnet igen. Resten av
+ * profilen — driver, järn 7, missar, stil, tee — stannar i profilguiden och är
+ * FRIVILLIG: den som vill ha rundplanering fyller i den där. Att flytta hit den
+ * hade gjort entrén till ett formulär, och det är precis vad §12.4 säger nej
+ * till.
+ *
+ * Steget går att hoppa över, och det är inte ett tomt svar: utan hcp faller
+ * Spelprofil.kombination tillbaka på den breda priorn (§GP1) — samma som den
+ * gamla "Vet inte"-hinken gav.
+ *
+ * Steget är avskalat MED FLIT (2026-08-07): ingen egen rubrik, ingen brödtext,
+ * två fält. Förr bytte det h1 till "Vem är du?" och förklarade sig i en
+ * paragraf; sidan såg då ut som ett formulär mitt i en entré som lovar att den
+ * inte är ett.
+ *
+ * Ett STEG i entréflödet, inte en egen sida: en egen URL hade kunnat nås i
+ * halvt tillstånd (bakåtknapp, gammal flik, direktlänk) och krävt ännu en
+ * grind framför sig. Hit kommer man bara på ett sätt. */
+
+/* Hjulens värden. Heltalet går från plus-handicap till 54 (WHS-taket);
+   NEGATIVA tal är plus-handicap och visas med "+", för det är så spelaren
+   säger det: "plus två" är bättre än scratch, alltså index −2. */
+const HJUL_HEL = [];
+for (let n = -5; n <= 54; n++) HJUL_HEL.push(n);
+const HJUL_DEC = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+const RAD = 40;          // px per rad — MÅSTE vara samma som .kolumn div i CSS:en
+const helEtikett = n => (n < 0 ? "+" + (-n) : String(n));
+
+let hcpHel = null, hcpDec = 0;   // index i listorna ovan; null = inget hjul ritat
+
+function visaVem() {
+  document.getElementById("gastrad").hidden = true;
+  const p = (typeof Store !== "undefined" && Store.profile) ? Store.profile() : null;
+  const namn = (p && p.namn) || "";
+  const svarat = !!(p && (p.hcpExact != null || p.hcpBucket));
+
+  // Den som kommer tillbaka på en ny telefon har redan svarat — molnprofilen
+  // hämtades av synkaProfil strax före. Fråga då inte igen.
+  if (namn && svarat) return slappIn();
+
+  // Startläget: spelarens eget tal om det finns, annars hinkens mitt, annars
+  // 18,0. Hjulet MÅSTE peka på något, så starten är ett förslag — inte ett
+  // påstående om spelaren. Därför står "Hoppa över" kvar.
+  let start = 18;
+  if (p && p.hcpExact != null) start = p.hcpExact;
+  else if (p && p.hcpBucket) {
+    const h = Spelprofil.hink("hcp", p.hcpBucket);
+    if (h && h.mid != null) start = h.mid;
+  }
+  const helTal = start < 0 ? Math.ceil(start) : Math.floor(start);
+  hcpHel = Math.max(0, HJUL_HEL.indexOf(helTal));
+  hcpDec = Math.round(Math.abs(start - helTal) * 10) % 10;
+  ritaVem(namn);
+}
+
+function ritaVem(namn) {
+  const rader = (lista, etikett) =>
+    lista.map(v => `<div>${esc(etikett(v))}</div>`).join("");
+  kort.innerHTML = `
+    <label for="namn">Ditt namn</label>
+    <input id="namn" type="text" autocomplete="name" placeholder="Förnamn Efternamn"
+           value="${esc(namn)}">
+    <label id="hcpEtikett">Ditt handicap</label>
+    <div class="hjul">
+      <div class="band"></div>
+      <div class="kolumn" id="hel" tabindex="0" role="listbox"
+           aria-labelledby="hcpEtikett">${rader(HJUL_HEL, helEtikett)}</div>
+      <div class="komma">,</div>
+      <div class="kolumn" id="dec" tabindex="0" role="listbox"
+           aria-label="Decimal">${rader(HJUL_DEC, String)}</div>
+    </div>
+    <button class="btn" id="klar">Klart</button>
+    <button class="btn tyst" id="hoppa">Hoppa över</button>`;
+
+  hjul(document.getElementById("hel"), hcpHel, i => { hcpHel = i; });
+  hjul(document.getElementById("dec"), hcpDec, i => { hcpDec = i; });
+  document.getElementById("klar").onclick = sparaVem;
+  document.getElementById("hoppa").onclick = slappIn;
+}
+
+/* Ett hjul = en scroll-snap-kolumn. Positionen ÄR värdet: raden som ligger i
+   bandet är den valda, och den läses ur scrollTop i stället för att hållas i en
+   parallell variabel som kan hamna ur fas med det man ser. Klick och piltangenter
+   scrollar dit i stället för att välja vid sidan om — en väg in, ett värde. */
+function hjul(el, index, onValt) {
+  const rad = i => Math.max(0, Math.min(el.children.length - 1, i));
+  const markera = i => [...el.children].forEach((d, n) => d.classList.toggle("mitt", n === i));
+  const nu = () => rad(Math.round(el.scrollTop / RAD));
+
+  el.scrollTop = index * RAD;
+  markera(index);
+  let t = null;
+  el.addEventListener("scroll", () => {
+    clearTimeout(t);
+    // Efter snappet, inte under det: mitt i en fingerdragning är scrollTop ett
+    // mellanläge och avrundningen skulle blinka mellan två rader.
+    t = setTimeout(() => { const i = nu(); markera(i); onValt(i); }, 90);
+  });
+  el.addEventListener("keydown", e => {
+    const steg = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (!steg) return;
+    e.preventDefault();
+    el.scrollTop = rad(nu() + steg) * RAD;   // scroll-lyssnaren gör resten
+  });
+  [...el.children].forEach((d, i) => {
+    d.onclick = () => el.scrollTo({ top: i * RAD, behavior: "smooth" });
+  });
+}
+
+async function sparaVem() {
+  const namn = (document.getElementById("namn").value || "").trim();
+  jobbar("klar", "Sparar …");
+  // Store äger persistensen och Spelprofil formen — entrén skriver bara. Samma
+  // väg som profilsidan, så hubbens ring och profilguiden ser svaren direkt.
+  try {
+    await Store.ready();
+    const patch = {};
+    if (namn) patch.namn = namn;
+    if (hcpHel != null) {
+      // Plus-handicap räknar åt andra hållet: "+2,4" är index −2,4.
+      const hel = HJUL_HEL[hcpHel], dec = HJUL_DEC[hcpDec] / 10;
+      const exakt = Spelprofil.hcpTal(hel < 0 ? hel - dec : hel + dec);
+      patch.hcpExact = exakt;
+      // Hinken skrivs med: resten av appen (planer, kombinationsnamn) frågar
+      // efter den, och härleds den inte här kan de två börja säga olika om
+      // samma spelare — samma regel som Spelprofil.franLegacy följer.
+      patch.hcpBucket = Spelprofil.bucketForHcp(exakt);
+    }
+    if (Object.keys(patch).length) Store.setProfile(patch);
+  } catch (_) {}
+  // Har man konto ska svaren finnas på nästa enhet också. Tyst vid fel: de är
+  // sparade lokalt, och det är det som gäller ute på banan.
+  try { if (window.Konto && Konto.tillganglig() && !Konto.arGast()) await Konto.sparaProfil(Store.profile()); } catch (_) {}
+  slappIn();
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+const kort = document.getElementById("kort");
+let lage = { steg: "epost", epost: "", fel: "", taget: false, vag: null };
+
+function rita() {
+  const felrad = lage.fel ? `<p class="fel">${esc(lage.fel)}</p>` : "";
+
+  if (lage.steg === "kod") {
+    /* "Skickad" betyder att servern tog emot begäran, inte att mejlet kom fram
+       — leveransfel sker långt senare och når aldrig klienten. Raden om
+       skräpposten är hela vår ärlighet om det. */
+    kort.innerHTML = `
+      <p class="liten" style="margin-top:0">En sexsiffrig kod är på väg till
+        <b>${esc(lage.epost)}</b>. Den gäller några minuter.</p>
+      <input id="kod" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="000000" aria-label="Sexsiffrig kod">
+      ${felrad}
+      <button class="btn" id="bekrafta">Bekräfta</button>
+      <button class="btn tyst" id="igen">Skicka koden igen</button>
+      <button class="btn tyst" id="avbryt">Använd en annan adress</button>
+      <p class="liten">Kom inget? Kolla skräpposten — nya avsändare hamnar ofta
+        där första gången.</p>`;
+    const k = document.getElementById("kod");
+    k.focus();
+    document.getElementById("bekrafta").onclick = bekrafta;
+    document.getElementById("igen").onclick = () => skicka(lage.epost, null, "igen");
+    document.getElementById("avbryt").onclick = () => {
+      lage = { steg: "epost", epost: lage.epost, fel: "", taget: false, vag: null };
+      rita();
+    };
+    k.addEventListener("keydown", e => { if (e.key === "Enter") bekrafta(); });
+    return;
+  }
+
+  kort.innerHTML = `
+    <input id="epost" type="email" inputmode="email" autocomplete="email"
+           placeholder="din@epost.se" aria-label="E-postadress"
+           value="${esc(lage.epost)}">
+    ${felrad}
+    <button class="btn" id="fortsatt">Fortsätt med e-post</button>
+    ${lage.taget ? `<button class="btn tyst" id="byt">Logga in på det kontot i stället</button>` : ""}
+    <p class="liten">Vi skickar en sexsiffrig kod. Inget lösenord — och din
+      profil och dina rundor följer med till en ny telefon.</p>`;
+  const e = document.getElementById("epost");
+  document.getElementById("fortsatt").onclick = () => skicka(e.value);
+  e.addEventListener("keydown", ev => { if (ev.key === "Enter") skicka(e.value); });
+  const byt = document.getElementById("byt");
+  // `taget` = adressen hör redan till ett konto, och gästsessionen står i vägen
+  // för uppgraderingen. Rätt svar är en väg vidare, inte ett felmeddelande.
+  if (byt) byt.onclick = () => skicka(lage.epost, { tvingaInloggning: true });
+}
+
+function jobbar(id, text) {
+  const b = document.getElementById(id);
+  if (b) { b.disabled = true; b.textContent = text; }
+}
+
+async function skicka(epost, opt, knapp) {
+  epost = String(epost || "").trim();
+  if (!epost || epost.indexOf("@") < 1) {
+    lage.fel = "Skriv en e-postadress."; return rita();
+  }
+  if (!window.Konto || !Konto.tillganglig()) {
+    lage.fel = "Molnet går inte att nå just nu. Du kan fortsätta som gäst och " +
+               "lägga till e-post senare.";
+    return rita();
+  }
+  jobbar(knapp === "igen" ? "igen" : "fortsatt", "Skickar …");
+  try {
+    const r = await Konto.skickaKod(epost, opt);
+    lage = { steg: "kod", epost, fel: "", taget: false, vag: r.lage };
+  } catch (err) {
+    lage = { steg: "epost", epost, fel: err.message, taget: !!err.taget, vag: null };
+  }
+  rita();
+}
+
+async function bekrafta() {
+  const kod = (document.getElementById("kod").value || "").trim();
+  if (kod.length < 6) { lage.fel = "Koden är sex siffror."; return rita(); }
+  jobbar("bekrafta", "Bekräftar …");
+  try {
+    await Konto.verifiera(lage.epost, kod, lage.vag);
+  } catch (err) { lage.fel = err.message; return rita(); }
+  // Profilen kan redan finnas — lokalt (gäst som just skapade konto) eller i
+  // molnet (samma person på en ny telefon). Synken reder ut vilket, och den
+  // får misslyckas tyst: kontot är skapat, och det är det entrén lovade.
+  // Den körs FÖRE steg 2, så en återvändare slipper svara på nytt.
+  try { await Konto.synkaProfil(); } catch (_) {}
+  visaVem();
+}
+
+document.getElementById("gastknapp").onclick = async () => {
+  const b = document.getElementById("gastknapp");
+  b.disabled = true; b.textContent = "Öppnar …";
+  // Gästsessionen ger ett riktigt uid direkt, och SAMMA uid behålls den dag
+  // spelaren lägger till e-post — därför behöver ingen data flyttas då
+  // (MOLN_PLAN §S1, §5). Misslyckas den går vi in ändå, se sidhuvudet.
+  try { if (window.Konto && Konto.tillganglig()) await Konto.redo(); } catch (_) {}
+  visaVem();
+};
+
+/* Har man redan en session ska entrén inte stå i vägen — t.ex. om någon landar
+   här via historiken eller en gammal länk. */
+(async function () {
+  rita();
+  try {
+    if (window.Konto && Konto.tillganglig()) {
+      const s = await Konto.lasSession();
+      if (s.inloggad) return slappIn();
+    }
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>

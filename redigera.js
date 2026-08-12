@@ -318,6 +318,14 @@ async function init() {
   map.on("click", onTap);
   document.getElementById("prev").onclick = () => goHole(hi);       // rel = (hi+1)-1
   document.getElementById("next").onclick = () => goHole(hi + 2);   // rel = (hi+1)+1
+  // ?from=karta (pennan i kartans topprad) → "✓ Klar" leder tillbaka till kartan
+  // i stället för till Logga slag. Sätts FÖRE bandata-laddningen nedan, så vägen
+  // tillbaka finns kvar även när den misslyckas och init returnerar tidigt.
+  // Vitlistat värde, aldrig parameterns sträng som href — annars öppen omdirigering.
+  if (new URLSearchParams(location.search).get("from") === "karta") {
+    const done = document.getElementById("done");
+    if (done) done.href = "./karta.html";
+  }
 
   try {
     const course = await MapCore.loadCourse();

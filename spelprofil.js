@@ -373,13 +373,30 @@ const Spelprofil = (() => {
   }
 
   /* Spelarens förväntade spridning för ett slag på `dist` meter, i meter:
-     `{cross, along, profil, bucket}` — eller null när profilen inte räcker.
+     `{cross, along, alongBias, profil, bucket}` — eller null när profilen inte
+     räcker.
 
      BARA basprofilen (hcp-hinken) används. Driverhinken beskriver utslaget och
      missen är en RIKTNING, inte en bredd; att blanda in dem här skulle göra
      talet svårare att förklara utan att göra det sannare. Ellipsen som ritas är
      alltså "så brett hamnar dina inspel på det här avståndet", vilket är exakt
-     vad U17:s reglage frågar efter. */
+     vad U17:s reglage frågar efter.
+
+     `alongBias` är profilens SYSTEMATISKA längdfel (− = kort), och den följer
+     med av samma skäl som spridningen gör: den är en del av var slagen hamnar.
+     Att bara skicka bredderna var en tyst lögn — profilen säger att ett inspel
+     på 112 m i snitt slutar 11 m kort, och en ellips centrerad på siktet påstod
+     i stället att det slaget är osäkert men rätt inställt. PC-vyns 2D-karta har
+     alltid ritat den rätt (`plan.js` skjuter centrum med `along_bias +
+     across_bias`), så de två vinklarna sa olika om samma spelare.
+
+     `across_bias` följer däremot INTE med, och det är ett beslut och ingen
+     glömska: basprofilerna har den = 0 per konstruktion (sidomissen är den
+     RIKTNING som stycket ovan håller utanför), och den sidoförskjutning som
+     verkligen finns — fade/draw ur klubbtrappan — är redan spenderad som
+     siktkorrigering i `Planslag.kedja` (den bågar flygvägen och landar ändå på
+     målet). Regeln som håller ihop det: det modellen säger åt dig att sikta bort
+     flyttar inte nedslaget, det den inte säger något om gör det. */
   function spridning(profil, dist) {
     if (!TAB || !TAB.profiler) return null;
     const bas = HCP_BAS[normalisera(profil).hcpBucket];
@@ -387,7 +404,13 @@ const Spelprofil = (() => {
     const b = bucketFor(dist);
     const rad = prof && b && prof.approach ? prof.approach[b] : null;
     if (!rad) return null;
-    return { cross: rad.across_sd, along: rad.along_sd, profil: bas, bucket: b };
+    return { cross: rad.across_sd, along: rad.along_sd,
+             alongBias: rad.along_bias || 0, profil: bas, bucket: b,
+             // U26: samma missmodell som prissätter slaget (M0c,
+             // src/api/shot_sampling.py MISS_MODELS), en post per BASPROFIL —
+             // inte per avståndsbucket. `mobile/fordelning.js` läser den för
+             // att rita konturerna ur exakt den fördelning som redan gäller.
+             miss: (prof && prof.miss) || null };
   }
 
   /* ---- Klubbtrappan (GP2) -------------------------------------------------
@@ -473,6 +496,10 @@ const Spelprofil = (() => {
     return {
       ankare: { driver: avrunda(a.D, 1), jarn7: avrunda(a.S, 1),
                 kalla: a.kalla, bas: a.bas },
+      // U26: klubbtrappan byter bara BREDDEN per klubba (§GP2) — missandelen
+      // är en egenskap hos NIVÅN (basprofilen), inte hos klubban, så den ärvs
+      // rakt av från samma profil ankaret redan pekar på.
+      miss: (TAB.profiler[a.bas] && TAB.profiler[a.bas].miss) || null,
       klubbor: k.klubbor.map(c => {
         const v = linjeVid(linje, L[c.id]);
         return {
@@ -539,6 +566,19 @@ const Spelprofil = (() => {
     return { klubba: rad.id, label: rad.label, langd: a.langd,
              cross: a.across_sd, along: a.along_sd,
              bias: a.across_bias, apex: a.apex,
+             // U26: samma missmodell som profilens direkta spridning() bär —
+             // se kommentaren vid `miss` i klubbtrappa().
+             miss: t.miss || null,
+             /* Trappans egen längdbias, OMODIFIERAD av form/ansats/höjd — och
+                därför tagen ur `rad` och inte ur `applicera`. Två skäl: den är
+                nivåns systematiska längdfel vid klubbans längd, inte något de
+                tre modifierarna mätts mot, och `applicera` speglas rad för rad
+                mot Python (`tests/test_klubbtrappa_paritet.py`) — ett nytt fält
+                där hade varit en modelländring i två språk för något ingen
+                mätt. Utan den här raden tappade ellipsen sin bias i samma stund
+                spelaren valde klubba, vilket är precis den sortens skillnad
+                ingen upptäcker. */
+             alongBias: rad.along_bias || 0,
              // Räcker klubban till? En plan som tyst låter spelaren "slå"
              // 210 m med ett 8-järn är inte en plan.
              racker: !(dist > 0) || a.langd >= dist - a.along_sd,
@@ -562,9 +602,27 @@ const Spelprofil = (() => {
               o.jarn7 || o.miss || o.svaghet || o.stil || o.tee);
   }
 
+  /* Hur mycket av profilen är ifylld? Hubbens profil-ring fylls efter detta.
+   *
+   * Definitionen bor HÄR och inte i hubben av samma skäl som resten av modulen
+   * finns: kommer en fråga till i guiden ska ringen följa med automatiskt, inte
+   * fortsätta visa "klar" på en profil som fått ett nytt tomt fält.
+   *
+   * `hcp` räknas som ETT svar även om det finns två fält — hinken och det exakta
+   * talet är samma fråga, och Avancerad-fältet är frivilligt. Att fylla i det
+   * ska inte kunna ge mer än 100 %. */
+  const IFYLLNAD = ["namn", "kon", "hcp", "driver", "jarn7", "miss", "svaghet",
+                    "stil", "tee"];
+  function ifylldhet(p) {
+    const o = normalisera(p);
+    const klart = f => f === "hcp" ? !!(o.hcpBucket || o.hcpExact != null) : !!o[f];
+    const klara = IFYLLNAD.filter(klart).length;
+    return { klara, totalt: IFYLLNAD.length, andel: klara / IFYLLNAD.length };
+  }
+
   return { V, HCP, DRIVER, JARN7, MISS, SVAGHET, STIL, TEE,
            tom, normalisera, hink, hcpTal, hcpForBerakning, bucketForHcp,
-           franLegacy, harSvar, harPlanSvar, kombination,
+           franLegacy, harSvar, ifylldhet, harPlanSvar, kombination,
            namnFor, tolkaKombination, kombAvstand, narmasteKombinationer,
            kombinationsetikett, HCP_BAS, DRIVER_KOD, MISS_SIDA,
            sattSpridning, spridning, bucketFor,

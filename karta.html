@@ -80,7 +80,12 @@
                 grön remsa. OBS: utan safe-area-marginal hamnar etiketterna nära
                 home-indikatorn i hemskärmsläget (avsiktligt val).
        färg     aktiv flik använder sidans --accent-ui-yta. */
-  .tabs { bottom:var(--reclaim); padding:6px 10px 8px; }
+  /* färg   flikraden bär --flikrad-yta, inte --card. Chrome-färgerna är
+              avmättade med flit, men flikraden är samma komponent på alla
+              rundans vyer och såg gråare ut här än på Logga slag och
+              Översikt. Se tokens.css för hela skälet. */
+  .tabs { bottom:var(--reclaim); padding:6px 10px 8px;
+          background:var(--flikrad-yta); }
   .tabs a.active { background:var(--accent-ui-yta); }
   /* mått till vald position: förankrad uppe till höger, precis under kompassen */
   #measure { position:fixed; z-index:1000;
@@ -95,8 +100,20 @@
      "Logga slag" under den (layoutOverlays) kan mäta var den slutar och alltså
      ligger still oavsett om ett mått visas eller inte. */
   #measure.hidden { visibility:hidden; }
+  /* Genväg till redigeringen: penna längst till vänster i toppraden, till
+     vänster om lägesväljaren. Samma sida som "✏️ Granska & rätta slag" på
+     Logga slag-sidan, men utan omvägen via avslutningsvyn — och den öppnar
+     hålet man står på (?hole=). Ikonen är inline-SVG i nav.js familj (tunna
+     streck, currentColor) så den inte blir en systemritad emoji. */
+  #editbtn { flex:0 0 auto; -webkit-appearance:none; appearance:none;
+    cursor:pointer; width:36px; height:36px; padding:0; border-radius:12px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--framebg); border:1px solid var(--line); color:var(--ink);
+    box-shadow:0 2px 8px var(--skuggfarg); }
+  #editbtn svg { display:block; width:20px; height:20px; }
+  #editbtn:active { transform:scale(.94); }
   /* lägesväljare: alltid synlig, "Spelar som" vs råa GPS-mått. Ligger i
-     toppraden längst till vänster (kompakt så den ryms bredvid hål-rutan). */
+     toppraden till vänster (kompakt så den ryms bredvid hål-rutan). */
   #modeToggle { flex:0 0 auto; display:flex; gap:3px;
     background:var(--card)ee; border:1px solid var(--line); border-radius:12px; padding:3px; }
   #modeToggle button { background:none; border:0; color:var(--dim);
@@ -193,6 +210,21 @@
       :root { --reclaim: calc(100% - 100lvh); }
     }
   }
+
+  /* Riktigt smala telefoner (≤360 px, t.ex. SE 1:a gen). Toppraden var redan full
+     där, och pennan lade till 42 px till: kompassrosen hamnade utanför skärmen
+     (uppmätt högerkant 339 px vid 320 px bredd). Krymp pennan, lägesväljaren och
+     rosen i stället för att flytta något — raden ska fortsätta rymmas på EN rad.
+     Måste stå SIST i filen: reglerna har samma specificitet som bas-reglerna
+     ovan, så en tidigare placering förlorar på källordning (mätt — bara #editbtn,
+     som saknar motsvarande bas-regel, slog igenom då). */
+  @media (max-width: 360px) {
+    .holebar { gap:4px; }
+    #editbtn { width:32px; height:32px; }
+    #editbtn svg { width:18px; height:18px; }
+    #modeToggle button { font-size:11px; padding:6px 6px; }
+    #rose { width:72px; height:72px; }
+  }
 </style>
 </head>
 <body>
@@ -200,6 +232,13 @@
 
 <div id="top">
   <div class="holebar">
+    <button type="button" id="editbtn" aria-label="Granska och rätta slag" title="Granska &amp; rätta slag">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M16.5 3.6a2.4 2.4 0 0 1 3.9 3.9L8 19.9 3.2 21l1.1-4.8z"/>
+        <path d="M14.7 5.4l3.9 3.9"/>
+      </svg>
+    </button>
     <div id="modeToggle">
       <button data-mode="play">Spelar som</button>
       <button data-mode="gps">GPS</button>
@@ -207,7 +246,7 @@
     <div class="name identitet" id="holeName">Söker hål …</div>
     <svg id="rose" viewBox="0 0 64 64" width="82" height="82">
       <g id="roseRing">
-        <circle cx="32" cy="32" r="29" stroke-width="2"/ style="fill:var(--framebg);stroke:var(--line)">
+        <circle cx="32" cy="32" r="29" stroke-width="2" style="fill:var(--framebg);stroke:var(--line)"/>
         <text x="32" y="13" text-anchor="middle" font-size="11" font-weight="700" style="fill:var(--ink)">N</text>
         <circle cx="55" cy="32" r="1.5" style="fill:var(--dim)"/>
         <circle cx="32" cy="55" r="1.5" style="fill:var(--dim)"/>
@@ -270,7 +309,7 @@
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./vendor/supabase-js.js"></script>
 <script src="./live.js"></script>
 <script>
 "use strict";
@@ -1220,6 +1259,10 @@ async function init() {
   });
   for (const b of document.querySelectorAll("#modeToggle button"))
     b.onclick = () => setMode(b.dataset.mode);
+  // Pennan: redigera slagen för hålet man står på. from=karta gör att "✓ Klar"
+  // där leder tillbaka HIT och inte till Logga slag (redigera.js).
+  const eb = document.getElementById("editbtn");
+  if (eb) eb.onclick = () => { location.href = `./redigera.html?hole=${hi + 1}&from=karta`; };
   setMode(mode);   // sätter aktiv knapp + första renderingen
   // Första staplingen när layouten satt sig (safe-area/typsnitt inräknade).
   requestAnimationFrame(layoutOverlays);
