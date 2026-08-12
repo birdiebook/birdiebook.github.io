@@ -446,9 +446,25 @@ function ljusniva(mat) {
     shader.uniforms.uF2 = u;
     shader.fragmentShader = shader.fragmentShader
       .replace('void main() {', 'uniform vec3 uF2;\nvoid main() {')
+      /* Taket håller NYANSEN, inte varje kanal för sig — och det är en rättelse,
+         inte en förfining. `clamp(rgb * uF2, 0, 1)` klipper kanalvis, så den
+         kanal som är mest uppskruvad slår i taket FÖRST. Gainen är per kanal
+         (blue_1: R 1,326 · G 1,324 · B 1,433), alltså tappar bilden blått innan
+         den tappar rött och grönt — och en yta som tappar blått blir GUL.
+         Grundarens skärmbilder 2026-08-12: marken gulnade när överdriften drogs
+         upp och kom inte tillbaka på vägen ner ("går bara på ett håll"), vilket
+         är klippningens signatur — det bortklippta finns inte kvar att återfå.
+
+         Nu skalas hela pixeln proportionellt så fort någon kanal skulle passera
+         1: resultatet blir mörkare i stället för missfärgat, och förhållandet
+         mellan kanalerna — alltså nyansen — står still. */
       .replace('  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);',
                '  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);\n'
-               + '  gl_FragColor.rgb = clamp(gl_FragColor.rgb * uF2, 0.0, 1.0);');
+               + '  {\n'
+               + '    vec3 f2 = max(gl_FragColor.rgb * uF2, 0.0);\n'
+               + '    float topp = max(max(f2.r, f2.g), f2.b);\n'
+               + '    gl_FragColor.rgb = topp > 1.0 ? f2 / topp : f2;\n'
+               + '  }');
   };
   mat.needsUpdate = true;
 }
@@ -620,6 +636,96 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
     // kvoten. `efter` ska ligga på `mal`; gör den inte det är kedjan inte längre
     // multiplikativ och en omgång räcker inte.
     f2: () => f2Rest,
+    /* F1b: ändras ljuset när överdriften dras? (ORTOFOTO_FARG.md §F1b.)
+     *
+     * KRÄVER ETT SYNLIGT FÖNSTER. I en dold flik står rAF stilla och
+     * `applyExag`:s ombyggnader schemaläggs dit (`schemalagg`, U18) — det
+     * synkrona flyttar sig direkt medan resten inte gör det, och serien får en
+     * hysteres som ser ut som buggen men är mätfelet. Kroken räknar därför
+     * bildrutor först och VÄGRAR mäta om rAF står still.
+     *
+     * Metoden: EN egen kamera, satt en gång och aldrig rörd, så överdriften är
+     * enda skillnaden mellan avläsningarna (`camera.position` går inte att låsa
+     * — CameraController skriver över den varje bildruta, uppmätt drift 11,2 m).
+     * Serien går UPP och NER genom reglagets spann: samma värde ska ge samma
+     * tal åt båda hållen, annars finns det ett tillstånd som blir kvar — vilket
+     * är precis vad "stannar så tills man byter hål" betyder.
+     *
+     * Varje steg mäts i tre skepnader, så orsaken pekas ut och inte bara felet:
+     *   `alla`      allt på — det spelaren ser
+     *   `utanSkugga` sol.castShadow = false — skuggkartans bidrag
+     *   `utanTrad`   bara mark och kjol synliga — allt utom terrängen bort
+     *
+     * Anropas: `await __hal3d.matExag()` i konsolen, med hålet laddat. */
+    matExag: async (varden = [1, 3, 5, 3, 1], vantaMs = 900) => {
+      // 1. Går rAF? Utan detta är allt nedan meningslöst.
+      let rutor = 0;
+      const t0 = performance.now();
+      await new Promise(klar => {
+        const tick = () => { rutor++;
+          if (performance.now() - t0 > 400) return klar();
+          requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+      });
+      if (rutor < 2) return { fel: 'rAF står still — mät i ett SYNLIGT fönster', rutor };
+      if (!ground) return { fel: 'inget hål i scenen' };
+
+      // 2. Egen kamera, satt EN gång.
+      const box = new THREE.Box3().setFromObject(ground);
+      const mitt = box.getCenter(new THREE.Vector3());
+      const stl = box.getSize(new THREE.Vector3());
+      const r = Math.max(stl.x, stl.z) * 0.55;
+      const kam = camera.clone();
+      kam.position.set(mitt.x, mitt.y + r * 0.26, mitt.z + r * 0.97);   // ~15° över
+      kam.lookAt(mitt.x, mitt.y, mitt.z);
+      kam.near = 0.5; kam.far = 6000; kam.updateProjectionMatrix();
+
+      const gl = renderer.getContext();
+      const las = (opt = {}) => {
+        const dolda = [];
+        if (opt.utanTrad) scene.traverse(o => {
+          if (o === scene || o.isLight || o === ground || o === wide) return;
+          if (o.parent === scene && o.visible) { dolda.push(o); o.visible = false; }
+        });
+        const sk = sol.castShadow;
+        if (opt.utanSkugga) sol.castShadow = false;
+        renderer.render(scene, kam);
+        const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, S = 300;
+        const buf = new Uint8Array(S * S * 4);
+        gl.readPixels(Math.round(w / 2 - S / 2), Math.round(h / 2 - S / 2),
+                      S, S, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        sol.castShadow = sk;
+        dolda.forEach(o => { o.visible = true; });
+        let R = 0, G = 0, B = 0; const n = S * S;
+        for (let i = 0; i < buf.length; i += 4) { R += buf[i]; G += buf[i+1]; B += buf[i+2]; }
+        return +(0.2126*R/n + 0.7152*G/n + 0.0722*B/n).toFixed(2);
+      };
+
+      const reg = el('exag');
+      const fore = reg ? reg.value : null;
+      const rader = [];
+      for (const v of varden) {
+        if (reg) { reg.value = String(v); reg.dispatchEvent(new Event('input', { bubbles: true })); }
+        // Låt rAF-kön tömmas: ombyggnaderna är schemalagda, inte synkrona.
+        await new Promise(k => setTimeout(k, vantaMs));
+        rader.push({ exag: v, skala: +ground.scale.y.toFixed(2),
+                     uExag: (() => { let u = null;
+                       ground.traverse(c => { if (!u && c.material && c.material.userData.__uExag)
+                         u = c.material.userData.__uExag.value; }); return u; })(),
+                     alla: las(), utanSkugga: las({ utanSkugga: true }),
+                     utanTrad: las({ utanTrad: true }) });
+      }
+      if (reg && fore != null) { reg.value = fore; reg.dispatchEvent(new Event('input', { bubbles: true })); }
+      const spann = (f) => { const v = rader.map(f);
+        return +(Math.max(...v) - Math.min(...v)).toFixed(2); };
+      const hyst = (f) => { const v = rader.map(f);
+        return +(v[v.length - 1] - v[0]).toFixed(2); };   // samma exag, upp vs ner
+      return { rutor, rader,
+               drift: { alla: spann(r => r.alla), utanSkugga: spann(r => r.utanSkugga),
+                        utanTrad: spann(r => r.utanTrad) },
+               hysteres: { alla: hyst(r => r.alla), utanSkugga: hyst(r => r.utanSkugga),
+                           utanTrad: hyst(r => r.utanTrad) } };
+    },
     finish: () => ({
       skuggkarta: { pa: renderer.shadowMap.enabled, typ: renderer.shadowMap.type,
                     storlek: [sol.shadow.mapSize.x, sol.shadow.mapSize.y] },
