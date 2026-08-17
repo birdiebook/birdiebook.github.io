@@ -20,7 +20,15 @@
      "vi har flyttat".
 
      Samma kodbas serverar båda värdarna (publish.ps1 speglar `mobile/`), så
-     detta måste vara ett VÄRDVILLKOR och inte en egen fil. */
+     detta måste vara ett VÄRDVILLKOR och inte en egen fil.
+
+     PAGES DEPLOYAS INTE LÄNGRE AUTOMATISKT (2026-08-17). Push-triggern i
+     .github/workflows/pages.yml är borta därför att den gjorde `main` till en
+     falsk mållinje: en grön deploy pekade på den här frusna värden medan appen
+     låg oförändrad kvar på Cloudflare. Den frusna kopian uppdateras nu bara när
+     någon kör workflowen för hand — alltså i praktiken bara när bannern här
+     nedanför ändras. Byter `MAL` adress måste du komma ihåg det, annars pekar
+     bannern på en värd som inte längre finns. */
   var MAL = "https://birdiebook.johlsson-j.workers.dev";
   var frusen = /(^|\.)github\.io$/i.test(location.hostname);
   window.SGFlytt = { frusen: function () { return frusen; }, mal: MAL };
