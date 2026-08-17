@@ -83,12 +83,72 @@ const DIS_FARG = 0xa9c2c0;
 scene.background = new THREE.Color(DIS_FARG);
 scene.fog = new THREE.Fog(DIS_FARG, 900, 2600);
 
-const himmelLjus = new THREE.HemisphereLight(0xdfeaf2, 0x3a4a38, 0.9);
+/* ---- LJUSET ÄR EN LÄSHJÄLP, INTE FYSIK (ORTOFOTO_FARG.md §Helhetsgreppet) --
+ *
+ * Ortofotot bär redan den sol som sken när flygbilden togs. Belyser vi det en
+ * andra gång med en egen sol skuggar vi bilden två gånger — och då måste den
+ * dubbelskuggningen räknas bort igen någon annanstans. Det var precis vad F2
+ * gjorde: renderade marken, mätte gräset och la på en gain som tog tillbaka
+ * ljusets nivå och färg. En återkoppling som bara stämde i exakt det ljus den
+ * mättes i, och som ingen kod bevakade när ljuset flyttade sig.
+ *
+ * Nu ligger sanningen i stället i ljusriggen, och den vilar på TVÅ regler:
+ *
+ *   1. LJUSET ÄR GRÅTT. Sol och himmel är neutrala. Då kan ingen ljusblandning
+ *      vrida nyansen — varm sol mot kall himmel var hela mekanismen bakom det
+ *      gula draget, och den finns inte kvar att kalibrera bort. All färg i
+ *      bilden kommer från ortofotot, precis som i 2D-kartan.
+ *
+ *   2. PLAN, OSKUGGAD MARK FÅR EXAKT π I IRRADIANS. three.js diffusa term är
+ *      `irradians × albedo / π` (BRDF_Lambert), så plan mark renderas då som
+ *      SIN EGEN TEXTUR, byte för byte — oavsett solhöjd, klockslag eller
+ *      överdrift. `canvasfilter(markKorr(tonlyft(textur)))` är därmed 2D-looken
+ *      av konstruktion, och det finns ingenting kvar att självkalibrera.
+ *
+ * Reliefen — det som gör att man SER formen — är kvar och är oförändrad i sin
+ * karaktär: solens andel av det plana ljuset styr hur hårt lutningar och
+ * skuggor läser, och den ligger på 0,63, samma andel som den gamla riggen hade
+ * (uppmätt: sol 1,145 mot himmel 0,664 av 1,809 i rött). Skillnaden är att
+ * andelen numera är ett NAMNGIVET tal i stället för en följd av två
+ * intensiteter och två färger som råkade hamna där.
+ *
+ * Marken bär också hemisfärens markton. Den hålls på 0,05 av himlen — samma
+ * kvot som `#3a4a38` mot `#dfeaf2` hade — så lodräta ytor mörknar lika mycket
+ * som förut. Enda skillnaden är att de mörknar GRÅTT. */
+const SOL_ANDEL = 0.63;          // solens andel av plan marks ljus (reliefstyrkan)
+const SOL_TAK = 6.0;             // intensitetstak: lågt stående sol ska inte spränga slänter
+const HIMMEL_MARK = 0x3d3d3d;    // hemisfärens undersida — 0,05 av himlen, neutralt
+const SOL_LASLAGE = new THREE.Vector3(-0.5, 0.8, -0.6).normalize();   // NV, som hillshaden
+
+/* Ljusriktningen ÄGS här och muteras aldrig av någon annan. Att i stället läsa
+   den ur `sol.position` var buggen: `spannUpp` normaliserade en position som
+   redan innehöll hålets centrum, så riktningen tippade uppåt en bit för varje
+   anrop — och `applyExag` anropar `spannUpp` vid varje input-händelse från
+   överdriftsreglaget. Uppmätt på blue_6: n·l gick 0,716 → 0,822 → 0,913 → 0,994
+   på fem anrop, alltså +22,5 % ljus och −3,9 % blått, och bara åt ett håll
+   ända tills hålet byttes. */
+const solRiktning = SOL_LASLAGE.clone();
+
+const himmelLjus = new THREE.HemisphereLight(0xffffff, HIMMEL_MARK, 1);
 scene.add(himmelLjus);
-const sol = new THREE.DirectionalLight(0xfff2dd, 1.6);
-sol.position.set(-0.5, 0.8, -0.6);                       // NV, som hillshaden
+const sol = new THREE.DirectionalLight(0xffffff, 1);
+sol.position.copy(solRiktning).multiplyScalar(1000);
 scene.add(sol);
 scene.add(sol.target);
+
+/** Sätter intensiteterna så att plan, oskuggad mark får irradians π.
+ *
+ * `andel` är solens del av den summan; resten kommer från himlen. Står solen
+ * mycket lågt blir `andel·π / n·l` orimligt stort — då tar taket vid, och plan
+ * mark blir en aning mörkare än sin textur i stället för att slänter mot solen
+ * ska brännas ut. Det är den enda punkt där invarianten släpper, och den är
+ * medveten. */
+function sattLjusniva(andel = SOL_ANDEL) {
+  const nl = Math.max(solRiktning.y, 0.12);        // n·l för plan mark
+  himmelLjus.intensity = (1 - andel) * Math.PI;
+  sol.intensity = Math.min(SOL_TAK, andel * Math.PI / nl);
+}
+sattLjusniva();
 
 /* ---- U7 punkt 1: skuggor -------------------------------------------------
  *
@@ -139,11 +199,15 @@ function solUrParam() {
 let solLage = solUrParam();                // null = läsläge
 function sattSol(datum) {
   solLage = datum;
+  /* Positionen sätts ur riktningen HÄR också, inte bara i `spannUpp`. Annars
+     finns ett fönster där `solRiktning` säger en sak och `sol.position` en
+     annan — och den sortens tyst delad sanning var hela buggen förut. */
+  const stall = () => sol.position.copy(solRiktning).multiplyScalar(1000)
+                         .add(sol.target.position);
   if (!datum || !meta || !meta.ll2xz) {
-    sol.position.set(-0.5, 0.8, -0.6).normalize().multiplyScalar(1000);
-    sol.color.setHex(0xfff2dd);
-    sol.intensity = 1.6;
-    himmelLjus.intensity = 0.9;
+    solRiktning.copy(SOL_LASLAGE);
+    sattLjusniva();
+    stall();
     return;
   }
   const [lon0, lat0] = meta.ll2xz;
@@ -152,13 +216,14 @@ function sattSol(datum) {
   // blir (sin az, -cos az) i xz-planet.
   const hojd = Math.max(alt, 12 * Math.PI / 180);
   const r = Math.cos(hojd);
-  sol.position.set(Math.sin(az) * r, Math.sin(hojd), -Math.cos(az) * r)
-     .multiplyScalar(1000);
-  // Lågt stående sol är varmare och svagare; hemisfärljuset tar över.
+  solRiktning.set(Math.sin(az) * r, Math.sin(hojd), -Math.cos(az) * r).normalize();
+  /* Lågt stående sol ger MJUKARE relief — himlen tar över. Det som INTE längre
+     händer är att den blir varmare och att bilden byter nivå: färgen sitter i
+     ortofotot och nivån är låst till π. Kvällsljuset syns alltså i skuggornas
+     längd och riktning, inte i en gul hinna över banan. */
   const lagt = 1 - Math.min(1, alt / (35 * Math.PI / 180));
-  sol.color.setHSL(0.09, 0.35 + 0.25 * lagt, 0.62 - 0.06 * lagt);
-  sol.intensity = 1.6 - 0.5 * lagt;
-  himmelLjus.intensity = 0.9 + 0.35 * lagt;
+  sattLjusniva(SOL_ANDEL * (1 - 0.35 * lagt));
+  stall();
 }
 
 /* Skuggkameran ska täcka hålet — inte mer (upplösning) och inte mindre
@@ -170,7 +235,10 @@ function spannUpp() {
   const c = box.getCenter(new THREE.Vector3());
   const r = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 60);
   sol.target.position.copy(c);
-  sol.position.normalize().multiplyScalar(r * 2.5).add(c);
+  // Ur den ÄGDA riktningen, aldrig ur den egna positionen: `sol.position`
+  // innehåller redan `c` efter första anropet, och att normalisera den
+  // vred ljuset uppåt en bit per anrop (se `solRiktning`).
+  sol.position.copy(solRiktning).multiplyScalar(r * 2.5).add(c);
   const s = sol.shadow.camera;
   s.left = -r; s.right = r; s.top = r; s.bottom = -r;
   s.near = 1; s.far = r * 6;
@@ -201,12 +269,23 @@ const MARK_KORR = (BF && MAP_FILTER)
   ? BF.correction(BF.parse(MAP_FILTER), BF.parse(FILTER_3D_CANVAS)) : null;
 
 /* Träden: ORTOFOTO_FARG:s princip (mot rent grönt, inte mot gult) på
-   laserkronorna. Kronfärgen kommer ur ortofotot och ärver dess varma ton; en
-   liten ljushöjning och en vridning mot grönt gör dem lite ljusare gröna utan
-   att lämna den mätta färgen. Ligger PÅ trädmaterialen, inte på canvasen —
-   marken har sin egen korrigering och ska inte röras av den här. */
-const TRAD_FILTER = "brightness(1.10) saturate(1.06) hue-rotate(6deg)";
+   laserkronorna. Ligger PÅ trädmaterialen, inte på canvasen — marken har sin
+   egen korrigering och ska inte röras av den här.
+
+   LJUSHÖJNINGEN ÄR BORTA UR STRÄNGEN och ersatt av markens MÄTTA gain (se
+   `tonlyft`). Skälet: kronfärgerna är bakade ur samma ortofoto som marktexturen
+   och ligger lika mycket för mörkt, men `brightness(1.10)` var ett handsatt tal
+   som inte visste hur mycket. Uppmätt på blue_6 landade en krona på ~30·48·24
+   på skärmen medan 2D-kartans skog i samma ortofoto ligger på 49·73·32 — skogen
+   var alltså nästan svart bredvid en mark som var kalibrerad. Kvar i strängen
+   är bara vridningen mot grönt, som är en smakfråga och inte en nivå. */
+const TRAD_FILTER = "saturate(1.06) hue-rotate(6deg)";
 const TRAD_OPS = BF ? BF.parse(TRAD_FILTER) : null;
+
+/* Markens uppmätta gain för det hål som är laddat — kronorna ärver den.
+   Null tills `tonlyft` mätt; då får träden ingen gain, vilket är dagens
+   beteende och aldrig ett fel som syns som en färgvridning. */
+let markTonGain = null;
 
 /* Lägger en filterkedja i ett materials fragment-shader, EFTER
    <colorspace_fragment>. Där är gl_FragColor sRGB — samma färgrum som CSS-
@@ -274,22 +353,48 @@ function grasMedian(img) {
   return [med(R), med(G), med(B)];
 }
 
-/* Returnerar en `fore`-krok till `filtrera`, eller null när gainen inte behövs. */
+/* Lägger en gain FÖRE filterkedjan, i samma sRGB-rum, och returnerar `fore`-
+ * kroken till `filtrera`.
+ *
+ * TAKET HÅLLER NYANSEN, inte varje kanal för sig. `clamp(rgb * gain, 0, 1)`
+ * klipper kanalvis, så den kanal som är mest uppskruvad slår i taket FÖRST —
+ * och gainen är per kanal (blue_6: R 1,626 · G 1,507 · B 1,500). Den kanal som
+ * klipps bort finns inte kvar att få tillbaka, så en yta som tappar blått blir
+ * gul och stannar gul. Skalas hela pixeln proportionellt i stället blir
+ * resultatet mörkare men behåller förhållandet mellan kanalerna.
+ *
+ * Samma rättelse gjordes i F2:s tak innan F2 togs bort; den hörde egentligen
+ * hemma här, i det steg som faktiskt lyfter mest. */
+function gainKrok(mat, gain) {
+  mat.userData.__tonGain = gain;
+  mat.userData.__tonRad =
+    '  {\n'
+    + '    vec3 t = max(gl_FragColor.rgb * uTonGain, 0.0);\n'
+    + '    float topp = max(max(t.r, t.g), t.b);\n'
+    + '    gl_FragColor.rgb = topp > 1.0 ? t / topp : t;\n'
+    + '  }\n';
+  return shader => {
+    shader.uniforms.uTonGain = { value: new THREE.Vector3(gain[0], gain[1], gain[2]) };
+    shader.fragmentShader =
+      shader.fragmentShader.replace('void main() {', 'uniform vec3 uTonGain;\nvoid main() {');
+  };
+}
+
+/* Markens gain: mät texturens eget gräs, dela måstonen med det.
+   Returnerar en `fore`-krok till `filtrera`, eller null när gainen inte behövs. */
 function tonlyft(mat) {
   if (!GRAS_MAL || !mat || !mat.map || !mat.map.image) return null;
   const uppmatt = grasMedian(mat.map.image);
   if (!uppmatt) return null;
   const gain = GRAS_MAL.map((m, i) =>
     Math.min(TON_GAIN_MAX, Math.max(TON_GAIN_MIN, m / uppmatt[i])));
-  mat.userData.__tonGain = gain;
   mat.userData.__tonMatt = uppmatt;
-  mat.userData.__tonRad =
-    '  gl_FragColor.rgb = clamp(gl_FragColor.rgb * uTonGain, 0.0, 1.0);\n';
-  return shader => {
-    shader.uniforms.uTonGain = { value: new THREE.Vector3(gain[0], gain[1], gain[2]) };
-    shader.fragmentShader =
-      shader.fragmentShader.replace('void main() {', 'uniform vec3 uTonGain;\nvoid main() {');
-  };
+  /* Kronorna kommer ur SAMMA bake som marken och bär därför samma underskott.
+     Att mäta dem för sig går inte — laserfärgerna ligger i hålets JSON, inte i
+     en bild med gräs att maska ut — men att ärva markens mätning är inte en
+     gissning: det är samma pipeline, samma bana, samma dag. */
+  markTonGain = gain;
+  return gainKrok(mat, gain);
 }
 
 /* ---- ljuset ska INTE ändras när överdriften ändras (ORTOFOTO_FARG.md) -----
@@ -384,100 +489,42 @@ const filtreraMark = obj => obj?.traverse(c => {
   filtrera(c.material, MARK_KORR, 'markKorr', tonlyft(c.material));
   ljussattSannGeometri(c.material);      // EFTER filtrera: onBeforeCompile kedjas
   mattMark(c.material);                  // F1: sist i kedjan, samma skäl
-  ljusniva(c.material);                  // F2: allra sist — den läser markKorr-raden
 });
 
-/* ---- F2: LJUSNIVÅN — självkalibrering mot 2D-kartans gräs ------------------
+/* ---- MÄTNINGEN ÄR ETT PROV, INTE EN REGLERKRETS ---------------------------
  *
- * `tonlyft` lägger texturens gräs på den frysta måstonen, men 2D-kartan är en
- * BILD och 3D-marken är LJUSSATT. Kvar efter tonlyftet var därför en ren
- * nivåskillnad: uppmätt ljusfaktor 0,803 av neutral (ORTOFOTO_FARG §"Kvar: de
- * sista 19 procenten"), och det är hela den skillnad man ser vid ett vinkelbyte.
+ * Det som stod här var F2: marken renderades vid varje hålladdning, gräsets
+ * median lästes ur bilden och kvoten mot måstonen lades på som en gain. Den
+ * mätte rätt och räknade rätt — men den var en ÅTERKOPPLING, och en återkoppling
+ * gäller bara i det tillstånd den mättes i. Ljuset flyttade sig efteråt (se
+ * `solRiktning`), och då bar marken en kvot som svarade på en fråga som inte
+ * längre ställdes. Ingenting i koden kunde märka det.
  *
- * DEN ANALYTISKA VÄGEN ÄR STÄNGD, och det är mätt: summeras ljusriggen för hand
- * (hemisfär på uppåtnormal + riktat ljus × dot) blir svaret 1,759 mot uppmätta
- * 0,803 — 2,19× fel. three.js egna faktorer (π-hantering, ljusmodell,
- * tonemapping) följer inte den naiva modellen, så en konstant härledd så vore en
- * siffra som SER härledd ut men är gissad.
+ * Med den nivålåsta riggen behövs ingen kvot: plan mark renderas som sin egen
+ * textur av konstruktion. Mätapparaten är däremot för bra för att kastas — den
+ * är det enda som kan SVARA på om 2D och 3D visar samma gräs. Den ligger därför
+ * kvar, men bara under `?dbg=1`, och den rör inga uniformer längre:
+ * `__hal3d.mark()` renderar, mäter och rapporterar avvikelsen mot
+ * `MARK_KORR(GRAS_MAL)`. Ett prov som kan falla, i stället för en gain som tyst
+ * kompenserar.
  *
- * Så vi frågar bilden i stället. Marken renderas EN gång med allt annat dolt
- * (träden är också gröna och skulle förorena gräsmasken), gräsets median läses
- * ur bilden och jämförs med `MARK_KORR(GRAS_MAL)` — alltså måstonen sedd genom
- * exakt den korrigering marken redan bär. Kvoten blir `uF2`.
- *
- * FYRA saker gör det säkert, och tre av dem är dyrköpta:
- *   · Kameran är ORTOGRAFISK och rakt uppifrån. Det är samma blick som
- *     2D-kartan har, och den enda vinkel där frågan "ser gräset likadant ut?"
- *     ens är välställd.
- *   · Mätningen går på CANVASEN, inte i ett rendermål (färgrymden — se
- *     `matGrasIBilden`).
- *   · Kontrollmätningen använder SAMMA pixlar som förmätningen (masken — se
- *     `grasMedianBuffert`).
- *   · Klampen är densamma som tonlyftets. En textur utan gräs ger ingen
- *     kalibrering alls (`null`) — mät inte, gissa inte.
- *
- * Dagen GLB:erna byggs om mot den frysta måstonen (U28 / väg 1) blir både
- * tonlyftets gain och den här kvoten 1,0 av sig själva. Ingen kod behöver ändras
- * för det, vilket är hela poängen med att mäta i stället för att knåda. */
-const F2_MIN = 0.5, F2_MAX = 2.0;
-let f2Rest = null;              // sista mätningens kvarvarande fel, för ?dbg=1
-
-/* Ljusnivåns gain ligger SIST i markens fragmentkedja, efter `markKorr` — och
- * det är ett mätt beslut, inte en smaksak.
- *
- * Planen sa "vik in kvoten i samma gain som `tonlyft` redan sätter". Prövat och
- * förkastat: `tonlyft` verkar FÖRE `markKorr`, och `markKorr` är affin (gain och
- * OFFSET — den är inversen av en CSS-filterkedja). Att multiplicera insignalen
- * med k multiplicerar därför inte utsignalen med k, och en omgång tog gräset
- * 71 → 82 mot målet 96,8. Itererat konvergerade det först efter sex varv och
- * krävde en total texturgain nära 2,9× — som hade bränt ut sand och tak.
- *
- * Läggs gainen EFTER korrigeringen är den däremot precis vad den utger sig för
- * att vara: en multiplikation av det som visas. Då stämmer planens ord "det är
- * multiplikativt rakt igenom, så det konvergerar i ett steg" — men om utsignalen,
- * inte om texturen. */
-function ljusniva(mat) {
-  if (!mat || mat.userData.__uF2) return;
-  const u = { value: new THREE.Vector3(1, 1, 1) };
-  mat.userData.__uF2 = u;
-  const forra = mat.onBeforeCompile;      // kedjas SIST: markKorr-raden ska finnas
-  mat.onBeforeCompile = shader => {
-    if (forra) forra(shader);
-    shader.uniforms.uF2 = u;
-    shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform vec3 uF2;\nvoid main() {')
-      /* Taket håller NYANSEN, inte varje kanal för sig — och det är en rättelse,
-         inte en förfining. `clamp(rgb * uF2, 0, 1)` klipper kanalvis, så den
-         kanal som är mest uppskruvad slår i taket FÖRST. Gainen är per kanal
-         (blue_1: R 1,326 · G 1,324 · B 1,433), alltså tappar bilden blått innan
-         den tappar rött och grönt — och en yta som tappar blått blir GUL.
-         Grundarens skärmbilder 2026-08-12: marken gulnade när överdriften drogs
-         upp och kom inte tillbaka på vägen ner ("går bara på ett håll"), vilket
-         är klippningens signatur — det bortklippta finns inte kvar att återfå.
-
-         Nu skalas hela pixeln proportionellt så fort någon kanal skulle passera
-         1: resultatet blir mörkare i stället för missfärgat, och förhållandet
-         mellan kanalerna — alltså nyansen — står still. */
-      .replace('  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);',
-               '  gl_FragColor.rgb = markKorr(gl_FragColor.rgb);\n'
-               + '  {\n'
-               + '    vec3 f2 = max(gl_FragColor.rgb * uF2, 0.0);\n'
-               + '    float topp = max(max(f2.r, f2.g), f2.b);\n'
-               + '    gl_FragColor.rgb = topp > 1.0 ? f2 / topp : f2;\n'
-               + '  }');
-  };
-  mat.needsUpdate = true;
-}
+ * De tre dyrköpta detaljerna gäller fortfarande och står kvar i sina funktioner:
+ * ortografisk kamera rakt uppifrån (samma blick som 2D-kartan), mätning på
+ * CANVASEN och inte i ett rendermål (färgrymden — se `matGrasIBilden`), och
+ * magenta bakgrund så disfärgen inte smyger in i gräsmasken. */
 
 /* Gräsets median i en RGBA-buffert (samma grova mask som `grasMedian`).
  *
- * `mask` = indexlistan från en TIDIGARE mätning, och den är hela skillnaden
- * mellan en kontrollmätning som betyder något och en som ljuger. Räknas masken
- * om efter att gainen lagts på flyttar sig POPULATIONEN: villkoret `g < 215`
- * släpper ut de pixlar som just blivit ljusare, och medianen stiger då mindre
- * än gainen. Uppmätt med omräknad mask: en gain på 1,363 flyttade medianen
- * 71 → 85, alltså 1,197× — vilket ser ut som att multiplikationen inte biter,
- * fast det är urvalet som bytts ut. Samma pixlar före och efter, alltid. */
+ * `mask` = indexlistan från en TIDIGARE mätning, och den finns för att en
+ * jämförelse före/efter ska gå att lita på. Räknas masken om mellan de två
+ * avläsningarna flyttar sig POPULATIONEN: villkoret `g < 215` släpper ut de
+ * pixlar som just blivit ljusare, och medianen rör sig då mindre än det man
+ * ändrade. Uppmätt när F2 fanns: en gain på 1,363 flyttade medianen 71 → 85,
+ * alltså 1,197× — vilket ser ut som att multiplikationen inte biter, fast det
+ * är urvalet som bytts ut. Samma pixlar i båda avläsningarna, alltid.
+ *
+ * Ingen kod i renderingsvägen mäter längre; den som gör ett A/B-försök från
+ * konsolen ska däremot skicka masken vidare. */
 function grasMedianBuffert(buf, mask) {
   const R = [], G = [], B = [], idx = [];
   const med = a => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
@@ -535,7 +582,8 @@ function matGrasIBilden(obj, mask) {
      är samma serie exakt linjär: gain 1,2 / 1,5 / 2,0 gav 1,194 / 1,495 / 2,00.
 
      Priset är en bildruta där bara marken syns. Den kostar ingenting: nästa
-     rAF-ruta ritar om hela scenen, och kalibreringen körs en gång per hål. */
+     rAF-ruta ritar om hela scenen, och mätningen körs bara när någon ber om
+     den från konsolen. */
   const gl = renderer.getContext();
   renderer.render(scene, cam);
   const bredd = gl.drawingBufferWidth, hojd = gl.drawingBufferHeight;
@@ -546,45 +594,32 @@ function matGrasIBilden(obj, mask) {
   return grasMedianBuffert(buf, mask);
 }
 
-/** F2: mät `obj` i bilden, jämför med måstonen och sätt dess `uF2`.
+/** PROVET: renderar `obj` uppifrån och svarar hur långt dess gräs ligger från
+ * 2D-kartans. Ändrar ingenting — det är hela poängen.
  *
- * Ett steg, och sedan en KONTROLLMÄTNING. Kontrollen är inte kosmetik — den är
- * beviset för att ett steg räcker, och den enda plats där ett framtida steg som
- * bryter multiplikativiteten skulle synas i stället för att tyst ligga kvar.
- * `?dbg=1` → `f2()` bär det kvarvarande felet per band.
+ * `mal` är måstonen sedd genom exakt den korrigering marken bär, alltså det tal
+ * gräset SKA ha på canvasen innan canvas-filtret. `fel` är den relativa
+ * avvikelsen per band; med den nivålåsta riggen ska den ligga kring noll utan
+ * att någon gain har rört den.
  *
- * KJOLEN KALIBRERAS FÖR SIG, och det är inte en detalj. Första versionen mätte
- * bara hålets mark, och då blev sömmen ett LJUSBYTE: marken lyftes 1,33× medan
- * kjolen låg kvar på 1,0, alltså precis den skillnad U15 punkt 4 byggdes för att
- * dölja (grundarens skärmbild 2026-08-12 — högupplöst band ljust, kjolen mörk).
- * De två har dessutom olika texturupplösning och olika innehåll, så att kopiera
- * hålets gain hade varit en gissning; båda mäts mot SAMMA måston i stället, och
- * då landar de på samma ton av konstruktion. */
-function sjalvkalibrera(obj) {
+ * KJOLEN MÄTS FÖR SIG. Den har annan texturupplösning och annat innehåll än
+ * hålets mark, och sömmen mellan dem är det första som syns om de glider isär
+ * (grundarens skärmbild 2026-08-12 — högupplöst band ljust, kjolen mörk). Båda
+ * mäts mot SAMMA måston, så provet fångar en söm innan ögat gör det. */
+function matMark(obj) {
   if (!GRAS_MAL || !MARK_KORR || !obj || !BF) return null;
   const mal = BF.apply(MARK_KORR, GRAS_MAL.map(v => v / 255)).map(v => v * 255);
-  const uniformer = [];
-  obj.traverse(c => {
-    const u = c.material && c.material.userData.__uF2;
-    if (u && !uniformer.includes(u)) uniformer.push(u);
-  });
-  if (!uniformer.length) return null;
-
-  const fore = matGrasIBilden(obj);
-  if (!fore) return null;                        // för lite gräs → gissa inte
-  const f2 = mal.map((m, i) =>
-    Math.min(F2_MAX, Math.max(F2_MIN, m / Math.max(1, fore.rgb[i]))));
-  uniformer.forEach(u => u.value.set(f2[0], f2[1], f2[2]));
-
-  const efter = matGrasIBilden(obj, fore.mask);  // SAMMA pixlar som före
-  const rad = { mal: mal.map(v => +v.toFixed(1)), fore: fore.rgb,
-                efter: efter && efter.rgb, pixlar: fore.mask.length,
-                f2: f2.map(v => +v.toFixed(3)),
-                fel: efter ? mal.map((m, i) => +((efter.rgb[i] - m) / m).toFixed(4)) : null };
-  f2Rest = Object.assign({}, f2Rest, { [obj === ground ? 'mark' : 'kjol']: rad });
-  return rad;
+  const m = matGrasIBilden(obj);
+  if (!m) return null;                           // för lite gräs → mät inte, gissa inte
+  return { mal: mal.map(v => +v.toFixed(1)), ar: m.rgb, pixlar: m.mask.length,
+           fel: mal.map((v, i) => +((m.rgb[i] - v) / v).toFixed(4)) };
 }
-const filtreraTrad = obj => filtrera(obj?.material, TRAD_OPS, 'tradTon');
+
+/* Kronorna ärver markens mätta gain (se `tonlyft`) — samma bake, samma
+   underskott. Ligger den inte (ingen mätning, eller träden byggda före hålets
+   mark) får de dagens obehandlade ton i stället för en gissad. */
+const filtreraTrad = obj => filtrera(obj?.material, TRAD_OPS, 'tradTon',
+  markTonGain && obj?.material ? gainKrok(obj.material, markTonGain) : null);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.5, 4000);
 // U1: kartgester i stället för orbit — ett finger panorerar, nyp zoomar, två
@@ -632,10 +667,28 @@ if (new URLSearchParams(location.search).get('dbg') === '1') {
     /* U7: scenens finish verifieras i scengrafen, inte i en skärmdump — en
      * skuggkarta som inte är påslagen och en skugga som faller åt fel håll ser
      * likadana ut i en pixelbild om man inte vet vad man letar efter. */
-    // F2: vad självkalibreringen mätte på det här hålet — mål, före, efter och
-    // kvoten. `efter` ska ligga på `mal`; gör den inte det är kedjan inte längre
-    // multiplikativ och en omgång räcker inte.
-    f2: () => f2Rest,
+    /* PROVET: visar 3D samma gräs som 2D-kartan? `ar` ska ligga på `mal` och
+       `fel` kring noll — utan att någon gain har rört bilden. Faller provet är
+       det något i kedjan textur → tonlyft → markKorr → canvas som glidit, och
+       felets tecken säger åt vilket håll. Kjolen mäts för sig: skiljer de två
+       sig åt syns sömmen mellan hål och omgivning. */
+    mark: () => ({ mark: matMark(ground), kjol: matMark(wide) }),
+    /* LJUSRIGGEN: invarianten är att plan, oskuggad mark får irradians π, för då
+       renderas den som sin egen textur. `kvot` ska vara 1,000. Är den det inte
+       har någon rört intensiteterna utan att gå via `sattLjusniva`.
+       `riktning.y` ska stå still när överdriften dras — gjorde den inte det förr
+       vandrade solen uppåt och bilden blev ljusare och gulare för varje drag. */
+    ljus: () => {
+      const nl = Math.max(solRiktning.y, 0.12);
+      const irr = himmelLjus.intensity + sol.intensity * nl;
+      return { riktning: solRiktning.toArray().map(v => +v.toFixed(3)),
+               nl: +nl.toFixed(3),
+               himmel: +himmelLjus.intensity.toFixed(3),
+               sol: +sol.intensity.toFixed(3),
+               irradians: +irr.toFixed(4), pi: +Math.PI.toFixed(4),
+               kvot: +(irr / Math.PI).toFixed(4),
+               solandel: +(sol.intensity * nl / irr).toFixed(3) };
+    },
     /* F1b: ändras ljuset när överdriften dras? (ORTOFOTO_FARG.md §F1b.)
      *
      * KRÄVER ETT SYNLIGT FÖNSTER. I en dold flik står rAF stilla och
@@ -1115,6 +1168,10 @@ function clearHole() {
      ingenting i bilden avslöjade det. */
   meta = null;
   markIndex = null;                       // hör till hålet, inte till vyn
+  /* Gainen är MÄTT på det här hålets textur och gäller bara det. Låg den kvar
+     ärvde nästa håls kronor ett tal från förra bakningen — och ett hål vars
+     egen mätning misslyckas ska få dagens obehandlade ton, inte grannens. */
+  markTonGain = null;
   shotObjs = []; KEDJA = [];
   rensaSlope(); slopeHal = null;          // U13: lutningen hör till hålet
   // U11: planens kedja hör till hålet. Värdsidan sätter den nya direkt efter
@@ -3107,14 +3164,6 @@ async function laddaHalet(slug) {
     applyExag();
     sattSol(solLage);    // U7: solen hör till banans position — sätt om per hål
     spannUpp();          // U7: skuggkameran spänns kring DET här hålet
-    /* F2: mät ljusnivån mot 2D-kartans gräs och vik in kvoten.
-       ORDNINGEN ÄR KRITISK och kostade en felmätning: kalibreringen RENDERAR
-       scenen, så solen och skuggkameran måste redan stå på DET HÄR hålet. Lagd
-       före `sattSol`/`spannUpp` mätte den föregående håls ljus och svarade att
-       marken var 30 % för mörk (gräsmedian 71 mot 102 en bildruta senare) —
-       ett fel som ser ut som ett riktigt resultat. */
-    f2Rest = null;                    // ny hålladdning → nya mätvärden
-    sjalvkalibrera(ground);
     stopFly();
     /* U25: kameran har EN ägare per körläge. Den fristående sidan har ingen
        annan som placerar den, så där är överblicken startvyn. Inbäddad äger
@@ -3185,10 +3234,10 @@ async function loadWide(gen, file) {
     wide.scale.y = exag;
     wide.position.y = -SKIRT_DROP_M;
     scene.add(wide);
-    /* F2: kjolen kalibreras mot SAMMA måston som hålets mark, och först här —
-       den laddas efter hålet, så hålets kalibrering hade inget att sätta.
-       Utan detta blir sömmen ett ljusbyte i stället för ett osynligt överlapp. */
-    sjalvkalibrera(wide);
+    /* Ingen kalibrering här längre. Kjolen mäts mot samma måston som hålets mark
+       av `tonlyft` och renderas som sin egen textur av samma skäl — sömmen är
+       osynlig av konstruktion i stället för av en efterjustering.
+       `__hal3d.mark()` mäter båda om man vill se det svart på vitt. */
   } catch { /* ingen kjol för hålet — dagens vy gäller */ }
 }
 
