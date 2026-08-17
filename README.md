@@ -22,16 +22,23 @@ på den frusna värden. Se kommentaren i `.github/workflows/pages.yml`.
 
 ## Deploya
 
-Cloudflare-deployen körs för hand, från datorn där källan ligger:
+**Push till `main`.** Det är hela proceduren —
+`.github/workflows/deploy.yml` kör `wrangler deploy` mot produktionen, och
+Actions-fliken är facit för vad som ligger uppe. Kör den manuellt via "Run
+workflow" om du behöver deploya om utan en ny commit.
 
-```
-npx wrangler deploy
-```
+Kräver två hemligheter under Settings → Secrets and variables → Actions:
+`CLOUDFLARE_API_TOKEN` och `CLOUDFLARE_ACCOUNT_ID`. Saknas de fallerar jobbet
+med flit — ett grönt jobb som inte deployade är värre än ett rött.
 
-`publish.ps1` nämns i `boot.js` som det som speglar `mobile/` — den filen ligger
-inte i det här repot, så kolla vilken kopia som är källa innan du ändrar här.
+Lokal deploy går fortfarande med `npx wrangler deploy`, men undvik det: då vet
+bara du vad som ligger uppe. `publish.ps1` nämns i `boot.js` som det som speglar
+`mobile/` — den filen ligger inte i det här repot, så kolla vilken kopia som är
+källa innan du ändrar här.
 
-**Bumpa alltid `version.js`.** `sw.js` bygger `SHELL_CACHE` av
+**Bumpa alltid `version.js`.** Deployen stoppar dig om du glömmer det när
+frontendfiler ändrats (nödutgång: `[no-bump]` i commit-meddelandet). `sw.js`
+bygger `SHELL_CACHE` av
 `SG_APP_VERSION`; utan bump serverar servicearbetaren gammal kod cache-first och
 deployen syns inte på telefonen, hur grön den än var. Samma sträng följer med
 som `client.app_version` på varje uppladdad runda, så den är också enda sättet
