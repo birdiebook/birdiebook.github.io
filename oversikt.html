@@ -46,8 +46,12 @@
   .empty-cta .ico { font-size:44px; display:block; margin-bottom:8px; }
   .empty-cta .big { font-size:16px; font-weight:700; margin:0 0 6px; }
   .empty-cta .txt { color:var(--dim); font-size:14px; line-height:1.4; margin:0 0 14px; }
-  .empty-cta a.btn { display:inline-block; text-decoration:none; background:var(--accent);
-    color:var(--accent-ink); font-weight:800; font-size:15px; padding:11px 22px; border-radius:12px; }
+  /* Knappen tillhör SIDAN, inte den tomma vyn. Regeln satt under .empty-cta,
+     så Sällskaps-kortets <a class="btn"> föll tillbaka på webbläsarens blå
+     understrukna länk mitt i den gröna designen. */
+  a.btn { display:inline-block; text-decoration:none; background:var(--accent);
+    color:var(--accent-ink); font-weight:800; font-size:15px; padding:11px 22px;
+    border-radius:12px; }
 
   /* ---------- scorekort ---------- */
   /* horisontell scroll: spelarnamnet är sticky till vänster, hålen scrollar */
@@ -130,13 +134,27 @@
 <script src="./live.js"></script>
 <script>
 "use strict";
-/* Enkel live-överblick UNDER rundan: ett molnbaserat scorekort som visar hur
-   det går för mig och de andra i bollen, hål för hål och totalt. Djupanalysen
-   (SG, insikter) bor i den kommande Analys-fliken (oversikt-analys.html).
+/* Enkel live-överblick UNDER rundan: ett scorekort som visar hur det går för
+   mig och de andra i bollen, hål för hål och totalt. Djupanalysen (SG,
+   insikter) bor i den kommande Analys-fliken (oversikt-analys.html).
 
-   Data: SGLive.subscribeLeaderboard(gameId, cb, {par}) i live.js. Modellen per
-   spelare: { uid, name, total, thru, toPar, holes{spelarhål 1–18: score} }.
-   Par per spelarhål slås upp ur burlov.json + SGRound (samma som gamla vyn). */
+   TRE KÄLLOR, EN MODELL. Kortet krävde förut en MOLNMATCH för att visa något
+   alls — utan `gameId` ritades bara "Ingen live-match", och den vanligaste
+   rundan av alla (du, telefonen, kanske ett sällskap) hade en tom Översikt hela
+   vägen runt. "Live" betydde alltså "live för andra", aldrig för din egen
+   score. Kortet byggs nu av det som FINNS, med en precedensregel per spelare:
+
+     jag      → den lokala rundan (Store.active()). Telefonen ÄR källan; molnets
+                rad för mig är en spegel som kan ligga efter (flygplansläge,
+                tappat nät), så lokala hål vinner över molnets.
+     de andra → molnets leaderboard, SGLive.subscribeLeaderboard(gameId, cb).
+     markörer → matchens deltagare med egen scoretabell (Sällskap), som per
+                definition aldrig har någon molnrad.
+
+   Alla rader räknas om HÄR ur { spelarhål 1–18: score } + par, så Tot/hål/mot
+   par betyder samma sak oavsett vilken källa scoren kom ifrån — molnets egen
+   `toPar` beror på en par-tabell som skickades in vid prenumerationen och kunde
+   glida isär från vyns. Par per spelarhål slås upp ur banans json + SGRound. */
 const { GLOBAL_BASE, LOOP_SHORT } = SGRound;
 
 let LIVE = null;   // matchen bor i Store (APPSTORE_PLAN §9.1); sätts i Store.ready()
@@ -185,26 +203,92 @@ function loadCourse() {
 function startLeaderboard() {
   if (lbSubscribed || !liveOn()) return;
   lbSubscribed = true;
-  SGLive.initLive().then(r => { myUid = r.uid; render(); }).catch(() => {});
+  SGLive.initLive().then(r => { myUid = r.uid; ritaKort(); }).catch(() => {});
   try {
     lbUnsub = SGLive.subscribeLeaderboard(LIVE.gameId, rows => {
-      LB = rows; render();
+      LB = rows; ritaKort();
     }, { par: parByRel });
   } catch (e) { lbSubscribed = false; }
 }
 window.addEventListener("pagehide", () => { if (lbUnsub) lbUnsub(); });
 
 /* ---------- vyer ---------- */
+// Visas bara när det inte finns NÅGOT att rita: ingen runda, ingen match,
+// ingen score. En påbörjad runda ger alltid ett kort, om än ett tomt.
 function emptyView() {
   return `<div class="card empty-cta">
     <span class="ico">📋</span>
-    <p class="big">Ingen live-match</p>
-    <p class="txt">Skapa eller gå med i en match under <b>Logga slag</b> så visas
-      ett live-scorekort här — hur det går för dig och de andra i bollen, hål för hål.
-      Ett sidospel i <b>Sällskap</b> behöver ingen live-match: där för du
-      medspelarnas score själv.</p>
+    <p class="big">Ingen runda igång</p>
+    <p class="txt">Starta en runda under <b>Logga slag</b> så visas ett
+      live-scorekort här — hål för hål, uppdaterat medan du spelar. Lägg till
+      medspelare i <b>Sällskap</b> så kommer de med på kortet, och går ni med i
+      samma live-match under <b>Logga slag</b> syns hela bollens score i realtid.</p>
     <a class="btn" href="./spela.html">⛳ Gå till Logga slag</a>
   </div>`;
+}
+
+/* ---------- radmodellen (de tre källorna → en rad per spelare) ---------- */
+// EN uträkning för alla rader: samma { hål: score } in, samma tre siffror ut.
+function mkRow(o) {
+  const holes = o.holes || {};
+  let total = 0, thru = 0, toPar = 0;
+  for (const k of Object.keys(holes)) {
+    const t = holes[k];
+    if (!(t > 0)) continue;
+    total += t; thru += 1;
+    if (parByRel[k] != null) toPar += t - parByRel[k];
+  }
+  return { uid: o.uid || null, name: o.name || "—", mine: !!o.mine,
+           holes, total, thru, toPar };
+}
+
+// Mina spelade hål ur den lokala rundan, samma härledning som scorekortet i
+// Logga slag och samma som live-pushen skickar (SGScore = en sanning).
+function localHoles() {
+  const d = Store.active();
+  const m = {};
+  if (!d) return m;
+  for (const h of d.holes || []) {
+    const c = SGScore.components(h);
+    if (c.played) m[h.n] = c.total;
+  }
+  return m;
+}
+
+function myName() {
+  const d = Store.active();
+  const p = Store.profile ? Store.profile() : null;
+  return (d && d.player) || (LIVE && LIVE.displayName) || (p && p.namn) || "Du";
+}
+
+function rader() {
+  const cloud = (liveOn() && LB) ? LB : [];
+  const meCloud = myUid ? cloud.find(p => p && p.uid === myUid) : null;
+  const out = [];
+
+  // Jag: molnraden som botten, mina lokala hål ovanpå (lokalt vinner).
+  const mina = Object.assign({}, meCloud ? meCloud.holes : null, localHoles());
+  if (Store.active() || meCloud) {
+    out.push(mkRow({ uid: myUid, mine: true, holes: mina,
+                     name: (meCloud && meCloud.name) || myName() }));
+  }
+  // De andra i molnmatchen.
+  cloud.forEach(p => {
+    if (!p || (meCloud && p.uid === meCloud.uid)) return;
+    out.push(mkRow({ uid: p.uid, name: p.name, holes: p.holes }));
+  });
+  // Markörspelarna (Sällskap): score förd för hand, aldrig i molnet.
+  Store.markers().forEach(p => {
+    out.push(mkRow({ uid: p.id, name: p.name, holes: p.scores || {} }));
+  });
+
+  // Ställning som förut — men ospelade rader sjunker, annars lägger sig en
+  // medspelare som inte börjat mitt i tabellen på ett falskt "E".
+  return out.sort((a, b) =>
+    (a.thru ? 0 : 1) - (b.thru ? 0 : 1) ||
+    (a.toPar - b.toPar) || (a.total - b.total) ||
+    (b.mine ? 1 : 0) - (a.mine ? 1 : 0) ||
+    String(a.name).localeCompare(String(b.name), "sv"));
 }
 
 // summering av spelade hål i ett spann (spelarhål from..to, 1-baserat inkl.)
@@ -220,10 +304,13 @@ function sumPar(from, to) {
 }
 const sumCell = v => `<td class="sumcol">${v || "–"}</td>`;
 
-function scorecardHtml() {
-  const head = `<div class="card"><h2>🏆 Live-scorekort <span class="note">kod ${esc(LIVE.code || "")}</span></h2>`;
-  if (!LB) return head + `<div class="hint left">Ansluter …</div></div>`;
-  if (!LB.length) return head + `<div class="hint left">Ingen har fört score än.</div></div>`;
+function scorecardHtml(rows) {
+  const kalla = liveOn() ? `kod ${esc(LIVE.code || "")}` : "din runda";
+  const head = `<div class="card"><h2>🏆 Live-scorekort <span class="note">${kalla}</span></h2>`;
+  if (!rows.length) {
+    return head + `<div class="hint left">${
+      liveOn() && !LB ? "Ansluter …" : "Ingen har fört score än."}</div></div>`;
+  }
 
   const N = seq.length;
   const split = N > 9;                 // dela i Ut/In när rundan är längre än 9 hål
@@ -247,8 +334,8 @@ function scorecardHtml() {
   if (split) parCells += sumCell(sumPar(outTo + 1, N));
   const totPar = sumPar(1, N);
 
-  const body = LB.map(p => {
-    const mine = myUid && p.uid === myUid;
+  const body = rows.map(p => {
+    const mine = p.mine;
     let cells = "";
     seq.forEach((g, i) => {
       const rel = i + 1;
@@ -268,13 +355,25 @@ function scorecardHtml() {
     </tr>`;
   }).join("");
 
+  /* Foten säger varifrån resten av bollen ska komma. Den texten bodde förut i
+     den tomma vyn — som nu bara syns när det inte finns någon runda alls. */
+  let fot = "";
+  if (rows.length < 2) {
+    fot = `<p class="hint left" style="margin-top:10px">Bara du på kortet — lägg
+      till medspelare under <b>Sällskap</b>, eller gå med i en live-match under
+      <b>Logga slag</b> så syns hela bollen här.</p>`;
+  } else if (!liveOn() && Store.markers().length) {
+    fot = `<p class="hint left" style="margin-top:10px">Medspelarnas score för du
+      själv — i <b>Sällskap</b> ovan.</p>`;
+  }
+
   return head + `<div class="scroll"><table class="card-tbl">
     <thead>
       <tr><th class="name">Hål</th>${holeHdr}<th class="sumcol">Tot</th><th class="totcol">+/−</th></tr>
       <tr class="parrow"><td class="name">Par</td>${parCells}<td class="sumcol">${totPar || "–"}</td><td class="totcol">–</td></tr>
     </thead>
     <tbody>${body}</tbody>
-  </table></div></div>`;
+  </table></div>${fot}</div>`;
 }
 
 /* Sidospelets rubrikrad + väg till uppsättningen (APPSTORE_PLAN §2.1c, §2.5).
@@ -302,6 +401,28 @@ function ritaSidospel() {
   if (el && window.Sidospel) Sidospel.runda(el);
 }
 
+/* Bara scorekortet. Egen funktion — och synkron — eftersom den ritas om långt
+   oftare än sidan: när molnet skickar, och när sällskapets score matas in i
+   #sidospel strax ovanför. En full render() hade slagit sönder inmatningen
+   under fingret (den ritar om sidospelet och tappar dess vy-läge). */
+function ritaKort() {
+  const el = document.getElementById("scorekort");
+  if (!el) return;
+  const rows = rader();
+  const nagot = liveOn() || Store.active() || rows.some(r => r.thru > 0);
+  el.innerHTML = nagot ? scorecardHtml(rows) : emptyView();
+}
+
+/* Sällskapets score matas in HÄR på sidan, i #sidospel. Utan den här kopplingen
+   stod scorekortet kvar på gammal data tills sidan laddades om — "live" bara
+   till namnet. Lyssnaren sitter på behållaren (som överlever sidospelets egna
+   omritningar) och rör bara #scorekort, så den kan aldrig trigga sig själv.
+   rAF: markörens score skrivs av sidospelets egen klickhandlare först. */
+function foljSidospel() {
+  const el = document.getElementById("sidospel");
+  if (el) el.addEventListener("click", () => requestAnimationFrame(ritaKort));
+}
+
 async function render() {
   const roundName = SGRound.roundName();
   seq = SGRound.seq();
@@ -312,24 +433,18 @@ async function render() {
     if (h && h.par != null) parByRel[i + 1] = h.par;
   });
 
+  const igang = !!(liveOn() || Store.active());
   const app = document.getElementById("app");
-  if (!liveOn()) {
-    app.innerHTML = `<h1>Översikt</h1>
-      <p class="sub">Live-scorekort under rundan</p>
-      ${sallskapHtml()}
-      <div id="sidospel"></div>
-      ${emptyView()}`;
-    ritaSidospel();
-    return;
-  }
   app.innerHTML = `<h1>Översikt</h1>
-    <p class="sub">runda ${roundName} · live</p>
+    <p class="sub">${igang ? `runda ${esc(roundName)} · live` : "Live-scorekort under rundan"}</p>
     ${sallskapHtml()}
     <div id="sidospel"></div>
-    ${scorecardHtml()}`;
+    <div id="scorekort"></div>`;
   ritaSidospel();
+  foljSidospel();
+  ritaKort();
 
-  startLeaderboard();   // prenumerera en gång när par-listan finns
+  if (liveOn()) startLeaderboard();   // prenumerera en gång när par-listan finns
 }
 const boot = () => Store.ready().then(() => { LIVE = Store.match(); render(); });
 boot();
