@@ -8,7 +8,8 @@
  * Exponerar window.SGLive med:
  *   initLive()                                   -> { uid }   (säkrar anonym session)
  *   createGame({course, roundSeq, displayName?}) -> { gameId, code }
- *   joinGame(code, displayName)                  -> { gameId }
+ *   joinGame(code, displayName)                  -> { gameId }   (idempotent)
+ *   syncRound(gameId, doc)                       -> antal efterskickade hål
  *   pushHoleScore(gameId, hole, {strokes,putts,pen})
  *   subscribeLeaderboard(gameId, cb, {par}?)     -> unsubscribe()
  *   finishGame(gameId)
@@ -123,6 +124,40 @@ const SGLive = (() => {
     if (error) throw error;
   }
 
+  /* Efterskicka alla spelade hål i ett runddokument. Vanliga `pushHoleScore`
+     sker BARA i det ögonblick ett hål ändras, så hål som loggades medan matchen
+     var borta (flygplansläge, en tappad match, eller — som det visade sig — en
+     spelare som aldrig kom in i matchen) nådde aldrig molnet: resten av bollen
+     såg en spelare som stod stilla på hål 1. Upserten är på (game_id, uid,
+     hole), så en omskickning är gratis och aldrig dubbel.
+
+     Avtrycket gör svepet till en no-op när inget ändrats — annars hade varje
+     sidladdning kostat bollen 18 skrivningar på 4G. Det skrivs bara när HELA
+     svepet gick igenom, så ett hål som föll på ett tappat nät försöker igen.
+
+     Ligger här och inte i en sida, eftersom både Logga slag (vid appstart) och
+     Översikt (efter att man gått med) behöver exakt samma svep. */
+  const SYNK_KEY = "sg_live_synkad";
+  async function syncRound(gameId, doc) {
+    if (!gameId || !doc || typeof SGScore === "undefined") return 0;
+    const spelade = (doc.holes || []).filter(h => SGScore.components(h).played);
+    if (!spelade.length) return 0;
+    const avtryck = gameId + "|" +
+      spelade.map(h => h.n + ":" + SGScore.components(h).total).join(",");
+    try { if (localStorage.getItem(SYNK_KEY) === avtryck) return 0; } catch (_) {}
+    let n = 0;
+    // Sekventiellt: en boll på 4G ska inte få 18 parallella skrivningar.
+    for (const h of spelade) {
+      const c = SGScore.components(h);
+      try {
+        await pushHoleScore(gameId, h.n, { strokes: c.strokes, putts: c.putts, pen: c.pen });
+        n++;
+      } catch (e) { liveWarn("efterskick", e); }
+    }
+    if (n === spelade.length) { try { localStorage.setItem(SYNK_KEY, avtryck); } catch (_) {} }
+    return n;
+  }
+
   async function finishGame(gameId) {
     const c = db();
     const { error } = await c.from("games").update({ status: "finished" }).eq("id", gameId);
@@ -219,7 +254,7 @@ const SGLive = (() => {
     return () => c.removeChannel(channel);
   }
 
-  return { initLive, createGame, joinGame, pushHoleScore, finishGame,
+  return { initLive, createGame, joinGame, pushHoleScore, syncRound, finishGame,
            subscribeLeaderboard, pushPin, subscribePins, fetchPins, liveWarn,
            /* EN klient i appen, delad. `konto.js` måste använda DENNA och får
               aldrig ropa createClient själv: två supabase-klienter delar

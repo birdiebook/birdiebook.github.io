@@ -53,6 +53,19 @@
     color:var(--accent-ink); font-weight:800; font-size:15px; padding:11px 22px;
     border-radius:12px; }
 
+  /* ---------- gå med i live-match ---------- */
+  .joinbox { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .joinbox .row { display:flex; gap:8px; align-items:center; }
+  .joinbox input { flex:1; min-width:0; background:#0e3326; color:var(--ink);
+    border:1px solid var(--line); border-radius:11px; padding:11px 12px;
+    font-size:16px; font-family:inherit; text-transform:uppercase; }
+  .joinbox button { font-family:inherit; background:#1a4c38; color:var(--ink);
+    border:1px solid var(--line); border-radius:11px; padding:11px 16px;
+    font-size:14px; font-weight:700; }
+  .joinbox button.wide { width:100%; margin-top:8px; }
+  .joinbox .fel { color:var(--danger); }
+  .joinbox .varn { color:var(--warn); }
+
   /* ---------- scorekort ---------- */
   /* horisontell scroll: spelarnamnet är sticky till vänster, hålen scrollar */
   .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; margin:2px -4px; }
@@ -227,6 +240,147 @@ function emptyView() {
   </div>`;
 }
 
+/* ---------- min plats i matchen ----------
+   Molnet vet vem som är med via `game_players`. Den raden skrivs EN gång — när
+   man skapar matchen eller går med — och skrevs den aldrig (nätet dog i just
+   det anropet) finns man inte i matchen, hur mycket score man än för i sin egen
+   telefon. Adam och Erik ser då en boll med två spelare.
+
+   Översikt är enda stället som kan SE det: här är både leaderboarden och mitt
+   eget uid kända, så "molnet listar inte mig" är ett fråga vyn kan ställa.
+   `joinGame` är en upsert på (game_id, uid) och alltså idempotent — att skriva
+   raden igen är gratis.
+
+   OCH: fram tills nu fanns ingen väg in i en match mitt i rundan. Live-kortet
+   bor på setup-vyn i Logga slag, och den vyn syns bara när ingen runda är
+   aktiv (`currentView()` → "setup" kräver !Store.active()). Hade man inte
+   matchen när rundan startade var enda utvägen att avsluta rundan. */
+let joinPagar = false;      // en anslutning är på väg
+let joinFel = null;         // senaste felet, visas i rutan
+let autoAnslutGjord = false; // självläkningen körs en gång per sidladdning
+
+// Molnet har en spelarlista, och jag är inte i den.
+function saknasIMatchen() {
+  return !!(liveOn() && LB && myUid && !LB.some(p => p && p.uid === myUid));
+}
+// ... men någon med mitt namn är det. Då bytte telefonen anonym session (nytt
+// uid) och en automatisk anslutning hade lagt till mig EN GÅNG TILL i bollens
+// lista. Det valet får spelaren göra själv.
+function finnsUnderAnnatId() {
+  const n = spelarNamn().toLowerCase();
+  return !!(n && LB && LB.some(p => p && String(p.name || "").trim().toLowerCase() === n));
+}
+
+/* Gemensam avslutning för både "gå med" och "skapa": matchen sparas lokalt,
+   prenumerationen görs om mot det nya spelet, och de hål som redan är spelade
+   efterskickas — annars står man som ny i bollen fast man går på hål 12. */
+async function efterAnslutning(gameId, code, namn) {
+  await Store.setMatch({ gameId, code: String(code).toUpperCase().trim(),
+                         displayName: namn });
+  LIVE = Store.match();
+  if (lbUnsub) { lbUnsub(); lbUnsub = null; }
+  lbSubscribed = false;
+  LB = null;
+  autoAnslutGjord = true;     // vi ÄR med nu; ingen självläkning ovanpå detta
+  await SGLive.syncRound(gameId, Store.active());
+  joinPagar = false;
+  render();                   // hela sidan: koden hör hemma i rubriken
+}
+
+async function ansl(kod, namn) {
+  if (joinPagar) return;
+  joinPagar = true; joinFel = null; ritaKort();
+  try {
+    const { gameId } = await SGLive.joinGame(kod, namn);
+    await efterAnslutning(gameId, kod, namn);
+  } catch (e) {
+    joinPagar = false;
+    joinFel = (e && e.message) || "Kunde inte gå med i matchen.";
+    ritaKort();
+  }
+}
+
+async function skapaMatch(namn) {
+  if (joinPagar) return;
+  joinPagar = true; joinFel = null; ritaKort();
+  try {
+    const d = Store.active();
+    const { gameId, code } = await SGLive.createGame({
+      course: (d && d.courseName) || SGRound.courseName(),
+      roundSeq: SGRound.roundName(), displayName: namn });
+    await efterAnslutning(gameId, code, namn);
+  } catch (e) {
+    joinPagar = false;
+    joinFel = (e && e.message) || "Kunde inte skapa matchen.";
+    ritaKort();
+  }
+}
+
+/* Rutan under scorekortet. Tre lägen: ingen match (gå med / skapa), med i en
+   match men osynlig i den (anslut mig), eller inget alls. */
+function joinHtml() {
+  if (typeof SGLive === "undefined") return "";
+  if (joinPagar) return `<div class="joinbox"><p class="hint left" style="margin:0">Ansluter dig till matchen …</p></div>`;
+  const fel = joinFel ? `<p class="hint left fel" style="margin:8px 0 0">${esc(joinFel)}</p>` : "";
+  const namn = spelarNamn();
+  const namnfalt = namn ? "" :
+    `<input id="joinNamn" placeholder="Ditt namn" style="text-transform:none;margin-top:8px">`;
+
+  if (liveOn()) {
+    if (!saknasIMatchen()) return "";
+    const dubblett = finnsUnderAnnatId();
+    return `<div class="joinbox">
+      <p class="hint left varn" style="margin:0 0 8px">⚠ Du syns inte i matchen —
+        molnet listar ingen spelare med ditt id.${dubblett
+          ? ` Det står redan en <b>${esc(namn)}</b> i bollen: telefonen har
+              troligen bytt anonym session, och ansluter du nu hamnar du i
+              listan två gånger.`
+          : ""}</p>
+      ${namnfalt}
+      <button id="joinIgen" class="wide">Anslut mig${namn ? " som " + esc(namn) : ""}</button>${fel}
+    </div>`;
+  }
+  return `<div class="joinbox">
+    <p class="hint left" style="margin:0 0 8px">Spelar bollen med live-match?
+      Skriv koden så syns allas score här — och din hos dem.</p>
+    <div class="row">
+      <input id="joinKod" placeholder="T.ex. G6CK" maxlength="8" autocomplete="off"
+        autocapitalize="characters">
+      <button id="joinGo" style="flex:none">Gå med</button>
+    </div>
+    ${namnfalt}
+    <button id="joinNy" class="wide">Skapa ny match</button>${fel}
+  </div>`;
+}
+
+function wireJoin(el) {
+  const q = id => el.querySelector("#" + id);
+  const namnFor = () => {
+    const f = q("joinNamn");
+    return (f ? f.value.trim() : "") || spelarNamn();
+  };
+  const kravNamn = n => {
+    if (n) return true;
+    joinFel = "Skriv ditt namn först — det är så bollen ser dig.";
+    ritaKort();
+    return false;
+  };
+  if (q("joinGo")) q("joinGo").onclick = () => {
+    const kod = (q("joinKod").value || "").trim();
+    if (!kod) { joinFel = "Ange spelkoden."; ritaKort(); return; }
+    const n = namnFor();
+    if (kravNamn(n)) ansl(kod, n);
+  };
+  if (q("joinNy")) q("joinNy").onclick = () => {
+    const n = namnFor();
+    if (kravNamn(n)) skapaMatch(n);
+  };
+  if (q("joinIgen")) q("joinIgen").onclick = () => {
+    const n = namnFor();
+    if (kravNamn(n)) ansl(LIVE.code, n);
+  };
+}
+
 /* ---------- radmodellen (de tre källorna → en rad per spelare) ---------- */
 // EN uträkning för alla rader: samma { hål: score } in, samma tre siffror ut.
 function mkRow(o) {
@@ -255,11 +409,15 @@ function localHoles() {
   return m;
 }
 
-function myName() {
+/* Vad heter jag — tomt när appen inte vet. Skilt från visningsnamnet nedan:
+   att gå med i en match som "Du" hade satt det namnet på Adams och Eriks
+   skärmar, så anslutningsrutan frågar hellre. */
+function spelarNamn() {
   const d = Store.active();
   const p = Store.profile ? Store.profile() : null;
-  return (d && d.player) || (LIVE && LIVE.displayName) || (p && p.namn) || "Du";
+  return String((d && d.player) || (LIVE && LIVE.displayName) || (p && p.namn) || "").trim();
 }
+const myName = () => spelarNamn() || "Du";
 
 function rader() {
   const cloud = (liveOn() && LB) ? LB : [];
@@ -309,7 +467,7 @@ function scorecardHtml(rows) {
   const head = `<div class="card"><h2>🏆 Live-scorekort <span class="note">${kalla}</span></h2>`;
   if (!rows.length) {
     return head + `<div class="hint left">${
-      liveOn() && !LB ? "Ansluter …" : "Ingen har fört score än."}</div></div>`;
+      liveOn() && !LB ? "Ansluter …" : "Ingen har fört score än."}</div>${joinHtml()}</div>`;
   }
 
   const N = seq.length;
@@ -360,12 +518,12 @@ function scorecardHtml(rows) {
   let fot = "";
   if (rows.length < 2) {
     fot = `<p class="hint left" style="margin-top:10px">Bara du på kortet — lägg
-      till medspelare under <b>Sällskap</b>, eller gå med i en live-match under
-      <b>Logga slag</b> så syns hela bollen här.</p>`;
+      till medspelare under <b>Sällskap</b> för ett sidospel.</p>`;
   } else if (!liveOn() && Store.markers().length) {
     fot = `<p class="hint left" style="margin-top:10px">Medspelarnas score för du
       själv — i <b>Sällskap</b> ovan.</p>`;
   }
+  fot += joinHtml();
 
   return head + `<div class="scroll"><table class="card-tbl">
     <thead>
@@ -411,6 +569,17 @@ function ritaKort() {
   const rows = rader();
   const nagot = liveOn() || Store.active() || rows.some(r => r.thru > 0);
   el.innerHTML = nagot ? scorecardHtml(rows) : emptyView();
+  wireJoin(el);
+  /* Självläkning, sist och en gång per sidladdning: telefonen vet att den är
+     med i matchen men molnet listar inte mig. Då är den saknade raden ett rent
+     misslyckat anrop, och att skriva den igen är precis vad appen redan
+     försökte göra. Finns någon med mitt namn redan avstår vi — se
+     finnsUnderAnnatId(); då vore det en dubblett i bollens lista. */
+  if (saknasIMatchen() && !autoAnslutGjord && !joinPagar
+      && spelarNamn() && !finnsUnderAnnatId()) {
+    autoAnslutGjord = true;
+    ansl(LIVE.code, spelarNamn());
+  }
 }
 
 /* Sällskapets score matas in HÄR på sidan, i #sidospel. Utan den här kopplingen

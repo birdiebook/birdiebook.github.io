@@ -1182,40 +1182,12 @@ const Live = (() => {
     SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
       .catch(e => SGLive.liveWarn("score", e));   // offline tyst (score kvar lokalt); serverfel → engångsvarning
   }
-  /* Efterskicka spelade hål som molnet inte har. Pushen sker annars BARA i det
-     ögonblick ett hål ändras — hål som loggades medan matchen var borta (i
-     flygplansläge, eller under den tappade match som Store.ready() nu räddar)
-     nådde därför aldrig molnet, och resten av bollen såg en spelare som stod
-     stilla på hål 1. Upserten är på (game_id, uid, hole), så en omskickning är
-     gratis och aldrig dubbel.
-
-     Avtrycket gör svepet till en no-op när inget ändrats: annars hade varje
-     återbesök på den här sidan kostat bollen 18 skrivningar på 4G. Det skrivs
-     bara när HELA svepet gick igenom, så ett hål som föll bort på ett tappat
-     nät försöker igen nästa gång. */
-  const SYNK_KEY = "sg_live_synkad";
-  const avtryck = (gameId, hal) => gameId + "|" +
-    hal.map(h => h.n + ":" + SGScore.components(h).total).join(",");
+  /* Efterskicka spelade hål som molnet inte har. Svepet självt bor i live.js —
+     Översikt behöver exakt samma efter att man gått med i en match därifrån. */
   function syncAll() {
     const L = Store.match();
     if (!has() || !inGame()) return Promise.resolve(0);
-    const d = Store.active();
-    if (!d) return Promise.resolve(0);
-    const spelade = (d.holes || []).filter(h => SGScore.components(h).played);
-    if (!spelade.length) return Promise.resolve(0);
-    const fp = avtryck(L.gameId, spelade);
-    try { if (localStorage.getItem(SYNK_KEY) === fp) return Promise.resolve(0); } catch (_) {}
-    // Sekventiellt: en boll på 4G ska inte få 18 parallella skrivningar.
-    return spelade.reduce((kedja, h) => kedja.then(n => {
-      const c = SGScore.components(h);
-      return SGLive.pushHoleScore(L.gameId, h.n,
-                                  { strokes: c.strokes, putts: c.putts, pen: c.pen })
-        .then(() => n + 1,                     // ett fel stoppar inte resten
-              e => { SGLive.liveWarn("efterskick", e); return n; });
-    }), Promise.resolve(0)).then(n => {
-      if (n === spelade.length) { try { localStorage.setItem(SYNK_KEY, fp); } catch (_) {} }
-      return n;
-    });
+    return SGLive.syncRound(L.gameId, Store.active());
   }
   // Dela markerad pin till matchen (globalt hålnr). Tyst no-op om ej i match.
   function pushPin(rel, p) {
