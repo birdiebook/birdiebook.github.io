@@ -1182,6 +1182,41 @@ const Live = (() => {
     SGLive.pushHoleScore(L.gameId, n, { strokes: c.strokes, putts: c.putts, pen: c.pen })
       .catch(e => SGLive.liveWarn("score", e));   // offline tyst (score kvar lokalt); serverfel → engångsvarning
   }
+  /* Efterskicka spelade hål som molnet inte har. Pushen sker annars BARA i det
+     ögonblick ett hål ändras — hål som loggades medan matchen var borta (i
+     flygplansläge, eller under den tappade match som Store.ready() nu räddar)
+     nådde därför aldrig molnet, och resten av bollen såg en spelare som stod
+     stilla på hål 1. Upserten är på (game_id, uid, hole), så en omskickning är
+     gratis och aldrig dubbel.
+
+     Avtrycket gör svepet till en no-op när inget ändrats: annars hade varje
+     återbesök på den här sidan kostat bollen 18 skrivningar på 4G. Det skrivs
+     bara när HELA svepet gick igenom, så ett hål som föll bort på ett tappat
+     nät försöker igen nästa gång. */
+  const SYNK_KEY = "sg_live_synkad";
+  const avtryck = (gameId, hal) => gameId + "|" +
+    hal.map(h => h.n + ":" + SGScore.components(h).total).join(",");
+  function syncAll() {
+    const L = Store.match();
+    if (!has() || !inGame()) return Promise.resolve(0);
+    const d = Store.active();
+    if (!d) return Promise.resolve(0);
+    const spelade = (d.holes || []).filter(h => SGScore.components(h).played);
+    if (!spelade.length) return Promise.resolve(0);
+    const fp = avtryck(L.gameId, spelade);
+    try { if (localStorage.getItem(SYNK_KEY) === fp) return Promise.resolve(0); } catch (_) {}
+    // Sekventiellt: en boll på 4G ska inte få 18 parallella skrivningar.
+    return spelade.reduce((kedja, h) => kedja.then(n => {
+      const c = SGScore.components(h);
+      return SGLive.pushHoleScore(L.gameId, h.n,
+                                  { strokes: c.strokes, putts: c.putts, pen: c.pen })
+        .then(() => n + 1,                     // ett fel stoppar inte resten
+              e => { SGLive.liveWarn("efterskick", e); return n; });
+    }), Promise.resolve(0)).then(n => {
+      if (n === spelade.length) { try { localStorage.setItem(SYNK_KEY, fp); } catch (_) {} }
+      return n;
+    });
+  }
   // Dela markerad pin till matchen (globalt hålnr). Tyst no-op om ej i match.
   function pushPin(rel, p) {
     const L = Store.match();
@@ -1191,7 +1226,7 @@ const Live = (() => {
     SGLive.pushPin(L.gameId, g, { lat: p.lat, lon: p.lon, acc: p.acc })
       .catch(e => SGLive.liveWarn("pin", e));   // offline tyst (pin kvar lokalt); serverfel → engångsvarning
   }
-  return { state, inGame, create, join, leave, finish, push, pushPin };
+  return { state, inGame, create, join, leave, finish, push, pushPin, syncAll };
 })();
 // bekvämt anrop från befintliga handlare: pusha aktuellt hål efter en ändring
 function livePush(n) { Live.push(n == null ? S.current : n); }
@@ -1220,6 +1255,7 @@ window.addEventListener("beforeunload", e => {
 // spelad i flygplansläge). Samma svep() som appstart och finishRound.
 window.addEventListener("online", () => {
   if (typeof Moln !== "undefined") Moln.svep();
+  Live.syncAll();     // hål loggade i flygplansläge når molnet när nätet gör det
 });
 // Utlösare 2/3 för molnsvepet (MOLN_PLAN §6 V2b): appstart, efter
 // Store.ready(). Ingen timer, inget pollande — bara detta plus finishRound
@@ -1229,6 +1265,7 @@ window.addEventListener("online", () => {
 Store.ready().then(() => {
   if (typeof Moln !== "undefined") Moln.svep();
   if (typeof Moln !== "undefined") Moln.hamta().catch(() => {});
+  Live.syncAll();     // matchen kan ha hittats först nu (Store.ready räddar den)
   S = Store.active() || draftState();
   // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
   SGRound.migrateSgHole();

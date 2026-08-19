@@ -498,9 +498,29 @@ const Store = (() => {
           const vantande = lasVantandeMatch();
           if (vantande) match = await be.get(MATCHES, vantande);
         }
+        // RÄDDNING. `setMatch` skrev inte pekaren förrän 2026-08-19, och
+        // live-kortet bor på SETUP-vyn — som per definition bara syns när ingen
+        // runda finns. Varje live-match skapades alltså utan runda OCH utan
+        // pekare: den överlevde bara i minnet, och ett sidbyte (Karta, Översikt)
+        // före "Starta rundan" räckte för att tappa den. Matchraden ligger kvar
+        // i IndexedDB, oadopterad — vilket är exakt vad pekaren skulle ha pekat
+        // ut. Fönstret finns för att en kvarglömd match från förra veckan inte
+        // ska dyka upp mitt i en ny runda.
+        if (!match) match = await hittaOadopterad();
         // Rundan har tagit över matchen → glöm det lösa id:t, annars kan en
         // gammal uppsättning dyka upp igen efter att rundan avslutats.
         if (match && doc && doc.matchId === match.id) glomVantandeMatch();
+        /* Adoption vid hydrering — samma regel som `startRound()`: en match som
+           aldrig hängts på en runda hör hemma i den aktiva. startRound täcker
+           bara matcher som ligger i MINNET när rundan startar; en match som
+           skapades i en tidigare sidsession nådde aldrig hit. */
+        else if (match && doc && !match.myRoundId) {
+          match.myRoundId = doc.id;
+          doc.matchId = match.id;
+          glomVantandeMatch();
+          await writeMatch();
+          flush();
+        }
       } catch (e) { console.warn("[Store] kunde inte hydrera aktiv runda", e); }
       // Profilen hydreras som rundan: läses en gång, lever synkront. Sidor som
       // renderar i Store.ready() ska kunna fråga efter den utan await.
@@ -678,16 +698,30 @@ const Store = (() => {
      Enkelriktat: matchen pekar på rund-id. Att ta bort matchen rör ALDRIG
      rundan (APPSTORE_PLAN §1 beslut 2). */
   const currentMatch = () => match;
+
+  /* Molnets fält (gameId, code, displayName) läggs PÅ den match som redan
+     finns — den ersätts inte. Förut byggdes ett helt nytt objekt med nytt id
+     och tomma `participants`, så ett tryck på "Skapa ny match" nollställde
+     kvällens uppsättning: medspelarna, spelformen och vargens val försvann, och
+     den gamla matchraden blev kvar föräldralös i IndexedDB. Sällskapet och
+     live-matchen är två EGENSKAPER hos samma match, inte två matcher. */
   function setMatch(m) {
     if (!m) return removeMatch();
-    match = Object.assign({ id: uuid(), createdAt: nowIso(), participants: [],
-                            format: null, endedAt: null }, m);
+    match = Object.assign(match || { id: uuid(), createdAt: nowIso(),
+                                     participants: [], format: null, wolf: {},
+                                     endedAt: null },
+                          m);
     if (doc) { match.myRoundId = match.myRoundId || doc.id; doc.matchId = match.id; flush(); }
+    // Ingen runda att hänga den på ännu — och live-matchen skapas ALLTID så,
+    // eftersom live-kortet bor på setup-vyn. Utan pekaren är matchen omöjlig
+    // att hitta igen efter nästa sidladdning (se räddningen i ready()).
+    else minnsVantandeMatch(match.id);
     return be.put(MATCHES, clone(match)).then(() => match);
   }
   function removeMatch() {
     const id = match && match.id;
     match = null;
+    glomVantandeMatch();                       // annars pekar den på ett raderat id
     if (doc) { doc.matchId = null; flush(); }   // rundan lever vidare oförändrad
     return id ? be.del(MATCHES, id).then(() => true) : Promise.resolve(true);
   }
@@ -727,6 +761,25 @@ const Store = (() => {
 
   function writeMatch() {
     return match ? be.put(MATCHES, clone(match)) : Promise.resolve();
+  }
+
+  /* Nyaste matchen som aldrig hängts på en runda och inte är avslutad. En
+     sådan rad kan bara ha uppstått på ett sätt: den skapades utan runda och
+     ingen pekare skrevs. Avslutade och lämnade matcher raderas av
+     `removeMatch`, så de kan aldrig dyka upp här. */
+  const OADOPTERAD_FONSTER = 24 * 3600 * 1000;   // ett dygn täcker "kvällen innan"
+  async function hittaOadopterad() {
+    try {
+      const nu = Date.now();
+      const rader = (await be.all(MATCHES)).filter(m =>
+        m && !m.myRoundId && !m.endedAt &&
+        nu - Date.parse(m.createdAt || "") < OADOPTERAD_FONSTER);
+      rader.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return rader[0] || null;
+    } catch (e) {
+      console.warn("[Store] kunde inte leta efter en oadopterad match", e);
+      return null;
+    }
   }
 
   // Skapa en lokal match om ingen finns. Kräver ingen server och inget nät.
