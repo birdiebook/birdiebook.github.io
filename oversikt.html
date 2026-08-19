@@ -63,6 +63,7 @@
     border:1px solid var(--line); border-radius:11px; padding:11px 16px;
     font-size:14px; font-weight:700; }
   .joinbox button.wide { width:100%; margin-top:8px; }
+  .joinbox.bar { margin-top:0; padding-top:0; border-top:0; }
   .joinbox .fel { color:var(--danger); }
   .joinbox .varn { color:var(--warn); }
 
@@ -258,6 +259,7 @@ function emptyView() {
 let joinPagar = false;      // en anslutning är på väg
 let joinFel = null;         // senaste felet, visas i rutan
 let autoAnslutGjord = false; // självläkningen körs en gång per sidladdning
+let visaKod = false;        // "Byt match" fäller ut kodfältet
 
 // Molnet har en spelarlista, och jag är inte i den.
 function saknasIMatchen() {
@@ -318,38 +320,58 @@ async function skapaMatch(namn) {
 
 /* Rutan under scorekortet. Tre lägen: ingen match (gå med / skapa), med i en
    match men osynlig i den (anslut mig), eller inget alls. */
-function joinHtml() {
+/* Rutan under scorekortet. Den ritas i ALLA lägen — det var den inte förut,
+   och det var fel: kontrollerna visades bara när vyn HADE UPPTÄCKT att jag
+   saknas i matchen, och upptäckten kräver en hämtad leaderboard. Är man redan
+   i en match men molnet svarar långsamt, eller inte alls, fanns alltså ingen
+   väg alls — exakt det läge där man behöver den. Nu är knappen alltid där, och
+   detekteringen bidrar bara med varningstexten ovanför. */
+function joinHtml(o) {
   if (typeof SGLive === "undefined") return "";
-  if (joinPagar) return `<div class="joinbox"><p class="hint left" style="margin:0">Ansluter dig till matchen …</p></div>`;
+  const bar = o && o.fristaende ? " bar" : "";      // egen ruta: ingen skiljelinje
+  if (joinPagar) {
+    return `<div class="joinbox${bar}"><p class="hint left" style="margin:0">Ansluter dig till matchen …</p></div>`;
+  }
   const fel = joinFel ? `<p class="hint left fel" style="margin:8px 0 0">${esc(joinFel)}</p>` : "";
   const namn = spelarNamn();
   const namnfalt = namn ? "" :
     `<input id="joinNamn" placeholder="Ditt namn" style="text-transform:none;margin-top:8px">`;
-
-  if (liveOn()) {
-    if (!saknasIMatchen()) return "";
-    const dubblett = finnsUnderAnnatId();
-    return `<div class="joinbox">
-      <p class="hint left varn" style="margin:0 0 8px">⚠ Du syns inte i matchen —
-        molnet listar ingen spelare med ditt id.${dubblett
-          ? ` Det står redan en <b>${esc(namn)}</b> i bollen: telefonen har
-              troligen bytt anonym session, och ansluter du nu hamnar du i
-              listan två gånger.`
-          : ""}</p>
-      ${namnfalt}
-      <button id="joinIgen" class="wide">Anslut mig${namn ? " som " + esc(namn) : ""}</button>${fel}
-    </div>`;
-  }
-  return `<div class="joinbox">
-    <p class="hint left" style="margin:0 0 8px">Spelar bollen med live-match?
-      Skriv koden så syns allas score här — och din hos dem.</p>
-    <div class="row">
+  const kodfalt = `<div class="row" style="margin-top:8px">
       <input id="joinKod" placeholder="T.ex. G6CK" maxlength="8" autocomplete="off"
         autocapitalize="characters">
       <button id="joinGo" style="flex:none">Gå med</button>
-    </div>
+    </div>`;
+
+  if (!liveOn()) {
+    return `<div class="joinbox${bar}">
+      <p class="hint left" style="margin:0">Spelar bollen med live-match?
+        Skriv koden så syns allas score här — och din hos dem.</p>
+      ${kodfalt}${namnfalt}
+      <button id="joinNy" class="wide">Skapa ny match</button>${fel}
+    </div>`;
+  }
+
+  // I en match. Varningen är en BONUS när leaderboarden hunnit svara; knappen
+  // står där oavsett, eftersom en omskrivning av min rad är gratis (upsert).
+  const varning = saknasIMatchen()
+    ? `<p class="hint left varn" style="margin:0 0 8px">⚠ Du syns inte i matchen —
+        molnet listar ingen spelare med ditt id.${finnsUnderAnnatId()
+          ? ` Det står redan en <b>${esc(namn)}</b> i bollen: telefonen har
+              troligen bytt anonym session, och ansluter du nu hamnar du i
+              listan två gånger.`
+          : ""}</p>`
+    : "";
+  return `<div class="joinbox${bar}">
+    ${varning}
+    <p class="hint left" style="margin:0">Du är med i <b>${esc(LIVE.code || "")}</b>${
+      namn ? " som " + esc(namn) : ""}. Syns du inte hos de andra — skriv in dig
+      igen, det kostar ingenting.</p>
     ${namnfalt}
-    <button id="joinNy" class="wide">Skapa ny match</button>${fel}
+    <div class="row" style="margin-top:8px">
+      <button id="joinIgen" style="flex:1">Anslut mig igen</button>
+      <button id="joinByt" style="flex:none">Byt match</button>
+    </div>
+    ${visaKod ? kodfalt : ""}${fel}
   </div>`;
 }
 
@@ -379,6 +401,7 @@ function wireJoin(el) {
     const n = namnFor();
     if (kravNamn(n)) ansl(LIVE.code, n);
   };
+  if (q("joinByt")) q("joinByt").onclick = () => { visaKod = true; joinFel = null; ritaKort(); };
 }
 
 /* ---------- radmodellen (de tre källorna → en rad per spelare) ---------- */
@@ -568,7 +591,9 @@ function ritaKort() {
   if (!el) return;
   const rows = rader();
   const nagot = liveOn() || Store.active() || rows.some(r => r.thru > 0);
-  el.innerHTML = nagot ? scorecardHtml(rows) : emptyView();
+  const ruta = joinHtml({ fristaende: true });
+  el.innerHTML = nagot ? scorecardHtml(rows)
+                       : emptyView() + (ruta ? `<div class="card">${ruta}</div>` : "");
   wireJoin(el);
   /* Självläkning, sist och en gång per sidladdning: telefonen vet att den är
      med i matchen men molnet listar inte mig. Då är den saknade raden ett rent
