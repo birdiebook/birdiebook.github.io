@@ -139,11 +139,14 @@ const SHELL_ASSETS = [
   // Klientvägen till servern (MOLN_PLAN §6 V2b). Saknas den offline kan
   // spela.html inte köra — samma skäl som konto.js och live.js ovan.
   "molnrunda.js",
-  // Inbjudan på namn (sql/inbjudan.sql). Båda laddas synkront av spela.html
-  // och inbjudan.js även av hubben — en saknad fil hade tagit hela sidan, inte
-  // bara inbjudningarna. Samma skäl som live.js/konto.js ovan.
+  // Inbjudan på namn (sql/inbjudan.sql). Laddas synkront av grinden
+  // (uppsattning.html) och inbjudan.js även av hubben — en saknad fil hade
+  // tagit hela sidan, inte bara inbjudningarna. Samma skäl som live.js ovan.
   "inbjudan.js",
   "boll.js",
+  // Banväljaren. Grinden kan inte rita ett enda val utan den, och spela.html
+  // läser nivåvillkoret ur den i avslutsvyn.
+  "banval.js",
   // Versionssträngen. Service workern importerar den redan vid start, men den
   // måste finnas i cachen också: annars dör SW:n vid nästa offline-start.
   "version.js",

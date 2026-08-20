@@ -466,16 +466,24 @@
 
   /* Uppsättningen: ditt handicap, medspelarna, spelformen.
      Fungerar UTAN aktiv runda — doc får vara null (se filhuvudet). */
-  async function uppsattning(el) {
+  async function uppsattning(el, opts) {
     injiceraCss();
     if (!el) return;
+    opts = opts || {};
     el.classList.add("sidospel");
     const doc = Store.active();
     const B = await bana(doc);
     const a = adapter(B, doc);
     const R = körFormat(B, doc);
-    el.innerHTML = meHtml() + playersHtml(a) + formatHtml(a) + nettoVarning(R);
-    wireUppsattning(el, a, doc, () => uppsattning(el));
+    /* `utanSpelare` för grinden (uppsattning.html): där äger `boll.js`
+       spelarlistan, och två listor över samma sällskap på samma skärm vore
+       inte bara brus — det vore två svar på frågan vem som är med, precis det
+       §9.1.4 finns för att förhindra. Spelformen och handicapet hör däremot
+       hemma här, för de är regler och inte deltagare.
+       Utelämnas flaggan ritas kortet som förut. */
+    el.innerHTML = meHtml() + (opts.utanSpelare ? "" : playersHtml(a))
+                 + formatHtml(a) + nettoVarning(R);
+    wireUppsattning(el, a, doc, () => uppsattning(el, opts));
     return { players: a.players.length };
   }
 

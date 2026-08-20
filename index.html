@@ -130,6 +130,11 @@
   .inbjudan .nej { background:rgba(255,255,255,.14); color:#eaf6ee; }
   .inbjudan .fel { color:#ffbdb3; font-size:13px; margin-top:10px; }
 
+  /* Vägen till grinden under en pågående runda. Dämpad med flit — den är en
+     utväg, inte ett erbjudande. */
+  .redigera { display:block; text-align:center; text-decoration:none;
+    color:#a9c9b6; font-size:14px; padding:2px 0 16px; margin-top:-12px; }
+
   /* Foten: golfaren ur loggan i en ring, som konceptbilden. Ringen är öppen
      (streckad krans med ett hopp) — dekor, ingen mätare. */
   /* Ringen krymper när kortet för pågående runda är framme — annars trycks
@@ -167,7 +172,11 @@
 
   <div id="pagaende"></div>
 
-  <a class="val primar" href="./spela.html">
+  <!-- Spela leder till GRINDEN (uppsattning.html), inte rakt in i
+       slagloggningen: bana, boll och tee-tid är frågor man svarar på FÖRE
+       flikarna, inte inuti dem. Pågår redan en runda kortsluter kortet överst
+       hit in i spela.html, så vägen in i en igångvarande runda är oförändrad. -->
+  <a class="val primar" href="./uppsattning.html">
     <span class="rad">
       <!-- Ikonerna är inline-SVG, inte emoji: emoji ritas av systemet och blev
            olika på iOS/Android (och färgade, mot en design som är enfärgad). -->
@@ -309,10 +318,17 @@ function ritaPagaende() {
   if (!doc) { el.innerHTML = ""; return; }
   const bana = doc.courseName || "";
   const hal = doc.current || 1;
+  /* "Redigera spel" är den ENDA vägen tillbaka till uppsättningen under en
+     runda, och den är medvetet lite trög: ⌂ Start först, sedan hit. Mitt i en
+     runda ska man inte snubbla in i banvalet — men när någon ansluter på hål
+     sju ska det gå på två tryck. Länken ligger utanför det gröna kortet så den
+     inte konkurrerar med "fortsätt": det är fortfarande rundan man vill in i
+     nio gånger av tio. */
   el.innerHTML = `<a class="pagaende" href="./spela.html">
     <div class="namn">▶ Fortsätt rundan</div>
     <div class="txt">${esc(bana)}${bana ? " · " : ""}hål ${hal}</div>
-  </a>`;
+  </a>
+  <a class="redigera" href="./uppsattning.html">Redigera spel — lägg till spelare, byt tee</a>`;
 }
 /* Profil-ringen som mätare: hur långt kransen är fylld = hur stor del av
    profilen som är besvarad. Definitionen av "besvarad" ligger i Spelprofil

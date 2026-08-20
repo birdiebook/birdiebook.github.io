@@ -207,11 +207,9 @@
 <script src="./store.js"></script>
 <script src="./live.js"></script>
 <script src="./konto.js"></script>
-<!-- Inbjudan på namn (sql/inbjudan.sql) och bollen som ersatte live-kortet.
-     inbjudan.js MÅSTE ligga efter live.js: den lånar den delade
-     supabase-klienten och ropar aldrig createClient själv. -->
-<script src="./inbjudan.js"></script>
-<script src="./boll.js"></script>
+<!-- Banväljaren och nivåvalet, utbrutna ur den här sidan när uppsättningen
+     blev en egen grind. Behövs här för `SGBanval.niva2Valbar` i avslutsvyn. -->
+<script src="./banval.js"></script>
 <script src="./version.js"></script>
 <script src="./molnrunda.js"></script>
 <script>
@@ -225,40 +223,9 @@ const DEFAULT_COURSE = "Malmö Burlöv Golfklubb";
 // round.js) — ingen frysning.
 function maxHole() { return SGRound.HOLES; }
 
-/* ---------- banväljare (B3) ----------
-   Registryn (mobile/data/courses.json) hämtas async — synkront state (SGRound)
-   är redan uppe (Burlöv-default eller cachad meta) så UI inte hoppar medan den
-   laddar. Faller tyst tillbaka till bara aktiv/cachad bana om fetchen failar
-   (offline vid första besöket). */
-let coursesRegistry = null; // array | null (ej laddad än)
-function loadCoursesRegistry() {
-  if (coursesRegistry) return Promise.resolve(coursesRegistry);
-  return fetch("./data/courses.json", { cache: "no-cache" }).then(r => r.json())
-    .then(list => (coursesRegistry = Array.isArray(list) && list.length ? list : null))
-    .catch(() => null);
-}
-function courseMetaBySlug(list, slug) {
-  return (list || []).find(c => c.slug === slug) || null;
-}
-
-/* ---------- bana-historik (senast spelade) ----------
-   Ren hjälpfunktion: lägger `slug` främst i `list`, deduplicerar, cappar till
-   MAX. Testbar utan DOM (se tests/js/test_course_history.mjs). */
-const KEY_COURSE_HIST = "sg_course_history";
-const COURSE_HIST_MAX = 5;
-function pushCourseHistory(slug, list) {
-  const out = [slug, ...(Array.isArray(list) ? list : []).filter(s => s !== slug)];
-  return out.slice(0, COURSE_HIST_MAX);
-}
-function loadCourseHistory() {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEY_COURSE_HIST));
-    return Array.isArray(v) ? v : [];
-  } catch (e) { return []; }
-}
-function saveCourseHistory(list) {
-  try { localStorage.setItem(KEY_COURSE_HIST, JSON.stringify(list)); } catch (e) {}
-}
+/* Banväljaren, banregistryn och bana-historiken bor i `banval.js` sedan
+   uppsättningen flyttade till grinden (uppsattning.html). Den här sidan väljer
+   ingen bana längre — den loggar slag på den som redan valts. */
 
 /* ---------- state ----------
    Rundan bor i Store (APPSTORE_PLAN §9.1). S ÄR det aktiva runddokumentet:
@@ -272,24 +239,10 @@ function saveCourseHistory(list) {
    `view` är UI-läge och ligger numera i localStorage, inte i rundan (§9.1
    beslut G: localStorage = inställningar, IndexedDB = användardata). */
 let S = null;
-let lastFinishedDoc = null;    // senast avslutade rundan, för "hämta igen"-knappen
 
-/* ---------- nivå 2 är PAUSAD (beslut 2026-07-29) ----------
-   Hela nivå 2 finns byggd och testad (APPSTORE_PLAN §9.2) men är inte valbar:
-   inmatningen — särskilt fairway/green träff-miss — behöver mer eftertanke kring
-   användarupplevelsen innan den möter en riktig runda. Datamodellen (`fir`/`gir`),
-   regeln att härlett vinner över observerat, och testerna ligger kvar orörda.
-
-   ÅTERAKTIVERA: sätt NIVA2_PAUSAD = false. Inget annat behöver ändras.
-
-   En runda som REDAN står på nivå 2 får fortsatt visa och behålla sin nivå —
-   annars hade väljaren tappat spelarens eget val mitt i en runda. */
-const NIVA2_PAUSAD = true;
-function niva2Valbar() {
-  if (!NIVA2_PAUSAD) return true;
-  const d = Store.active();
-  return !!(d && d.loggingLevel === 2);
-}
+/* Nivå 2 är pausad; villkoret bor i `banval.js` (SGBanval.niva2Valbar) sedan
+   nivåväljaren flyttade dit. Avslutsvyn nedan frågar samma funktion, så en
+   återaktivering slår igenom på båda ställena. */
 
 /* Par per spelarhål — behövs bara för att INTE visa en fairway-kontroll på par 3
    (nivå 2). Laddas i bakgrunden; tills den är klar är kartan tom och kontrollen
@@ -325,8 +278,11 @@ function draftState() {
            tee: localStorage.getItem("sg_tee") || "",
            startedAt: null, endedAt: null, current: 1, holes: [] };
 }
+/* Två vyer, inte tre: uppsättningen bor i grinden sedan 2026-08-20. Utan aktiv
+   runda finns ingen vy alls — `render()` omdirigerar innan frågan hinner
+   ställas — men funktionen svarar "hole" så anropare utanför render() (GPS,
+   kartsynken, beforeunload) aldrig får tillbaka ett läge som inte finns. */
 function currentView() {
-  if (!Store.active()) return "setup";
   const v = localStorage.getItem(VIEW_KEY);
   return v === "summary" ? "summary" : "hole";
 }
@@ -508,8 +464,8 @@ const fmtT = iso => new Date(iso).toLocaleTimeString("sv-SE", { hour: "2-digit",
 
    Avslutsvyns fyra fil-knappar (dela/ladda ner/kopiera + skicka till analys)
    togs bort 2026-08-07 — se kommentaren i renderSummary. Hjälpfunktionerna gick
-   samma väg; enda kvarvarande fil-export här är "Hämta senaste avslutade rundan
-   igen" i renderSetup, som bygger sin blob själv. */
+   samma väg. "Hämta senaste avslutade rundan igen" följde med uppsättningen
+   till grinden (uppsattning.html) 2026-08-20 och bygger sin blob där. */
 
 // Delad pin → allas analys (PIN_SHARING_SPEC): innan uppladdning väver vi in
 // matchens delade pins i den egna rundloggen för hål man spelat men INTE själv
@@ -634,276 +590,33 @@ const TilePreload = (() => {
 })();
 
 function render() {
+  /* Ingen runda → hit hör man inte. Grinden äger uppsättningen, och att låta
+     den här sidan behålla en egen setup-vy vore två vägar till samma val.
+     `replace` och inte `href`: bakåtknappen ska inte studsa tillbaka in i en
+     sida som direkt skickar vidare igen. */
+  if (!Store.active()) { location.replace("./uppsattning.html"); return; }
   const view = currentView();
   // S följer alltid Store: aktivt dokument när en runda pågår, annars utkastet
   S = Store.active() || (S && !S.id ? S : draftState());
-  if (view === "setup") renderSetup();
-  else if (view === "hole") renderHole();
+  if (view === "hole") renderHole();
   else renderSummary();
   // värm hålkartans rutor för aktuellt hål (+ nästa) medan man loggar
   if (view === "hole") TilePreload.forHole(S.current);
 }
 
-/* BOLLEN på uppsättningsvyn (boll.js) — ersatte live-scoring-kortet.
+/* UPPSÄTTNINGEN BOR INTE HÄR LÄNGRE (2026-08-20).
  *
- * Kortet frågade "vill du använda live-scoring?", och det är ett tekniskt val
- * som en spelare inte har någon anledning att ha en åsikt om: spelar ni
- * tillsammans är svaret alltid ja. Frågan hen faktiskt har är VILKA SOM ÄR MED,
- * och matchen i molnet är svaret på den — inte ett eget beslut. Därför skapas
- * matchen numera implicit av första inbjudan (se `Boll.sakraSpel`), och
- * "Skapa ny match"-knappen finns inte längre.
+ * `renderSetup` — banval, bollen, loggningsnivå och "Starta runda" — flyttade
+ * till `uppsattning.html`, som blivit en GRIND före rundans flikar i stället
+ * för en vy inuti dem. Skälet var att flikraden ljög: "Logga slag" stod
+ * markerad medan man valde bana, och en flik som visar något annat än sitt namn
+ * är inte en flik. Banväljaren följde med till `banval.js` för att den nu har
+ * två möjliga värdar och inte får finnas i två kopior.
  *
- * `Live` nedan är ORÖRD: den pushar score och pin under rundan och läser
- * matchen ur Store precis som förut. Det var bara uppsättningens UI som byttes.
- *
- * Lämna/avsluta match följde med in i bollkortets fot (boll.js `foterHtml`) och
- * dyker upp först när man FAKTISKT är med i en match — förut stod de på en
- * setup-vy där de för det mesta inte hade något att göra. */
-function ritaBoll() {
-  const el = document.getElementById("boll");
-  if (!el || typeof Boll === "undefined") return;
-  Boll.kort(el).catch(e => console.warn("[spela] bollen kunde inte ritas", e));
-}
-
-/* Min rad i spelarkatalogen (inbjudan.js) hålls färsk härifrån: uppsättningen
-   är den sida där man ändå är på väg att spela med andra, och en katalograd som
-   bara skrivs vid kontoskapandet skulle bära ett gammalt namn för evigt.
-   Misslyckas den händer ingenting synligt — man kan fortfarande bjuda in, det
-   är att BLI hittad som kräver raden. */
-function synkaKatalog() {
-  if (typeof Inbjudan === "undefined" || !Inbjudan.tillganglig()) return;
-  const p = Store.profile() || {};
-  if (!p.namn) return;
-  Inbjudan.synkaMig({ namn: p.namn }).catch(() => {});
-}
-
-function renderSetup() {
-  const insecure = !window.isSecureContext;
-  // Förr låg "senaste avslutade rundan" i en egen localStorage-nyckel som skrevs
-  // över varje gång. Nu ligger ALLA rundor i Store; den senast avslutade hämtas
-  // vid boot (lastFinishedDoc) och exporteras på begäran.
-  const last = lastFinishedDoc ? JSON.stringify(Store.export(lastFinishedDoc), null, 1) : null;
-  app.innerHTML = `
-    <h1>⛳ Birdiebook</h1>
-    <p class="sub">Registrera slag med mobilens GPS — för Strokes Gained-analys.</p>
-    ${insecure ? '<div class="banner">⚠ Sidan är inte öppnad via HTTPS — GPS fungerar då inte i de flesta mobiler.</div>' : ""}
-    <div class="card">
-      <!-- Namnfältet är BORTA sedan entrén (MOLN_PLAN §S1) frågar om namnet en
-           gång, före hubben. Uppsättningen läser det ur profilen — en sanning
-           per uppgift (§GP1 beslut 1). Saknas det (överhoppat i entrén) startar
-           rundan ändå med tomt namn; det gick att ändra i Profil hela tiden och
-           en spärr här var just det 2.1d-bis tog bort. -->
-      <label>Bana</label>
-      <div class="cpick">
-        <input type="text" class="field" id="courseSearch" placeholder="Sök bana …" autocomplete="off">
-        <div class="cpick-list" id="courseList"></div>
-      </div>
-      <label>Vilken runda spelar du? <span style="color:var(--dim)">(för hålkartan)</span></label>
-      <select class="field" id="round"></select>
-      <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
-      <select class="field" id="tee"></select>
-      <label>Hur mycket vill du logga? <span style="color:var(--dim)">(går att ändra under rundan)</span></label>
-      <select class="field" id="lvl">
-        <option value="3">Full — GPS-position per slag (ger Strokes Gained)</option>
-        ${niva2Valbar() ? `<option value="2">Score + statistik — puttar, fairway, green</option>` : ""}
-        <option value="1">Bara score</option>
-      </select>
-      <button class="big" id="start">Starta runda</button>
-      <a class="big" href="./planera.html" style="display:block;text-align:center;text-decoration:none;margin-top:10px;background:#1a4c38;color:var(--ink)">🗓 Planera runda</a>
-    </div>
-    <!-- Bollen ligger DIREKT under banvalet, före hjälptexten: "vilka är med"
-         är en fråga man svarar på när man sätter upp rundan, inte något man
-         letar rätt på under en instruktion man läst en gång. -->
-    <div id="boll"></div>
-    <div class="card hint">
-      <b>Så funkar det</b><br>
-      1. Stå vid bollen inför varje slag och tryck <b>SLAG</b> (även på tee).<br>
-      2. När bollen ligger på green: tryck <b>Boll på green</b>, putta klart och räkna puttarna med +/−.<br>
-      3. Vid flaggan: tryck gärna <b>Markera pin</b> (bäst data — pinnen flyttas dagligen).<br>
-      4. Plikt? Öka <b>Plikt</b>-räknaren. Chip-in? Bocka i <b>I hål utan putt</b>.<br>
-      5. Efter rundan: <b>Granska &amp; avsluta runda</b> → <b>Spara &amp; avsluta</b>.
-    </div>
-    ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
-  ritaBoll();
-  // Offline-nedladdningen flyttade till Profil i AS-IA steg 3 (§2.1d): den är
-  // en inställning som gäller över tid, inte ett val man gör inför varje runda.
-
-  // rundval (1–18/10–27/19–9 för Burlöv, annat för andra banor) delas via
-  // localStorage ('sg_round'): kartan och översikten visar rätt hål, och
-  // exporten översätter spelarens hål 1–18 till banans globala hålnummer.
-  const roundSel = document.getElementById("round");
-  const teeSel = document.getElementById("tee");
-  // Loggningsnivån minns valet från förra rundan (default full loggning).
-  // Har spelaren nivå 2 sparad medan den är pausad faller vi tillbaka på full
-  // loggning i stället för att låta <select> tyst välja första alternativet.
-  const lvlSel = document.getElementById("lvl");
-  if (lvlSel) {
-    let sparad = localStorage.getItem("sg_level");
-    if (sparad === "2" && !niva2Valbar()) sparad = "3";
-    lvlSel.value = (sparad === "1" || sparad === "2") ? sparad : "3";
-  }
-  function fillRoundAndTee(meta) {
-    const rounds = (meta && meta.rounds) || SGRound.BURLOV_DEFAULT.rounds;
-    const tees = (meta && meta.tees) || SGRound.BURLOV_DEFAULT.tees;
-    const savedRound = localStorage.getItem("sg_round");
-    const roundVal = rounds.some(r => r.value === savedRound) ? savedRound : rounds[0].value;
-    roundSel.innerHTML = rounds.map(r => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join("");
-    roundSel.value = roundVal;
-    localStorage.setItem("sg_round", roundVal);
-    // tee-val (rundnivå): förvälj senast använda om den finns i banans tee-lista;
-    // sparas vid start och delas via 'sg_tee' så det ligger kvar mellan rundor.
-    const savedTee = S.tee || localStorage.getItem("sg_tee") || "";
-    teeSel.innerHTML = '<option value="">– välj tee –</option>' +
-      tees.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
-    teeSel.value = tees.includes(savedTee) ? savedTee : "";
-  }
-  roundSel.onchange = () => localStorage.setItem("sg_round", roundSel.value);
-  teeSel.onchange = () => localStorage.setItem("sg_tee", teeSel.value);
-
-  // banväljare: sökbart fält + lista. Tills registryn laddat visas bara
-  // aktiv/cachad bana (offline-degradering). Val bygger om SGRound + rund/tee.
-  const courseSearch = document.getElementById("courseSearch");
-  const courseList = document.getElementById("courseList");
-  const activeMeta = SGRound.meta || SGRound.BURLOV_DEFAULT;
-  let selectedSlug = activeMeta.slug;
-
-  function norm(s) { return String(s || "").toLowerCase(); }
-  function matches(c, q) {
-    return norm(c.name).includes(q) || norm(c.slug).includes(q);
-  }
-  function courseRowHtml(c) {
-    const on = c.slug === selectedSlug;
-    return `<button type="button" class="cpick-row${on ? " active" : ""}" data-slug="${esc(c.slug)}">${esc(c.name)}</button>`;
-  }
-  function renderCourseList() {
-    const list = coursesRegistry;
-    if (!list) {
-      // offline vid första besöket: visa bara aktiv/cachad bana
-      courseList.innerHTML = courseRowHtml(activeMeta);
-      return;
-    }
-    // Fältet fylls med vald banas namn efter val — behandla det som TOMT sök
-    // (visa historik + alla, med den valda markerad) så "sök först, aldrig tomt"
-    // gäller även när man fokuserar fältet igen. Skriver man något annat filtreras.
-    const selMeta = courseMetaBySlug(list, selectedSlug);
-    const raw = courseSearch.value.trim();
-    const q = (selMeta && norm(raw) === norm(selMeta.name)) ? "" : norm(raw);
-    if (q) {
-      const hits = list.filter(c => matches(c, q));
-      courseList.innerHTML = hits.length
-        ? hits.map(courseRowHtml).join("")
-        : '<div class="cpick-empty">Inga banor matchar</div>';
-      return;
-    }
-    const hist = loadCourseHistory().filter(slug => list.some(c => c.slug === slug));
-    const histSet = new Set(hist);
-    const rest = list.filter(c => !histSet.has(c.slug));
-    let html = "";
-    if (hist.length) {
-      html += '<div class="cpick-sec">Senast spelad</div>';
-      html += hist.map(slug => courseRowHtml(courseMetaBySlug(list, slug))).join("");
-    }
-    html += '<div class="cpick-sec">Alla banor</div>';
-    html += rest.length ? rest.map(courseRowHtml).join("") : '<div class="cpick-empty">Inga banor</div>';
-    courseList.innerHTML = html;
-  }
-  // Dropdownen öppnas bara när man vill välja bana (fokus/klick på fältet) och
-  // stängs vid val, Esc eller klick utanför — så alla banor inte fyller skärmen
-  // i vila (skalar till många banor).
-  function openList() { courseList.classList.add("open"); renderCourseList(); wireCourseRows(); }
-  function closeList() { courseList.classList.remove("open"); }
-  function wireCourseRows() {
-    courseList.querySelectorAll("[data-slug]").forEach(btn => btn.onclick = () => {
-      const meta = courseMetaBySlug(coursesRegistry, btn.dataset.slug) ||
-        (btn.dataset.slug === activeMeta.slug ? activeMeta : null);
-      if (!meta) return;
-      selectedSlug = meta.slug;
-      SGRound.setActiveCourse(meta);
-      localStorage.removeItem("sg_round"); // nollställ till banans första runda
-      S.courseName = meta.name;
-      courseSearch.value = meta.name;
-      fillRoundAndTee(meta);
-      closeList();            // val gjort → fäll ihop
-      courseSearch.blur();
-    });
-  }
-  courseSearch.value = SGRound.courseName();   // visa aktiv bana i vila (list stängd)
-  fillRoundAndTee(activeMeta);
-  loadCoursesRegistry().then(list => {
-    if (!list) return;        // offline vid första besöket — behåll aktiv/cachad bana
-    if (courseList.classList.contains("open")) { renderCourseList(); wireCourseRows(); }
-  });
-  courseSearch.oninput = openList;   // skriva öppnar + filtrerar
-  // fokus öppnar hela listan och markerar texten så första tangenttrycket
-  // ersätter banans namn (i st.f. att söka på "namn"+bokstav).
-  courseSearch.onfocus = () => { openList(); courseSearch.select(); };
-  courseSearch.onkeydown = (e) => { if (e.key === "Escape") { closeList(); courseSearch.blur(); } };
-  // stäng när fokus lämnar väljaren (klick/tap utanför blurrar fältet); liten
-  // fördröjning så ett rad-klick hinner registreras innan vi fäller ihop.
-  courseSearch.closest(".cpick").addEventListener("focusout", () => {
-    setTimeout(() => {
-      const cp = document.querySelector(".cpick");
-      if (cp && !cp.contains(document.activeElement)) closeList();
-    }, 150);
-  });
-
-  document.getElementById("start").onclick = () => {
-    /* Den frusna Pages-kopian får inte starta rundor (MOLN_PLAN §6 V4b).
-       Molnvägen är same-origin, så en runda spelad där laddas aldrig upp —
-       och det märks först den dag telefonen rensas. Spärren sitter HÄR och
-       inte i `Store.startRound`: en `startRound` som returnerar null hade
-       kunnat vitna sidor som utgår från att ett dokument finns. */
-    if (window.SGFlytt && SGFlytt.frusen()) {
-      alert("Appen har flyttat. Rundor som spelas här sparas inte i molnet — " +
-            "öppna nya appen på " + SGFlytt.mal + " först.");
-      location.href = SGFlytt.mal;
-      return;
-    }
-    // Namnet kommer ur profilen (entrén frågade), med sg_player som fallback
-    // för den som har ett namn kvar där sedan tidigare. Tomt namn STOPPAR inte
-    // rundstarten — se kommentaren i markupen ovan.
-    const p = profilNamn() || localStorage.getItem("sg_player") || "";
-    const meta = courseMetaBySlug(coursesRegistry, selectedSlug) || SGRound.meta;
-    const lvlSel = document.getElementById("lvl");
-    const nivå = lvlSel ? +lvlSel.value : 3;
-    localStorage.setItem("sg_tee", teeSel.value);
-    localStorage.setItem("sg_round", roundSel.value);
-    // Bara ett RIKTIGT namn skrivs tillbaka. Ett tomt hade nollställt profilens
-    // namn och stämplat en ny `updatedAt` — vilket i synken (senast skrivna
-    // vinner) hade raderat namnet i molnet också.
-    if (p) {
-      localStorage.setItem("sg_player", p);
-      // Namnet tillhör profilen (se profilNamn ovan). Skrivs det bara i
-      // localStorage skulle Profil-sidan visa något annat än rundan gör, och
-      // nästa enhet skulle fråga igen.
-      try { Store.setProfile({ namn: p }); } catch (_) {}
-    }
-    localStorage.setItem("sg_level", String(nivå));   // kom ihåg till nästa runda
-    saveCourseHistory(pushCourseHistory((meta && meta.slug) || SGRound.activeSlug(), loadCourseHistory()));
-    // Här skapas runddokumentet. Finns redan en aktiv runda (man backade ut till
-    // setup) återanvänds den i stället för att en ny startas.
-    S = Store.active() || Store.startRound({
-      player: p, courseSlug: (meta && meta.slug) || SGRound.activeSlug(),
-      courseName: (meta && meta.name) || DEFAULT_COURSE,
-      roundSeq: roundSel.value, tee: teeSel.value, loggingLevel: nivå,
-    });
-    S.player = p;
-    S.courseName = (meta && meta.name) || DEFAULT_COURSE;
-    S.tee = teeSel.value;
-    Store.setLevel(nivå);   // även när en pausad runda återupptas med nytt val
-    setView("hole");
-    // Beständig lagring begärs vid en användargest, aldrig i onboardingen (§9.1.11)
-    Store.requestPersist();
-    startWatch(); save(); render();
-  };
-  const rl = document.getElementById("relast");
-  if (rl) rl.onclick = () => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([last], { type: "application/json" }));
-    a.download = "mobilrunda_senaste.json"; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  };
-}
+ * Den här sidan har därför BARA två vyer kvar: hål och summering. Kommer man
+ * hit utan aktiv runda är det inte ett läge — det är ett fel man ska ledas ur,
+ * och `render()` skickar vidare till grinden.
+ */
 
 function renderHole() {
   const h = hole(S.current);
@@ -997,7 +710,7 @@ function renderHole() {
     <div style="text-align:center;margin-top:2px">
       <select class="lvlpick" id="lvlSel" aria-label="Loggningsnivå">
         <option value="1"${lvl === 1 ? " selected" : ""}>Loggning: bara score</option>
-        ${niva2Valbar() ? `<option value="2"${lvl === 2 ? " selected" : ""}>Loggning: score + statistik</option>` : ""}
+        ${SGBanval.niva2Valbar() ? `<option value="2"${lvl === 2 ? " selected" : ""}>Loggning: score + statistik</option>` : ""}
         <option value="3"${lvl === 3 ? " selected" : ""}>Loggning: full (GPS per slag)</option>
       </select>
     </div>
@@ -1132,24 +845,11 @@ const Live = (() => {
   const has = () => typeof SGLive !== "undefined";           // CDN kan saknas offline
   const state = () => Store.match();
   const inGame = () => { const L = Store.match(); return !!(L && L.gameId); };
-  async function create() {
-    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
-    const name = (S.player || "").trim();
-    if (!name) throw new Error("Fyll i ditt namn först.");
-    const { gameId, code } = await SGLive.createGame({
-      course: S.courseName, roundSeq: SGRound.roundName(), displayName: name });
-    await Store.setMatch({ gameId, code, displayName: name });
-    return Store.match();
-  }
-  async function join(code) {
-    if (!has()) throw new Error("Live-tjänsten kunde inte laddas (ingen anslutning?).");
-    const name = (S.player || "").trim();
-    if (!name) throw new Error("Fyll i ditt namn först.");
-    const { gameId } = await SGLive.joinGame(code, name);
-    await Store.setMatch({ gameId, code: String(code).toUpperCase().trim(),
-                           displayName: name });
-    return Store.match();
-  }
+  /* `create()` och `join()` bodde här och ropades från live-scoring-kortet.
+     Kortet finns inte längre: matchen skapas implicit av första inbjudan och
+     spelkoden skrivs in i bollen (boll.js), som äger båda vägarna nu. Kvar här
+     är BARA det som hör rundan till — att pusha score och pin medan man loggar. */
+
   function leave() { Store.removeMatch(); }        // rör bara matchen, ej rundan
   async function finish() {
     const L = Store.match();
@@ -1173,7 +873,7 @@ const Live = (() => {
     SGLive.pushPin(L.gameId, g, { lat: p.lat, lon: p.lon, acc: p.acc })
       .catch(e => SGLive.liveWarn("pin", e));   // offline tyst (pin kvar lokalt); serverfel → engångsvarning
   }
-  return { state, inGame, create, join, leave, finish, push, pushPin };
+  return { state, inGame, leave, finish, push, pushPin };
 })();
 // bekvämt anrop från befintliga handlare: pusha aktuellt hål efter en ändring
 function livePush(n) { Live.push(n == null ? S.current : n); }
@@ -1211,24 +911,16 @@ window.addEventListener("online", () => {
 Store.ready().then(() => {
   if (typeof Moln !== "undefined") Moln.svep();
   if (typeof Moln !== "undefined") Moln.hamta().catch(() => {});
-  synkaKatalog();          // så andra hittar mig på namn (inbjudan.js)
   S = Store.active() || draftState();
   // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
   SGRound.migrateSgHole();
   if (S.current > maxHole()) { S.current = SGRound.globalToRel(S.current) || 1; save(); }
-  if (currentView() !== "setup") startWatch();
+  // GPS startas bara när det finns en runda att logga i. Villkoret var förut
+  // "inte setup-vyn", vilket betydde samma sak så länge setup fanns här.
+  if (Store.active()) startWatch();
   render();
   // par per hål (för att dölja fairway-kontrollen på par 3) — bakgrunden räcker
   loadPar().then(() => { if (currentView() === "hole") render(); });
-  // senast avslutade rundan i bakgrunden → "hämta igen"-knappen på setup-vyn
-  Store.list({ limit: 20 }).then(rows => {
-    const r = rows.find(x => x.status === "finished");
-    if (!r) return;
-    return Store.get(r.id).then(d => {
-      lastFinishedDoc = d;
-      if (currentView() === "setup") render();
-    });
-  }).catch(() => {});
 });
 </script>
 <script>

@@ -581,6 +581,20 @@ const Store = (() => {
   // S-variabel) säger till om det med touch() i stället för att gå via mutate.
   const touch = () => { if (doc) flush(); };
 
+  /* Vänta tills allt som ligger i skrivkön ÄR på disk.
+     Behövs sedan rundan startas på en annan sida än den som loggar (grinden →
+     spela.html, 2026-08-20). `startRound` sätter det levande dokumentet
+     synkront men `flush()` skriver asynkront; navigerar man i samma tick hinner
+     IndexedDB-skrivningen inte klart, och nästa sida hydrerar en Store UTAN
+     aktiv runda — den skickar då tillbaka till grinden, och rundan ser ut att
+     inte ha startat. Uppmätt i webbläsaren 2026-08-20: rundan fanns i minnet,
+     försvann vid navigering.
+
+     Inuti EN sida behövs den aldrig — där är den synkrona läsaren sanningen. */
+  function saved() {
+    return Promise.resolve(flushing).then(() => true);
+  }
+
   function hole(n) {
     ensureRound();
     let h = doc.holes.find(x => x.n === n);
@@ -986,7 +1000,7 @@ const Store = (() => {
 
   return {
     ready, active, activeId, startRound, ensureRound, finishRound, newRound,
-    mutate, mutateDoc, touch, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
+    mutate, mutateDoc, touch, saved, hole, holeIn, hasData, mutateHole, setCurrent, setLevel,
     addShot, addEvent,
     list, get, remove, export: toWire, import: importera,
     // trendcache (A5)
