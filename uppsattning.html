@@ -7,16 +7,16 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Uppsättning">
+<meta name="apple-mobile-web-app-title" content="Spelet">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
 <script src="./boot.js"></script>
-<title>Uppsättning</title>
+<title>Spelet</title>
 <style>
   :root { --bg:#0c2e22; --card:#123c2d; --ink:#e8f5ec; --dim:#9fc4ae;
           --line:#1f5540; --accent:#37b06b; --accent-ink:#06180f;
-          --miss:#e0a64e; --danger:#e26a5a; --good:#7ee2a8; }
+          --miss:#e0a64e; --danger:#e26a5a; --good:#7ee2a8; --card2:#0e3326; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; }
   body { background:var(--bg); color:var(--ink);
@@ -24,73 +24,293 @@
     touch-action:manipulation; overscroll-behavior:none;
     padding:env(safe-area-inset-top) env(safe-area-inset-right)
             env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  #app { max-width:480px; margin:0 auto; padding:14px 16px 96px; }
+  /* Botten-paddingen lämnar plats åt den fasta startknappen. */
+  #app { max-width:480px; margin:0 auto; padding:14px 16px 120px; }
   h1 { font-size:21px; font-weight:700; margin:8px 0 2px; letter-spacing:.2px; }
   .sub { color:var(--dim); font-size:14px; margin:0 0 16px; }
   .back { display:inline-block; color:var(--dim); text-decoration:none; font-size:14px;
     padding:6px 0; margin:0 0 2px; }
-  /* Kortens CSS bor i sidospel.js, scopad under .sidospel — den delas med
-     Översikt och får inte krocka med värdsidans egna .card/table-regler. */
-  /* flik-rad: bas-CSS:en bor i nav.js (AS-IA steg 1, §2.8.1). Samma avvikelse
-     som analys.html — ingen gap, smalare sidopadding. Måste stå FÖRE
-     @supports-blocket nedan, som skriver över .tabs i app-shell-läget. */
-  .tabs { gap:0; padding:6px 8px calc(env(safe-area-inset-bottom) + 6px); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px;
+    padding:14px 16px; margin:12px 0; }
+  label { display:block; font-size:13px; color:var(--dim); margin:12px 0 5px;
+    font-weight:600; }
+  label:first-child { margin-top:0; }
+  input[type=text], select.field { width:100%; font-size:16px; padding:11px 12px;
+    border-radius:11px; border:1px solid var(--line); background:var(--card2);
+    color:var(--ink); font-family:inherit; }
+  button { font-family:inherit; border:none; border-radius:12px; cursor:pointer; }
+
+  /* Banväljaren: samma regler som i spela.html — komponenten (banval.js) ritar
+     samma markup och värdsidan äger utseendet. */
+  .cpick { position:relative; }
+  .cpick-list { display:none; position:absolute; left:0; right:0; top:100%;
+    z-index:50; margin-top:6px; max-height:260px; overflow-y:auto;
+    border:1px solid var(--line); border-radius:10px; background:var(--card2);
+    box-shadow:0 8px 24px rgba(0,0,0,.38); }
+  .cpick-list.open { display:block; }
+  .cpick-sec { color:var(--dim); font-size:12px; font-weight:700;
+    padding:8px 12px 4px; text-transform:uppercase; letter-spacing:.3px; }
+  .cpick-row { display:block; width:100%; text-align:left; background:none;
+    color:var(--ink); font-size:15px; padding:10px 12px; border-radius:0;
+    border-top:1px solid var(--line); }
+  .cpick-row:first-child, .cpick-sec + .cpick-row { border-top:none; }
+  .cpick-row.active { background:#1a4c38; font-weight:700; }
+  .cpick-empty { color:var(--dim); font-size:14px; padding:10px 12px; }
+
+  /* Startknappen är FAST i botten. Grinden är längre än en skärm så fort
+     bollen har spelare i sig, och en primärknapp som ligger mitt i sidan
+     trycks innan man scrollat förbi frågorna den avslutar. */
+  .startbar { position:fixed; left:0; right:0; bottom:0; z-index:100;
+    background:linear-gradient(180deg, rgba(12,46,34,0) 0%, var(--bg) 38%);
+    padding:18px 16px calc(env(safe-area-inset-bottom) + 14px); }
+  .startbar .inner { max-width:480px; margin:0 auto; }
+  .big { width:100%; padding:16px; font-size:18px; font-weight:700;
+    background:var(--accent); color:var(--accent-ink); }
+  .big.ghost { background:#1a4c38; color:var(--ink); border:1px solid var(--line);
+    margin-top:10px; font-size:16px; padding:13px; }
+  .banner { background:#4a3413; border:1px solid #7a5a1f; color:#f0d48a;
+    border-radius:10px; padding:10px 12px; font-size:14px; margin:10px 0; }
+  .lank { display:block; width:100%; background:none; border:0; color:var(--dim);
+    text-decoration:underline; font-size:14px; padding:12px; font-family:inherit; }
+  a.planera { display:block; text-align:center; text-decoration:none;
+    margin:16px 0 4px; background:#1a4c38; color:var(--ink); border-radius:12px;
+    padding:13px; font-size:16px; font-weight:700;
+    border:1px solid var(--line); }
   @supports (height: 100lvh) {
     @media (display-mode: standalone) {
-      body { height: 100lvh; display: flex; flex-direction: column;
-             overflow: hidden; padding: 0; }
-      #app { flex: 1 1 auto; min-height: 0; overflow-y: auto;
-             -webkit-overflow-scrolling: touch;
+      body { height:100lvh; display:flex; flex-direction:column; overflow:hidden; padding:0; }
+      #app { flex:1 1 auto; min-height:0; overflow-y:auto;
+             -webkit-overflow-scrolling:touch;
              padding: calc(env(safe-area-inset-top) + 14px)
-                      calc(env(safe-area-inset-right) + 16px) 16px
+                      calc(env(safe-area-inset-right) + 16px) 120px
                       calc(env(safe-area-inset-left) + 16px); }
-      .tabs { position: static; padding: 6px 8px 8px; }
+      .startbar { position:static; padding:14px 16px calc(env(safe-area-inset-bottom) + 14px); }
     }
   }
 </style>
 </head>
 <body>
 <div id="app">
-  <a class="back" href="./spela.html">← Logga slag</a>
-  <h1>Uppsättning</h1>
-  <p class="sub" id="sub">Vilka som är med och vad ni spelar</p>
-  <div id="sidospel"></div>
+  <a class="back" href="./index.html">← Start</a>
+  <h1>Spelet</h1>
+  <p class="sub" id="sub">Var ni spelar, vilka som är med</p>
+
+  <div class="card" id="banval"></div>
+  <div id="boll"></div>
+  <a class="planera" href="./planera.html">🗓 Planera runda</a>
+  <div id="senaste"></div>
 </div>
-<nav class="tabs" id="tabs"></nav>
-<script src="./nav.js"></script>
+
+<div class="startbar"><div class="inner" id="startbar"></div></div>
+
+<!-- Ingen nav.js: grinden ligger FÖRE flikarna och ska inte bära dem. Vägen
+     härifrån är "← Start" upp till vänster, eller startknappen i botten. -->
 <script src="./round.js"></script>
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
-<script src="./spelformer.js"></script>
-<script src="./sidospel.js"></script>
+<script src="./banval.js"></script>
+<script src="./vendor/supabase-js.js"></script>
+<script src="./live.js"></script>
+<script src="./inbjudan.js"></script>
+<script src="./boll.js"></script>
 <script>
 "use strict";
-/* Uppsättningen av ett sällskapsspel (APPSTORE_PLAN §2.1c, §2.8.2).
+/* SPELET — grinden före rundan (AS-IA steg 2, omgjord 2026-08-20).
  *
- * Halva gamla sallskap.html. Den andra halvan — ställning, hål för hål och
- * inmatning — bor i Översikt, där den hör hemma: den är en RUNDVY.
+ * VAD SOM ÄNDRADES OCH VARFÖR. Uppsättningen var en VY INUTI slagloggningen:
+ * `spela.html` visade setup så länge ingen runda var aktiv, och samma flik
+ * bytte skepnad när man tryckte start. Det gjorde två saker fel.
  *
- * DEN HÄR SIDAN KRÄVER INGEN AKTIV RUNDA, och det är hela poängen. Man sätter
- * upp sällskapet kvällen innan eller på parkeringen, inte efter första slaget.
- * Gamla sidan vägrade rita någonting utan `Store.active()` och skickade en
- * tillbaka till Logga slag. Vyerna klarade det redan — det var bara vakten som
- * hindrade dem (se sidospel.js filhuvud, regel 2). */
+ *   1. Flikraden ljög. "Logga slag" var markerad medan man valde bana — en
+ *      flik som visar något annat än sitt namn är inte en flik.
+ *   2. Vägen tillbaka fanns inte. Ville man lägga till någon mitt i rundan
+ *      gick det bara via en sida som formellt låg UNDER spelläget, och som
+ *      inget i spelläget länkade till.
+ *
+ * Nu är detta en GRIND: hubben → Spelet → Starta runda → flikarna. Och vägen
+ * tillbaka är den omvända och medvetet lite trög: ⌂ Start → "Redigera spel".
+ * Trögheten är poängen — mitt i en runda ska man inte snubbla in i banvalet,
+ * men man ska kunna ta sig hit på två tryck när någon ansluter på hål sju.
+ *
+ * SIDAN KRÄVER INGEN AKTIV RUNDA. Det var sant förut och är sant nu: man sätter
+ * upp sällskapet kvällen innan eller på parkeringen. Är en runda igång byter
+ * knappen i botten skepnad till "Fortsätt rundan" — grinden startar aldrig en
+ * andra runda ovanpå en pågående.
+ *
+ * TVÅ KORT, två frågor:
+ *   1. banval.js   var spelar ni
+ *   2. boll.js     vilka är med (+ tee-tid)
+ *
+ * VAD SOM INTE FRÅGAS HÄR, och varför:
+ *
+ *   Handicap. Det bor i SPELARPROFILEN för den som har appen (§GP1 beslut 1:
+ *   en sanning per uppgift om spelaren) och matas in i bollen för den som inte
+ *   har den — där man ändå skriver in namnet. Ett hcp-fält på grinden vore ett
+ *   tredje ställe samma tal kan stå på, och det tredje stället vinner alltid
+ *   den dag talen skiljer sig åt.
+ *
+ *   Spelform. Poäng och netto räknas som förut av `spelformer.js`; valet av
+ *   FORMAT flyttade till Översikt, där ställningen faktiskt syns. Det hör inte
+ *   till frågan "vilka spelar" och ska inte stå mellan spelaren och startknappen.
+ *
+ *   Loggningsnivå. En inställning som gäller över tid, inte ett val i
+ *   ögonblicket — samma skäl som flyttade offline-banorna och
+ *   kartinställningarna till Profil (§2.1d). Rundan kan fortfarande byta nivå i
+ *   avslutsvyn.
+ */
+
+/* Ingen `esc` här: sidan skriver bara textContent (subtexten) och låter
+   modulerna rita sin egen markup med sin egen escapening. */
+let banval = null;      // handtaget från SGBanval.montera
+
 function subtext(info) {
   const el = document.getElementById("sub");
   if (!el) return;
   const doc = Store.active();
   const n = info && info.players;
   const del = [];
-  if (doc) del.push((doc.courseName || "") + " · runda " + (doc.roundSeq || ""));
-  else del.push("Ingen runda igång — uppsättningen sparas ändå");
+  if (doc) del.push("Runda igång · " + (doc.courseName || ""));
+  else del.push("Var ni spelar, vilka som är med");
   if (n) del.push(n === 1 ? "bara du" : n + " spelare");
   el.textContent = del.filter(Boolean).join(" · ");
 }
-function rita() {
-  return Sidospel.uppsattning(document.getElementById("sidospel")).then(subtext);
+
+/* ---------- startknappen ----------
+   Två lägen, aldrig tre: ingen runda → "Starta runda", pågående → "Fortsätt".
+   Att kunna starta en NY runda medan en är igång vore ett tredje läge som
+   tyst avslutar den första — den handlingen bor i Översikt, där rundan syns. */
+function ritaStartbar() {
+  const bar = document.getElementById("startbar");
+  if (!bar) return;
+  const doc = Store.active();
+  if (doc) {
+    bar.innerHTML = `<button class="big" id="fortsatt">Fortsätt rundan</button>`;
+    document.getElementById("fortsatt").onclick = () => {
+      location.href = "./spela.html";
+    };
+    return;
+  }
+  /* Baren bär BARA den primära handlingen. "Planera runda" låg här först och
+     gjorde den dubbelt så hög — en fast bar som täcker en tredjedel av skärmen
+     äter den yta uppsättningen behöver. Planera är dessutom en annan uppgift
+     (kvällen innan, inte på parkeringen) och ligger nu i sidflödet. */
+  bar.innerHTML = `<button class="big" id="start">Starta runda</button>`;
+  document.getElementById("start").onclick = starta;
 }
-Store.ready().then(rita);
+
+async function starta() {
+  /* Den frusna Pages-kopian får inte starta rundor (MOLN_PLAN §6 V4b).
+     Molnvägen är same-origin, så en runda spelad där laddas aldrig upp — och
+     det märks först den dag telefonen rensas. Spärren sitter HÄR och inte i
+     `Store.startRound`: en `startRound` som returnerar null hade kunnat vitna
+     sidor som utgår från att ett dokument finns. */
+  if (window.SGFlytt && SGFlytt.frusen()) {
+    alert("Appen har flyttat. Rundor som spelas här sparas inte i molnet — " +
+          "öppna nya appen på " + SGFlytt.mal + " först.");
+    location.href = SGFlytt.mal;
+    return;
+  }
+  const v = banval ? banval.las() : null;
+  if (!v) return;
+  /* Namnet kommer ur profilen (entrén frågade), med sg_player som fallback för
+     den som har ett namn kvar där sedan tidigare. Tomt namn STOPPAR INTE
+     rundstarten — det gick att fylla i under Profil hela tiden, och spärren
+     var just det 2.1d-bis tog bort. */
+  let namn = "";
+  try { namn = (Store.profile() || {}).namn || ""; } catch (_) {}
+  namn = namn || localStorage.getItem("sg_player") || "";
+
+  localStorage.setItem("sg_tee", v.tee);
+  localStorage.setItem("sg_round", v.roundSeq);
+  localStorage.setItem("sg_level", String(v.niva));
+  // Bara ett RIKTIGT namn skrivs tillbaka. Ett tomt hade nollställt profilens
+  // namn och stämplat en ny `updatedAt` — vilket i synken (senast skrivna
+  // vinner) hade raderat namnet i molnet också.
+  if (namn) {
+    localStorage.setItem("sg_player", namn);
+    try { Store.setProfile({ namn }); } catch (_) {}
+  }
+  SGBanval.minnsBana(v.slug);
+
+  // Finns redan en aktiv runda (man backade ut hit) återanvänds den i stället
+  // för att en ny startas — samma regel som förut.
+  const doc = Store.active() || Store.startRound({
+    player: namn, courseSlug: v.slug, courseName: v.courseName,
+    roundSeq: v.roundSeq, tee: v.tee, loggingLevel: v.niva,
+  });
+  doc.player = namn;
+  doc.courseName = v.courseName;
+  doc.tee = v.tee;
+  Store.setLevel(v.niva);      // även när en pausad runda återupptas med nytt val
+  Store.touch();
+  // Beständig lagring begärs vid en användargest, aldrig i onboardingen (§9.1.11)
+  Store.requestPersist();
+  // Vyn sätts HÄR: spela.html visar hål-vyn direkt, utan att blinka förbi något.
+  try { localStorage.setItem("sg_view", "hole"); } catch (_) {}
+  /* INVÄNTA SKRIVNINGEN. `startRound` sätter dokumentet synkront i minnet men
+     IndexedDB-skrivningen är asynkron, och här navigerar vi bort från sidan.
+     Utan detta hydrerar spela.html en Store utan aktiv runda och skickar
+     tillbaka hit — rundan ser ut att inte ha startat. Uppmätt i webbläsaren
+     2026-08-20; buggen fanns inte förut därför att setup-vyn låg i SAMMA sida
+     som slagloggningen och aldrig navigerade. */
+  await Store.saved();
+  location.href = "./spela.html";
+}
+
+/* ---------- rendering ---------- */
+function rita() {
+  const bv = document.getElementById("banval");
+  if (bv && !banval) {
+    bv.innerHTML = SGBanval.html();
+    banval = SGBanval.montera(bv);
+  }
+  ritaStartbar();
+  ritaSenaste();
+  const b = document.getElementById("boll");
+  if (b && typeof Boll !== "undefined") {
+    Boll.kort(b).then(subtext).catch(e => console.warn("[Spelet] bollen", e));
+  }
+}
+
+/* "Hämta senaste avslutade rundan igen" — en fil-export som bodde på
+   setup-vyn i spela.html och följde med hit när den vyn flyttade. Villkoret är
+   detsamma som förut: den syns bara när INGEN runda pågår, för mitt i en runda
+   är den senast avslutade inget man håller på med. */
+function ritaSenaste() {
+  const el = document.getElementById("senaste");
+  if (!el) return;
+  if (Store.active()) { el.innerHTML = ""; return; }
+  Store.list({ limit: 20 }).then(rader => {
+    const r = rader.find(x => x.status === "finished");
+    if (!r) return;
+    return Store.get(r.id).then(doc => {
+      if (!doc) return;
+      el.innerHTML = `<button class="lank" id="relast">Hämta senaste avslutade rundan igen</button>`;
+      document.getElementById("relast").onclick = () => {
+        const json = JSON.stringify(Store.export(doc), null, 1);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+        a.download = "mobilrunda_senaste.json"; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      };
+    });
+  }).catch(() => {});
+}
+
+/* Min rad i spelarkatalogen (inbjudan.js) hålls färsk härifrån: det är den sida
+   där man är på väg att spela med andra. Tyst vid fel — man kan fortfarande
+   bjuda in, det är att BLI hittad som kräver raden. */
+function synkaKatalog() {
+  if (typeof Inbjudan === "undefined" || !Inbjudan.tillganglig()) return;
+  const p = Store.profile() || {};
+  if (!p.namn) return;
+  Inbjudan.synkaMig({ namn: p.namn }).catch(() => {});
+}
+
+Store.ready().then(() => { rita(); synkaKatalog(); });
+// pageshow och inte load: iOS serverar bakåtnavigering ur bfcache, och då körs
+// aldrig skripten om. Banvalet monteras bara en gång (banval-vakten ovan).
 window.addEventListener("pageshow", () => Store.ready().then(rita));
 </script>
 <script>

@@ -32,6 +32,8 @@ data/holes3d/
 CLAUDE.md
 GPS_ACCURACY_PLAN.md
 serve.ps1
+sql/
+tests/
 .github/
 .claude/
 _arkiv/

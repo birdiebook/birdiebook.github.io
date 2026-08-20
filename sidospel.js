@@ -122,7 +122,11 @@
   function migHcp() { return Store.hcpForBerakning(); }
   function mig() {
     const p = Store.profile() || {};
-    return { hcpIndex: migHcp().value, kon: p.kon || null };
+    /* Namnet följer med sedan bollkortet (boll.js) började skriva ut det: förut
+       skickades det inte, och `fromRound` föll då tillbaka på "Du" — så samma
+       spelare hette olika saker på två skärmar som ligger ett tryck isär.
+       Profilen är den enda sanningen om vad jag heter (§GP1 beslut 1). */
+    return { name: p.namn || null, hcpIndex: migHcp().value, kon: p.kon || null };
   }
 
   let visatHal = null;             // hålnummer i poäng-inmatningen
@@ -462,16 +466,29 @@
 
   /* Uppsättningen: ditt handicap, medspelarna, spelformen.
      Fungerar UTAN aktiv runda — doc får vara null (se filhuvudet). */
-  async function uppsattning(el) {
+  async function uppsattning(el, opts) {
     injiceraCss();
     if (!el) return;
+    opts = opts || {};
     el.classList.add("sidospel");
     const doc = Store.active();
     const B = await bana(doc);
     const a = adapter(B, doc);
     const R = körFormat(B, doc);
-    el.innerHTML = meHtml() + playersHtml(a) + formatHtml(a) + nettoVarning(R);
-    wireUppsattning(el, a, doc, () => uppsattning(el));
+    /* `baraFormat` ritar ENBART spelformsvalet, för Översikt.
+       Bakgrund: uppsättningen som helhet — ditt handicap, spelarlistan,
+       spelformen — flyttade eller försvann 2026-08-20. Handicapet bor i
+       profilen (för den som har appen) och i bollen (för den som inte har den);
+       spelarlistan ÄR bollen. Kvar utan hemvist blev spelformen, och den hör
+       hemma där ställningen syns: i Översikt. Att bara sluta rita den hade
+       tagit bort funktionen i smyg — `Store.setFormat` anropas ingen
+       annanstans än härifrån.
+
+       Utelämnas flaggan ritas hela kortet som förut. Ingen anropar det så i
+       dag, men formen är oförändrad och testerna vilar på den. */
+    el.innerHTML = (opts.baraFormat ? "" : meHtml() + playersHtml(a))
+                 + formatHtml(a) + nettoVarning(R);
+    wireUppsattning(el, a, doc, () => uppsattning(el, opts));
     return { players: a.players.length };
   }
 

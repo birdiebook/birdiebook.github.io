@@ -68,8 +68,11 @@
   /* Sidor som hör till ett läge utan att vara lägets huvudvy markerar sin
      hemvist, så användaren ser var i appen hen står i stället för ingenting. */
   const HOR_UNDER = {
-    // Uppsättningen är ett steg före rundläget (§2.1 beslut 1).
-    "uppsattning.html": "spela.html",
+    /* uppsattning.html stod här och pekade på spela.html så länge den var ett
+       STEG i spelläget. Sedan 2026-08-20 är den en GRIND före flikarna: den ska
+       inte tända "Logga slag" i flikraden, för då säger navigationen att man
+       står i rundan när man står före den. Den får därför bara vägen hem —
+       samma som planera och analys. */
     "redigera.html": "spela.html",
     "oversikt-analys.html": "oversikt.html",
   };

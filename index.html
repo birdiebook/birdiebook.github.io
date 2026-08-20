@@ -116,6 +116,25 @@
   .pagaende .namn { font-size:19px; font-weight:800; }
   .pagaende .txt { font-size:13px; font-weight:600; opacity:.85; margin-top:4px; }
 
+  /* Inbjudan till en boll. Ligger överst men är MEDVETET inte fylld accent —
+     den ytan äger "fortsätt rundan" ensam (se kommentaren ovan). En inbjudan
+     är angelägen, inte pågående: konturen bär accenten, inte ytan. */
+  .inbjudan { border:1px solid var(--accent); border-radius:22px;
+    background:rgba(255,255,255,.10); padding:16px 18px; margin-bottom:14px; }
+  .inbjudan .vem { font-size:17px; font-weight:800; }
+  .inbjudan .vad { font-size:14px; margin-top:4px; color:#cfe6d8; }
+  .inbjudan .knappar { display:flex; gap:10px; margin-top:14px; }
+  .inbjudan button { flex:1; font-family:inherit; font-size:15px; font-weight:700;
+    padding:12px 10px; border-radius:12px; border:0; }
+  .inbjudan .ja { background:var(--accent); color:var(--accent-ink); }
+  .inbjudan .nej { background:rgba(255,255,255,.14); color:#eaf6ee; }
+  .inbjudan .fel { color:#ffbdb3; font-size:13px; margin-top:10px; }
+
+  /* Vägen till grinden under en pågående runda. Dämpad med flit — den är en
+     utväg, inte ett erbjudande. */
+  .redigera { display:block; text-align:center; text-decoration:none;
+    color:#a9c9b6; font-size:14px; padding:2px 0 16px; margin-top:-12px; }
+
   /* Foten: golfaren ur loggan i en ring, som konceptbilden. Ringen är öppen
      (streckad krans med ett hopp) — dekor, ingen mätare. */
   /* Ringen krymper när kortet för pågående runda är framme — annars trycks
@@ -146,9 +165,18 @@
   <h1>Birdiebook</h1>
   <p class="sub">Strokes gained-analys på riktigt</p>
 
+  <!-- Inbjudningar ligger ÖVER "fortsätt rundan": en inbjudan är färskvara
+       (någon står på parkeringen och väntar på svar), en pågående runda är det
+       inte. -->
+  <div id="inbjudningar"></div>
+
   <div id="pagaende"></div>
 
-  <a class="val primar" href="./spela.html">
+  <!-- Spela leder till GRINDEN (uppsattning.html), inte rakt in i
+       slagloggningen: bana, boll och tee-tid är frågor man svarar på FÖRE
+       flikarna, inte inuti dem. Pågår redan en runda kortsluter kortet överst
+       hit in i spela.html, så vägen in i en igångvarande runda är oförändrad. -->
+  <a class="val primar" href="./uppsattning.html">
     <span class="rad">
       <!-- Ikonerna är inline-SVG, inte emoji: emoji ritas av systemet och blev
            olika på iOS/Android (och färgade, mot en design som är enfärgad). -->
@@ -232,6 +260,12 @@
 <script src="./score.js"></script>
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
+<!-- Inbjudningar på hubben (sql/inbjudan.sql). supabase-js och live.js ligger
+     redan i shell-cachen, så de kostar ingen nätrunda här; saknas de ändå
+     ritas inga kort och resten av hubben är opåverkad. -->
+<script src="./vendor/supabase-js.js"></script>
+<script src="./live.js"></script>
+<script src="./inbjudan.js"></script>
 <script>
 "use strict";
 /* Hubben — appens rot (APPSTORE_PLAN §2.1, §2.8.0/§2.8.3).
@@ -284,10 +318,17 @@ function ritaPagaende() {
   if (!doc) { el.innerHTML = ""; return; }
   const bana = doc.courseName || "";
   const hal = doc.current || 1;
+  /* "Redigera spel" är den ENDA vägen tillbaka till uppsättningen under en
+     runda, och den är medvetet lite trög: ⌂ Start först, sedan hit. Mitt i en
+     runda ska man inte snubbla in i banvalet — men när någon ansluter på hål
+     sju ska det gå på två tryck. Länken ligger utanför det gröna kortet så den
+     inte konkurrerar med "fortsätt": det är fortfarande rundan man vill in i
+     nio gånger av tio. */
   el.innerHTML = `<a class="pagaende" href="./spela.html">
     <div class="namn">▶ Fortsätt rundan</div>
     <div class="txt">${esc(bana)}${bana ? " · " : ""}hål ${hal}</div>
-  </a>`;
+  </a>
+  <a class="redigera" href="./uppsattning.html">Redigera spel — lägg till spelare, byt tee</a>`;
 }
 /* Profil-ringen som mätare: hur långt kransen är fylld = hur stor del av
    profilen som är besvarad. Definitionen av "besvarad" ligger i Spelprofil
@@ -309,9 +350,84 @@ function ritaProfilring() {
   if (lank) lank.setAttribute("aria-label",
     `Profil och inställningar — ${f.klara} av ${f.totalt} ifyllt`);
 }
-function rita() { ritaPagaende(); ritaProfilring(); }
+/* ---------- inbjudningar (inbjudan.js) ----------
+   MOTTAGARENS HALVA av "bjud in på namn". Värden söker upp dig i katalogen och
+   trycker bjud in; det här är kortet som gör att du får veta det utan att någon
+   läser upp en spelkod.
+
+   Kortet ritas ALLTID vid sidvisning och dessutom på realtidshändelser —
+   prenumerationen är en förbättring, aldrig den enda vägen (samma hållning som
+   subscribePins i live.js). Utan nät finns inga inbjudningar att visa, och då
+   är ytan tom i stället för trasig. */
+let inbjudanFel = "";
+async function ritaInbjudningar() {
+  const el = document.getElementById("inbjudningar");
+  if (!el) return;
+  if (typeof Inbjudan === "undefined" || !Inbjudan.tillganglig()) { el.innerHTML = ""; return; }
+  let rader = [];
+  try { rader = await Inbjudan.mina(); } catch (_) { return; }
+  if (!rader.length) { el.innerHTML = ""; return; }
+  const tid = iso => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    const p = n => String(n).padStart(2, "0");
+    const idag = new Date().toDateString() === d.toDateString();
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + (idag ? "" : " imorgon");
+  };
+  el.innerHTML = rader.map(r => {
+    // Bana och tee-tid är hela skillnaden mot en naken spelkod: utan dem är en
+    // inbjudan bara fyra tecken man ska lita på.
+    const delar = [r.bana, tid(r.tee_time)].filter(Boolean).join(" · ");
+    return `<div class="inbjudan" data-inb="${esc(r.id)}">
+      <div class="vem">${esc(r.fran_namn)} bjöd in dig att spela</div>
+      <div class="vad">${esc(delar || "Ingen bana angiven ännu")}</div>
+      <div class="knappar">
+        <button class="ja" data-ja="${esc(r.id)}">Gå med</button>
+        <button class="nej" data-nej="${esc(r.id)}">Avböj</button>
+      </div>
+      ${inbjudanFel ? `<div class="fel">${esc(inbjudanFel)}</div>` : ""}
+    </div>`;
+  }).join("");
+
+  const arbeta = async (btn, id, ja) => {
+    btn.disabled = true;
+    btn.textContent = ja ? "Går med …" : "Avböjer …";
+    inbjudanFel = "";
+    const r = await Inbjudan.svara(id, ja);
+    if (!r.ok) {
+      inbjudanFel = r.fel || "Något gick fel. Prova igen.";
+      return ritaInbjudningar();
+    }
+    if (!ja) return ritaInbjudningar();
+    /* Matchen läggs in LOKALT här, inte först när spela.html öppnas: gör man
+       inte det landar man på uppsättningen utan att vara med i något, och den
+       enda ledtråden vore att kortet försvunnit. */
+    const nuvarande = Store.match();
+    if (nuvarande && nuvarande.gameId && nuvarande.gameId !== r.gameId &&
+        !confirm("Du är redan med i en annan match. Byta till den nya?")) {
+      return ritaInbjudningar();
+    }
+    await Store.setMatch(Object.assign({}, nuvarande || {},
+      { gameId: r.gameId, code: r.kod, teeTime: r.teeTime || null,
+        displayName: (Store.profile() || {}).namn || "" }));
+    location.href = "./spela.html";
+  };
+  el.querySelectorAll("[data-ja]").forEach(b => {
+    b.onclick = () => arbeta(b, b.dataset.ja, true);
+  });
+  el.querySelectorAll("[data-nej]").forEach(b => {
+    b.onclick = () => arbeta(b, b.dataset.nej, false);
+  });
+}
+
+function rita() { ritaPagaende(); ritaProfilring(); ritaInbjudningar(); }
 Store.ready().then(rita);
 window.addEventListener("pageshow", () => Store.ready().then(rita));
+/* Realtid: kortet ska kunna dyka upp medan telefonen ligger på bordet. */
+if (typeof Inbjudan !== "undefined" && Inbjudan.tillganglig()) {
+  Inbjudan.prenumerera(() => { ritaInbjudningar().catch(() => {}); });
+}
 </script>
 <script>
 /* Håll navigeringen inne i hemskärms-appen (iOS standalone): utan detta öppnar
