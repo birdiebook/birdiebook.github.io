@@ -13,14 +13,18 @@ Vid start:
 
 ```
 git fetch --all --prune
-git for-each-ref --sort=-committerdate \
-  --format='%(committerdate:short) %(refname:short) %(contents:subject)' \
-  refs/remotes/origin | head
+for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+           | grep -v 'HEAD\|/master$'); do          # master: se sista stycket
+  n=$(git rev-list --count origin/main..$b)
+  [ "$n" != 0 ] && echo "$n commits utanför main: $b"
+done
 ```
 
-Är någon gren nyare än `origin/main` har en tidigare session inte städat efter
-sig. **Säg det till användaren innan du börjar bygga** — annars bygger du på en
-gammal bas och skapar nästa konflikt.
+Fråga inte "vilken gren är nyast" — en mergad gren ligger kvar med samma datum
+som `main` och ser nyare ut än den är. Frågan är vad som ligger **utanför**
+`main`. Får du träffar har en tidigare session inte städat efter sig: **säg det
+till användaren innan du börjar bygga**, annars bygger du på en gammal bas och
+skapar nästa konflikt.
 
 När arbetet är klart: merga till `main` och pusha `main`. Att lämna arbetet
 enbart på en sessionsgren är att gömma det. Nästa session klonar `main` och ser
