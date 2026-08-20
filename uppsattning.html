@@ -97,9 +97,6 @@
 
   <div class="card" id="banval"></div>
   <div id="boll"></div>
-  <!-- Ingen .card här: sidospel.js ritar sina egna kort (handicap, spelform),
-       och en ram runt dem blir kort-i-kort. Samma skäl som #boll ovan. -->
-  <div id="sidospel"></div>
   <a class="planera" href="./planera.html">🗓 Planera runda</a>
   <div id="senaste"></div>
 </div>
@@ -113,8 +110,6 @@
 <script src="./spelprofil.js"></script>
 <script src="./store.js"></script>
 <script src="./banval.js"></script>
-<script src="./spelformer.js"></script>
-<script src="./sidospel.js"></script>
 <script src="./vendor/supabase-js.js"></script>
 <script src="./live.js"></script>
 <script src="./inbjudan.js"></script>
@@ -143,10 +138,26 @@
  * knappen i botten skepnad till "Fortsätt rundan" — grinden startar aldrig en
  * andra runda ovanpå en pågående.
  *
- * TRE KORT, tre frågor, i den ordning man faktiskt svarar på dem:
+ * TVÅ KORT, två frågor:
  *   1. banval.js   var spelar ni
  *   2. boll.js     vilka är med (+ tee-tid)
- *   3. sidospel.js ditt handicap och spelformen — reglerna, inte deltagarna
+ *
+ * VAD SOM INTE FRÅGAS HÄR, och varför:
+ *
+ *   Handicap. Det bor i SPELARPROFILEN för den som har appen (§GP1 beslut 1:
+ *   en sanning per uppgift om spelaren) och matas in i bollen för den som inte
+ *   har den — där man ändå skriver in namnet. Ett hcp-fält på grinden vore ett
+ *   tredje ställe samma tal kan stå på, och det tredje stället vinner alltid
+ *   den dag talen skiljer sig åt.
+ *
+ *   Spelform. Poäng och netto räknas som förut av `spelformer.js`; valet av
+ *   FORMAT flyttade till Översikt, där ställningen faktiskt syns. Det hör inte
+ *   till frågan "vilka spelar" och ska inte stå mellan spelaren och startknappen.
+ *
+ *   Loggningsnivå. En inställning som gäller över tid, inte ett val i
+ *   ögonblicket — samma skäl som flyttade offline-banorna och
+ *   kartinställningarna till Profil (§2.1d). Rundan kan fortfarande byta nivå i
+ *   avslutsvyn.
  */
 
 /* Ingen `esc` här: sidan skriver bara textContent (subtexten) och låter
@@ -260,9 +271,6 @@ function rita() {
   if (b && typeof Boll !== "undefined") {
     Boll.kort(b).then(subtext).catch(e => console.warn("[Spelet] bollen", e));
   }
-  // Spelformen och handicapet — men INTE spelarlistan: den äger bollen ovan.
-  return Sidospel.uppsattning(document.getElementById("sidospel"),
-                              { utanSpelare: true });
 }
 
 /* "Hämta senaste avslutade rundan igen" — en fil-export som bodde på

@@ -57,6 +57,14 @@
   .chip.utvag { border-style:dashed; color:var(--dim); }
   .chip.utvag.on { color:var(--accent-ink); border-style:solid; }
 
+  /* Nivåväljaren kommer ur banval.js med klassen .field — profilsidan har inte
+     haft ett fritt <select> förut, bara .falt-radernas. Samma yta och samma
+     färger som dem, så kortet inte ser ut att komma från en annan app. */
+  select.field { width:100%; min-height:44px; background:#0e3326; color:var(--ink);
+    border:1px solid var(--line); border-radius:11px; padding:10px 12px;
+    font:inherit; font-size:15px; }
+  #nivaval label { display:none; }
+
   .knappar { display:flex; gap:10px; margin-top:6px; }
   .btn { flex:1; appearance:none; border:0; border-radius:12px; min-height:48px;
     background:var(--accent); color:var(--accent-ink); font:800 15px inherit; cursor:pointer; }
@@ -133,6 +141,9 @@
 <!-- Spelarkatalogen (sql/inbjudan.sql). Måste ligga efter live.js — den lånar
      den delade supabase-klienten. -->
 <script src="./inbjudan.js"></script>
+<!-- Loggningsnivån (SGBanval.nivaHtml). Flyttade hit från uppsättningen
+     2026-08-20, samma skäl som offline-banorna: en inställning över tid. -->
+<script src="./banval.js"></script>
 <!-- Molnets läsväg (MOLN_PLAN §6 V4a): en lyckad inloggning HÄR ska hämta hem
      hela historiken direkt, inte vänta till nästa gång spela.html öppnas. -->
 <script src="./version.js"></script>
@@ -308,6 +319,16 @@ function sammanfattningHtml(profil) {
         <span class="knob"></span>
       </button>
     </div>
+    <!-- Loggningsnivån. Låg i uppsättningen och frågades därmed inför VARJE
+         runda, fast svaret nästan aldrig ändras — och den gjorde grindens
+         översta kort dubbelt så högt som sina svar. Rundan kan fortfarande
+         byta nivå i avslutsvyn; det här är förvalet nya rundor startar på. -->
+    <div class="card">
+      <h2>Loggning</h2>
+      <div id="nivaval"></div>
+      <p class="hint" style="margin-top:8px">Gäller nya rundor. Full loggning är
+        det enda som ger Strokes Gained — de andra sparar batteri.</p>
+    </div>
     <!-- Offline-banor bor i Profil (APPSTORE_PLAN §2.1d, beslut 2026-08-02):
          det är en INSTÄLLNING som gäller över tid, inte ett val i ögonblicket.
          I uppsättningen hade den blivit en fråga varje gång man ska spela; i
@@ -340,9 +361,25 @@ function render() {
   app.innerHTML = steg ? guideHtml(profil) : sammanfattningHtml(profil);
   // Offline-banorna finns bara i sammanfattningen, inte mitt i guiden.
   if (!steg && window.SGOffline) SGOffline.mount("offline-tools");
+  if (!steg) monteraNiva();
   if (!steg) monteraKonto();
   if (!steg) monteraKatalog();
   koppla(profil);
+}
+
+/* ---------- loggningsnivå (banval.js) ----------
+   Markupen kommer ur SGBanval så alternativen — och pausningen av nivå 2 —
+   bara finns på ETT ställe. Skrivs direkt till `sg_level` vid val: samma
+   nyckel som rundstarten läser, och samma "varje tryck sparar"-hållning som
+   resten av profilsidan. */
+function monteraNiva() {
+  const el = document.getElementById("nivaval");
+  if (!el || typeof SGBanval === "undefined") return;
+  el.innerHTML = SGBanval.nivaHtml();
+  const sel = el.querySelector("#lvl");
+  if (!sel) return;
+  sel.value = String(SGBanval.sparadNiva());
+  sel.onchange = () => { localStorage.setItem("sg_level", sel.value); };
 }
 
 /* ---------- hittas av andra (inbjudan.js) ----------

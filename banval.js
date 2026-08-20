@@ -76,24 +76,49 @@ const SGBanval = (() => {
     return !!(d && d.loggingLevel === 2);
   }
 
-  /* ---------- markup ---------- */
-  function html() {
+  /* ---------- markup ----------
+     ETT ORD PER ETIKETT. Fälten hette "Vilken runda spelar du? (för hålkartan)"
+     och "Vilken tee spelar du från? (för utslags-analys)" — meningar som
+     förklarar vad appen gör med svaret. Den förklaringen behövs en gång, inte
+     varje gång man ska ut och spela, och tre sådana rader ovanför varandra gör
+     ett kort som är dubbelt så högt som sina tre svar.
+
+     `medNiva` lägger tillbaka loggningsväljaren för en värd som vill ha den.
+     Grinden vill det INTE: nivån är en inställning som gäller över tid och bor
+     i Profil (§2.1d, samma beslut som flyttade offline-banorna och
+     kartinställningarna dit). Rundan kan fortfarande byta nivå i avslutsvyn. */
+  function html(opts) {
+    opts = opts || {};
     return `
       <label>Bana</label>
       <div class="cpick">
         <input type="text" class="field" id="courseSearch" placeholder="Sök bana …" autocomplete="off">
         <div class="cpick-list" id="courseList"></div>
       </div>
-      <label>Vilken runda spelar du? <span style="color:var(--dim)">(för hålkartan)</span></label>
+      <label>Slinga</label>
       <select class="field" id="round"></select>
-      <label>Vilken tee spelar du från? <span style="color:var(--dim)">(för utslags-analys)</span></label>
+      <label>Tee</label>
       <select class="field" id="tee"></select>
-      <label>Hur mycket vill du logga? <span style="color:var(--dim)">(går att ändra under rundan)</span></label>
+      ${opts.medNiva ? nivaHtml() : ""}`;
+  }
+
+  /* Loggningsväljaren som egen bit, så Profil kan rita den utan att också få
+     en banväljare. Samma id (`lvl`) och samma alternativ som förut. */
+  function nivaHtml() {
+    return `<label>Loggning</label>
       <select class="field" id="lvl">
         <option value="3">Full — GPS-position per slag (ger Strokes Gained)</option>
         ${niva2Valbar() ? `<option value="2">Score + statistik — puttar, fairway, green</option>` : ""}
         <option value="1">Bara score</option>
       </select>`;
+  }
+
+  /* Den sparade nivån, sanerad. EN väg till talet, så grinden (som inte ritar
+     väljaren) och Profil (som gör det) aldrig kan råka tolka `sg_level` olika. */
+  function sparadNiva() {
+    let v = localStorage.getItem("sg_level");
+    if (v === "2" && !niva2Valbar()) v = "3";
+    return (v === "1" || v === "2") ? +v : 3;
   }
 
   /* ---------- montering ----------
@@ -111,10 +136,13 @@ const SGBanval = (() => {
     // Loggningsnivån minns valet från förra rundan (default full loggning).
     // Har spelaren nivå 2 sparad medan den är pausad faller vi tillbaka på full
     // loggning i stället för att låta <select> tyst välja första alternativet.
+    // Väljaren är valfri (se `html`). Finns den inte styr `sparadNiva()` ensam.
     if (lvlSel) {
-      let sparad = localStorage.getItem("sg_level");
-      if (sparad === "2" && !niva2Valbar()) sparad = "3";
-      lvlSel.value = (sparad === "1" || sparad === "2") ? sparad : "3";
+      lvlSel.value = String(sparadNiva());
+      lvlSel.onchange = () => {
+        localStorage.setItem("sg_level", lvlSel.value);
+        if (opts.onChange) opts.onChange(las());
+      };
     }
 
     const aktivMeta = SGRound.meta || SGRound.BURLOV_DEFAULT;
@@ -230,12 +258,12 @@ const SGBanval = (() => {
       return { slug: (meta && meta.slug) || SGRound.activeSlug(), meta,
                courseName: (meta && meta.name) || SGRound.courseName(),
                roundSeq: roundSel.value, tee: teeSel.value,
-               niva: lvlSel ? +lvlSel.value : 3 };
+               niva: lvlSel ? +lvlSel.value : sparadNiva() };
     }
     return { las, ritaLista, stang };
   }
 
-  return { html, montera, laddaRegistry, metaBySlug,
+  return { html, nivaHtml, sparadNiva, montera, laddaRegistry, metaBySlug,
            pushHistorik, lasHistorik, sparaHistorik, minnsBana,
            niva2Valbar, NIVA2_PAUSAD };
 })();

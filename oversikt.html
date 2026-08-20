@@ -300,6 +300,12 @@ function sallskapHtml() {
 function ritaSidospel() {
   const el = document.getElementById("sidospel");
   if (el && window.Sidospel) Sidospel.runda(el);
+  /* Spelformsvalet bor här sedan uppsättningen blev en grind (2026-08-20).
+     Grinden svarar på "var" och "vilka"; VILKET SPEL ni räknar hör ihop med
+     ställningen, och den står på den här sidan. Ritas ovanför ställningen, för
+     ett format man inte valt gör tabellen under tom. */
+  const f = document.getElementById("spelform");
+  if (f && window.Sidospel) Sidospel.uppsattning(f, { baraFormat: true });
 }
 
 async function render() {
@@ -317,6 +323,7 @@ async function render() {
     app.innerHTML = `<h1>Översikt</h1>
       <p class="sub">Live-scorekort under rundan</p>
       ${sallskapHtml()}
+      <div id="spelform"></div>
       <div id="sidospel"></div>
       ${emptyView()}`;
     ritaSidospel();
@@ -325,6 +332,7 @@ async function render() {
   app.innerHTML = `<h1>Översikt</h1>
     <p class="sub">runda ${roundName} · live</p>
     ${sallskapHtml()}
+    <div id="spelform"></div>
     <div id="sidospel"></div>
     ${scorecardHtml()}`;
   ritaSidospel();

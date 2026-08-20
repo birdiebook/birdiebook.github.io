@@ -475,13 +475,18 @@
     const B = await bana(doc);
     const a = adapter(B, doc);
     const R = körFormat(B, doc);
-    /* `utanSpelare` för grinden (uppsattning.html): där äger `boll.js`
-       spelarlistan, och två listor över samma sällskap på samma skärm vore
-       inte bara brus — det vore två svar på frågan vem som är med, precis det
-       §9.1.4 finns för att förhindra. Spelformen och handicapet hör däremot
-       hemma här, för de är regler och inte deltagare.
-       Utelämnas flaggan ritas kortet som förut. */
-    el.innerHTML = meHtml() + (opts.utanSpelare ? "" : playersHtml(a))
+    /* `baraFormat` ritar ENBART spelformsvalet, för Översikt.
+       Bakgrund: uppsättningen som helhet — ditt handicap, spelarlistan,
+       spelformen — flyttade eller försvann 2026-08-20. Handicapet bor i
+       profilen (för den som har appen) och i bollen (för den som inte har den);
+       spelarlistan ÄR bollen. Kvar utan hemvist blev spelformen, och den hör
+       hemma där ställningen syns: i Översikt. Att bara sluta rita den hade
+       tagit bort funktionen i smyg — `Store.setFormat` anropas ingen
+       annanstans än härifrån.
+
+       Utelämnas flaggan ritas hela kortet som förut. Ingen anropar det så i
+       dag, men formen är oförändrad och testerna vilar på den. */
+    el.innerHTML = (opts.baraFormat ? "" : meHtml() + playersHtml(a))
                  + formatHtml(a) + nettoVarning(R);
     wireUppsattning(el, a, doc, () => uppsattning(el, opts));
     return { players: a.players.length };
