@@ -734,7 +734,8 @@ const Store = (() => {
     if (match) return match;
     match = { id: uuid(), local: true, gameId: null, code: null, displayName: "",
               format: null, wolf: {}, myRoundId: doc ? doc.id : null,
-              participants: [], createdAt: nowIso(), endedAt: null };
+              participants: [], teeTime: null,
+              createdAt: nowIso(), endedAt: null };
     if (doc) { doc.matchId = match.id; flush(); }
     else minnsVantandeMatch(match.id);   // ingen runda att hänga den på ännu
     writeMatch();
@@ -841,13 +842,50 @@ const Store = (() => {
      och regelkärnan säger det i stället för att gissa. */
   function addPlayer(p) {
     const m = ensureMatch();
-    const spelare = { id: uuid(), marker: true, name: (p && p.name) || "Medspelare",
+    const spelare = { id: uuid(), marker: true, uid: null, status: "utan-app",
+                      name: (p && p.name) || "Medspelare",
                       hcpIndex: p && p.hcpIndex != null ? p.hcpIndex : null,
                       tee: (p && p.tee) || null, kon: (p && p.kon) || null,
                       scores: {} };
     m.participants.push(spelare);
     writeMatch();
     return spelare;
+  }
+
+  /* En INBJUDEN spelare — hen har appen och för sin egen score.
+     `marker: false` är hela skillnaden och den är avsiktligt hård: `markers()`
+     styr både score-inmatningen och sidospelets spelarlista, och en inbjuden
+     ska inte kunna få en handknappad score bakom ryggen på sin egen GPS-loggade
+     runda. Deras siffror kommer ur molnet (`hole_scores`), inte härifrån.
+
+     Samma `participants`-lista som markörerna (§9.1.4: EN lista, så frågan
+     "vem är med" aldrig får två svar). Uppgraderingsvägen åt andra hållet —
+     markör som skaffar appen — är samma rad som får ett `uid`. */
+  function addInvited(p) {
+    p = p || {};
+    const m = ensureMatch();
+    const fanns = m.participants.find(x => x && x.uid && x.uid === p.uid);
+    if (fanns) return fanns;                 // dubbeltryck ska inte ge två rader
+    const spelare = { id: uuid(), marker: false, uid: p.uid || null,
+                      status: p.status || "vantar",
+                      inbjudanId: p.inbjudanId || null,
+                      name: p.name || "Spelare",
+                      hcpIndex: null, tee: null, kon: null, scores: {} };
+    m.participants.push(spelare);
+    writeMatch();
+    return spelare;
+  }
+
+  /* Statusen är en molnfråga (svarade hen ja?) som ritas lokalt. Sätts av
+     `boll.js` när `Inbjudan.forSpel` svarat, så listan kan visa "väntar…" utan
+     att vyn måste slå ihop två datakällor vid varje rendering. */
+  function setPlayerStatus(id, status) {
+    if (!match || !match.participants) return false;
+    const p = match.participants.find(x => x && x.id === id);
+    if (!p || p.status === status) return false;
+    p.status = status;
+    writeMatch();
+    return true;
   }
 
   function updatePlayer(id, fn) {
@@ -879,6 +917,21 @@ const Store = (() => {
       else p.scores[holeN] = Math.round(brutto);
     });
   }
+
+  /* Tee-tiden hör till BOLLEN, inte till rundan. `doc.startedAt` finns redan
+     och betyder något annat: när du faktiskt tryckte start. Tee-tiden är
+     planerad och sätts gärna kvällen innan — alltså på matchen, som är det enda
+     objektet som lever före rundan (`ensureMatch` kräver ingen `doc`).
+
+     Lagras som ISO-datetime, aldrig som "08:12": en uppsättning gjord på
+     kvällen syftar på morgondagen, och en tid utan datum kan inte säga det. */
+  function setTeeTime(iso) {
+    const m = ensureMatch();
+    m.teeTime = iso || null;
+    writeMatch();
+    return m.teeTime;
+  }
+  const teeTime = () => (match && match.teeTime) || null;
 
   function setFormat(key, config) {
     const m = ensureMatch();
@@ -946,7 +999,9 @@ const Store = (() => {
     summary: indexRow,
     match: currentMatch, setMatch, removeMatch,
     // markörspelare + spelform (AS4)
-    ensureMatch, markers, addPlayer, updatePlayer, removePlayer, setPlayerScore,
+    ensureMatch, markers, addPlayer, addInvited, setPlayerStatus,
+    updatePlayer, removePlayer, setPlayerScore,
+    setTeeTime, teeTime,
     setFormat, format, setWolfChoice, wolfChoices,
     requestPersist, storageInfo,
     // interna, för tester (tests/js/test_store.mjs)

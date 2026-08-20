@@ -122,7 +122,11 @@
   function migHcp() { return Store.hcpForBerakning(); }
   function mig() {
     const p = Store.profile() || {};
-    return { hcpIndex: migHcp().value, kon: p.kon || null };
+    /* Namnet följer med sedan bollkortet (boll.js) började skriva ut det: förut
+       skickades det inte, och `fromRound` föll då tillbaka på "Du" — så samma
+       spelare hette olika saker på två skärmar som ligger ett tryck isär.
+       Profilen är den enda sanningen om vad jag heter (§GP1 beslut 1). */
+    return { name: p.namn || null, hcpIndex: migHcp().value, kon: p.kon || null };
   }
 
   let visatHal = null;             // hålnummer i poäng-inmatningen

@@ -207,6 +207,11 @@
 <script src="./store.js"></script>
 <script src="./live.js"></script>
 <script src="./konto.js"></script>
+<!-- Inbjudan på namn (sql/inbjudan.sql) och bollen som ersatte live-kortet.
+     inbjudan.js MÅSTE ligga efter live.js: den lånar den delade
+     supabase-klienten och ropar aldrig createClient själv. -->
+<script src="./inbjudan.js"></script>
+<script src="./boll.js"></script>
 <script src="./version.js"></script>
 <script src="./molnrunda.js"></script>
 <script>
@@ -639,63 +644,37 @@ function render() {
   if (view === "hole") TilePreload.forHole(S.current);
 }
 
-/* Live-kort på setup-vyn: skapa match / gå med (spelkod + namn) eller visa
-   aktuell match. Rör inget i rundflödet. */
-function liveCardHtml() {
-  const L = Live.state();
-  if (Live.inGame()) {
-    return `
-    <div class="card">
-      <label style="margin-top:0">Live-scoring</label>
-      <p class="hint">Du är med i matchen <b style="color:var(--ink);font-size:18px;letter-spacing:2px">${esc(L.code)}</b> som ${esc(L.displayName)}.
-        Din score skickas automatiskt medan du loggar. Dela koden med bollen.</p>
-      <div class="row" style="margin-top:10px">
-        <button class="ghost" id="liveLeave">Lämna live</button>
-        <button class="ghost" id="liveFinish">Avsluta live-match</button>
-      </div>
-      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
-    </div>`;
-  }
-  return `
-    <div class="card">
-      <label style="margin-top:0">Live-scoring <span style="color:var(--dim)">(valfritt)</span></label>
-      <p class="hint">För score tillsammans med bollen i realtid. Skapa en match och dela koden, eller gå med i en befintlig. Kräver ditt namn ovan.</p>
-      <label>Gå med i match (spelkod)</label>
-      <div class="row">
-        <input type="text" id="liveCode" placeholder="T.ex. K4RT" autocomplete="off"
-          autocapitalize="characters" style="text-transform:uppercase">
-        <button class="ghost" id="liveJoin" style="flex:none;padding:12px 18px">Gå med</button>
-      </div>
-      <button class="big" id="liveCreate" style="background:#1a4c38;color:var(--ink)">Skapa ny match</button>
-      <div class="tstatus" id="liveMsg" style="margin-top:8px"></div>
-    </div>`;
+/* BOLLEN på uppsättningsvyn (boll.js) — ersatte live-scoring-kortet.
+ *
+ * Kortet frågade "vill du använda live-scoring?", och det är ett tekniskt val
+ * som en spelare inte har någon anledning att ha en åsikt om: spelar ni
+ * tillsammans är svaret alltid ja. Frågan hen faktiskt har är VILKA SOM ÄR MED,
+ * och matchen i molnet är svaret på den — inte ett eget beslut. Därför skapas
+ * matchen numera implicit av första inbjudan (se `Boll.sakraSpel`), och
+ * "Skapa ny match"-knappen finns inte längre.
+ *
+ * `Live` nedan är ORÖRD: den pushar score och pin under rundan och läser
+ * matchen ur Store precis som förut. Det var bara uppsättningens UI som byttes.
+ *
+ * Lämna/avsluta match följde med in i bollkortets fot (boll.js `foterHtml`) och
+ * dyker upp först när man FAKTISKT är med i en match — förut stod de på en
+ * setup-vy där de för det mesta inte hade något att göra. */
+function ritaBoll() {
+  const el = document.getElementById("boll");
+  if (!el || typeof Boll === "undefined") return;
+  Boll.kort(el).catch(e => console.warn("[spela] bollen kunde inte ritas", e));
 }
-function wireLiveCard() {
-  const msg = document.getElementById("liveMsg");
-  const say = (t, ok) => { if (msg) msg.innerHTML = ok ? `<span class="ok">${esc(t)}</span>` : esc(t); };
-  const run = async (btn, fn, working) => {
-    const old = btn.textContent; btn.disabled = true; btn.textContent = working;
-    try { await fn(); renderSetup(); }
-    catch (e) { say(e.message || "Något gick fel."); btn.disabled = false; btn.textContent = old; }
-  };
-  const create = document.getElementById("liveCreate");
-  if (create) create.onclick = e => run(e.currentTarget, () => Live.create(), "Skapar …");
-  const join = document.getElementById("liveJoin");
-  if (join) join.onclick = e => {
-    const code = (document.getElementById("liveCode").value || "").trim();
-    if (!code) { say("Ange en spelkod."); return; }
-    run(e.currentTarget, () => Live.join(code), "Går med …");
-  };
-  const leave = document.getElementById("liveLeave");
-  if (leave) leave.onclick = () => {
-    if (!confirm("Lämna live-matchen? Din runda och score påverkas inte.")) return;
-    Live.leave(); renderSetup();
-  };
-  const finish = document.getElementById("liveFinish");
-  if (finish) finish.onclick = e => {
-    if (!confirm("Avsluta matchen för alla? Ingen mer live-score tas emot.")) return;
-    run(e.currentTarget, () => Live.finish(), "Avslutar …");
-  };
+
+/* Min rad i spelarkatalogen (inbjudan.js) hålls färsk härifrån: uppsättningen
+   är den sida där man ändå är på väg att spela med andra, och en katalograd som
+   bara skrivs vid kontoskapandet skulle bära ett gammalt namn för evigt.
+   Misslyckas den händer ingenting synligt — man kan fortfarande bjuda in, det
+   är att BLI hittad som kräver raden. */
+function synkaKatalog() {
+  if (typeof Inbjudan === "undefined" || !Inbjudan.tillganglig()) return;
+  const p = Store.profile() || {};
+  if (!p.namn) return;
+  Inbjudan.synkaMig({ namn: p.namn }).catch(() => {});
 }
 
 function renderSetup() {
@@ -732,6 +711,10 @@ function renderSetup() {
       <button class="big" id="start">Starta runda</button>
       <a class="big" href="./planera.html" style="display:block;text-align:center;text-decoration:none;margin-top:10px;background:#1a4c38;color:var(--ink)">🗓 Planera runda</a>
     </div>
+    <!-- Bollen ligger DIREKT under banvalet, före hjälptexten: "vilka är med"
+         är en fråga man svarar på när man sätter upp rundan, inte något man
+         letar rätt på under en instruktion man läst en gång. -->
+    <div id="boll"></div>
     <div class="card hint">
       <b>Så funkar det</b><br>
       1. Stå vid bollen inför varje slag och tryck <b>SLAG</b> (även på tee).<br>
@@ -740,9 +723,8 @@ function renderSetup() {
       4. Plikt? Öka <b>Plikt</b>-räknaren. Chip-in? Bocka i <b>I hål utan putt</b>.<br>
       5. Efter rundan: <b>Granska &amp; avsluta runda</b> → <b>Spara &amp; avsluta</b>.
     </div>
-    ${liveCardHtml()}
     ${last ? '<button class="link" id="relast">Hämta senaste avslutade rundan igen</button>' : ""}`;
-  wireLiveCard();
+  ritaBoll();
   // Offline-nedladdningen flyttade till Profil i AS-IA steg 3 (§2.1d): den är
   // en inställning som gäller över tid, inte ett val man gör inför varje runda.
 
@@ -1229,6 +1211,7 @@ window.addEventListener("online", () => {
 Store.ready().then(() => {
   if (typeof Moln !== "undefined") Moln.svep();
   if (typeof Moln !== "undefined") Moln.hamta().catch(() => {});
+  synkaKatalog();          // så andra hittar mig på namn (inbjudan.js)
   S = Store.active() || draftState();
   // äldre versioner kunde få in globala hålnummer (10–27) via kartan — migrera
   SGRound.migrateSgHole();

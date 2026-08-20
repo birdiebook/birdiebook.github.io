@@ -130,6 +130,9 @@
 <script src="./vendor/supabase-js.js"></script>
 <script src="./live.js"></script>
 <script src="./konto.js"></script>
+<!-- Spelarkatalogen (sql/inbjudan.sql). Måste ligga efter live.js — den lånar
+     den delade supabase-klienten. -->
+<script src="./inbjudan.js"></script>
 <!-- Molnets läsväg (MOLN_PLAN §6 V4a): en lyckad inloggning HÄR ska hämta hem
      hela historiken direkt, inte vänta till nästa gång spela.html öppnas. -->
 <script src="./version.js"></script>
@@ -311,6 +314,10 @@ function sammanfattningHtml(profil) {
          Planera hade den blandats med strategiarbetet. Här är den en lista man
          ser över någon gång per säsong. Flyttad hit från spela.html i steg 3. -->
     <div class="card" id="offline-tools"></div>
+    <!-- Sökbarheten i spelarkatalogen (inbjudan.js). Ligger intill kontot för
+         att den bara betyder något med ett molnkonto, men den är ett EGET val:
+         att ha ett konto är inte att gå med på att synas i andras sökningar. -->
+    <div class="card" id="katalog"></div>
     <!-- Kontot bor i Profil av samma skäl som offline-banorna: det är en
          inställning som gäller över tid, inte ett val i ögonblicket. Och det
          ligger SIST — appen fungerar fullt ut utan konto, så att möta en
@@ -334,7 +341,60 @@ function render() {
   // Offline-banorna finns bara i sammanfattningen, inte mitt i guiden.
   if (!steg && window.SGOffline) SGOffline.mount("offline-tools");
   if (!steg) monteraKonto();
+  if (!steg) monteraKatalog();
   koppla(profil);
+}
+
+/* ---------- hittas av andra (inbjudan.js) ----------
+   Katalogen är den enda plats i molnet där ett uid har ett läsbart namn, och
+   den enda anledningen till att "bjud in på namn" kan fungera alls. Men den är
+   ett VAL: den som stängt av sig går inte att hitta, och filtret sitter i
+   databasens RLS-policy, inte i klienten (se sql/inbjudan.sql). En katalog man
+   hamnar i av bara farten är ett publicerat medlemsregister.
+
+   Kortet är best effort precis som kontot: utan moln, utan namn eller utan
+   tabell säger det vad som gäller i stället för att stå tomt. */
+function monteraKatalog() {
+  const el = document.getElementById("katalog");
+  if (!el) return;
+  if (typeof Inbjudan === "undefined" || !Inbjudan.tillganglig()) {
+    el.innerHTML = `<h2>Hittas av andra</h2><p class="hint">Molnet är inte
+      tillgängligt just nu.</p>`;
+    return;
+  }
+  const namn = (Store.profile() || {}).namn;
+  if (!namn) {
+    el.innerHTML = `<h2>Hittas av andra</h2><p class="hint">Fyll i ditt namn
+      ovan, så kan de du spelar med bjuda in dig direkt i appen i stället för
+      att läsa upp en spelkod.</p>`;
+    return;
+  }
+  el.innerHTML = `<h2>Hittas av andra</h2><p class="hint">Läser …</p>`;
+  Inbjudan.minKatalograd().then(rad => {
+    const pa = !rad || rad.sokbar !== false;
+    el.innerHTML = `<h2>Hittas av andra</h2>
+      <button class="vippa" id="sokT" role="switch" aria-checked="${pa}">
+        <span class="txt">Sökbar på namn
+          <em>De du spelar med kan hitta <b>${esc(namn)}</b> och bjuda in dig
+            direkt i appen. Är den av fungerar bara spelkoden.</em></span>
+        <span class="knob"></span>
+      </button>`;
+    const knapp = document.getElementById("sokT");
+    if (!knapp) return;
+    knapp.onclick = () => {
+      const nu = knapp.getAttribute("aria-checked") === "true";
+      // Vippan slår om DIREKT och rullas tillbaka om servern säger nej. Att
+      // vänta på ett nätanrop innan reglaget rör sig känns som en trasig knapp;
+      // att låta det stå kvar fel vore att ljuga om vad som gäller.
+      knapp.setAttribute("aria-checked", String(!nu));
+      Inbjudan.sattSokbar(!nu).then(ok => {
+        if (!ok) knapp.setAttribute("aria-checked", String(nu));
+      });
+    };
+  }).catch(() => {
+    el.innerHTML = `<h2>Hittas av andra</h2><p class="hint">Kunde inte läsa
+      inställningen just nu.</p>`;
+  });
 }
 
 /* ---------- kontot (MOLN_PLAN §6 V1) ----------
@@ -571,7 +631,15 @@ function koppla(profil) {
   on("kon", "onchange", e => { Store.setProfile({ kon: e.target.value || null }); render(); });
   /* Namnet sparas UTAN render(): en omritning mitt i inmatningen skulle rycka
      fokus ur fältet. Spelprofil.normalisera trimmar strängen. */
-  on("namn", "onchange", e => { Store.setProfile({ namn: e.target.value }); });
+  on("namn", "onchange", e => {
+    const p = Store.setProfile({ namn: e.target.value });
+    // Katalogen bär namnet vidare till dem som ska kunna bjuda in mig. Utan
+    // detta hade en namnändring slagit igenom lokalt men inte i andras
+    // sökningar — och den glidningen är osynlig ända tills någon inte hittar
+    // mig. Tyst vid fel: namnet är sparat, det är sökbarheten som halkar efter.
+    if (typeof Inbjudan !== "undefined" && Inbjudan.tillganglig() && p && p.namn)
+      Inbjudan.synkaMig({ namn: p.namn }).catch(() => {});
+  });
 
   /* Kartinställningarna. De bor i localStorage och INTE i spelprofilen: de
      beskriver den här telefonens karta, inte spelaren — en gammal mobil med
