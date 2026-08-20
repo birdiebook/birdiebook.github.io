@@ -29,8 +29,12 @@ data/holes3d/
 # Intern dokumentation och utvecklingsverktyg. Inga hemligheter, men de svarade
 # 200 pa den publika domanen och det finns ingen anledning att servera dem.
 # Kontrollerat: inget i appen hamtar dem (bara omnamnda i kommentarer).
-CLAUDE.md
-GPS_ACCURACY_PLAN.md
+#
+# MONSTER, inte en uppraekning: raden stod forut som CLAUDE.md och
+# GPS_ACCURACY_PLAN.md, och nasta dokument som lades till blev publikt utan att
+# nagon valde det (OVERLAMNING_3D_FARG.md, 2026-08-20). Appen hamtar ingen
+# lokal .md - kontrollerat i hela tradet - sa monstret kostar ingenting.
+*.md
 serve.ps1
 sql/
 tests/

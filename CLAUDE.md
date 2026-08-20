@@ -46,23 +46,27 @@ då blir raden inte en konfliktmagnet mitt i arbetet. Konfliktar den ändå vid 
 merge: bygget är varken den ena grenens sträng eller den andras utan ett nytt,
 så skriv en ny som beskriver det samlade bygget.
 
-## Regel 3: en merge till `main` deployar ingenting
+## Regel 3: en push till `main` går ut till telefonen
 
-Appen bor på `https://birdiebook.johlsson-j.workers.dev` och deployas **för
-hand**, från datorn där källan ligger:
+`.github/workflows/deploy.yml` kör `wrangler deploy` mot
+`https://birdiebook.johlsson-j.workers.dev` vid varje push till `main`. Det är
+värden TestFlight-appen laddar. **Det som landar på `main` är alltså ute hos
+användaren några minuter senare** — behandla trunken därefter, och pusha inget
+dit du inte skulle vilja se på banan.
 
-```
-npx wrangler deploy
-```
+Två spärrar fäller deployen med flit i stället för att gå igenom halvt:
+frontend ändrad utan bumpad `version.js` (nödutgång: `[no-bump]` i
+commit-meddelandet), och saknad `CLOUDFLARE_API_TOKEN` /
+`CLOUDFLARE_ACCOUNT_ID`. Ett grönt jobb som inte deployade vore värre än ett
+rött.
 
-`pages.yml` är avsiktligt bara manuell, och `birdiebook.github.io` är en frusen
-kopia som enbart visar flyttbannern. Säg alltså aldrig "nu är det live" efter en
-push. Det du kan säga är att koden ligger på `main` och väntar på en deploy.
+**Actions-fliken är facit** för vad som faktiskt ligger uppe — inte den här
+filen, inte att pushen gick igenom. Säg "det är live" först när jobbet är
+grönt, aldrig efter en push. `npx wrangler deploy` från en dator fungerar
+fortfarande, men undvik det: då vet bara den som körde det vad som ligger uppe.
 
-En gren (`claude/golf-app-3d-colors-m7k241`) innehåller ett förslag på
-`deploy.yml` som gör push-till-main till en riktig deploy. Den är **inte**
-mergad, kräver två hemligheter i repot, och är ett beslut användaren ska ta
-medvetet — merga den inte i förbifarten.
+`pages.yml` är något helt annat och ska förbli manuell: `birdiebook.github.io`
+är en frusen kopia som bara visar flyttbannern i `boot.js`.
 
 ## Så verifierar du
 

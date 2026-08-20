@@ -64,6 +64,15 @@ jobs:
       # bumpa den fortsätter telefonen visa gammal kod — deployen är grön,
       # filerna ligger på servern, och ingenting syns. Det felet är osynligt
       # och dyrt, så det ska stoppas här och inte upptäckas på banan.
+      #
+      # KONTROLLEN SER BARA SISTA COMMITEN (HEAD~1..HEAD) — repot är 700 MB
+      # kartrutor, så full historik i varje deploy vore dyrt. För en merge är
+      # det ändå hela grenen, eftersom HEAD~1 då är förra main-tippen. Men en
+      # push med flera commits där bumpen ligger i en tidigare av dem faller ut
+      # som ett FALSKT STOPP. Det är den ofarliga riktningen — ingen odeployad
+      # bump slinker förbi, du får bara ett rött jobb — och det är precis vad
+      # regeln i CLAUDE.md säger: bumpa i SISTA commiten. Fastnar du ändå:
+      # lägg bumpen sist, eller skriv [no-bump].
       - name: version.js bumpad?
         run: |
           appfiler=$(git diff --name-only HEAD~1 HEAD -- '*.js' '*.html' '*.css' 'manifest.json' \
@@ -92,11 +101,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        # Wrangler är AVSIKTLIGT OPINNAD tills den första körningen visat
-        # vilken major som fungerar mot `compatibility_date` i wrangler.jsonc.
-        # Pinna sedan (t.ex. `wrangler@4`) — en deploy som byter verktygsversion
-        # av sig själv är inte en deploy man kan lita på.
-        run: npx --yes wrangler deploy
+        # Pinnad till major 4 (senaste vid pinningen: 4.124.0), som är den som
+        # gäller mot `compatibility_date` 2026-08-05 i wrangler.jsonc. Patchar
+        # och minors släpps igenom; en ny major tas medvetet.
+        #
+        # Skälet att inte lämna den öppen: en ny major kan ändra hur `assets`
+        # och `.assetsignore` tolkas, och det felet syns inte i loggen utan som
+        # en trasig app på telefonen. En deploy som byter verktygsversion av sig
+        # själv är inte en deploy man kan lita på.
+        run: npx --yes wrangler@4 deploy
 
       - name: Vad ligger uppe nu
         run: |
