@@ -22,19 +22,25 @@ på den frusna värden. Se kommentaren i `.github/workflows/pages.yml`.
 
 ## Deploya
 
-**Push till `main`.** Det är hela proceduren —
-`.github/workflows/deploy.yml` kör `wrangler deploy` mot produktionen, och
-Actions-fliken är facit för vad som ligger uppe. Kör den manuellt via "Run
-workflow" om du behöver deploya om utan en ny commit.
+**Inte härifrån.** Det här repot deployar ingenting, och kan inte göra det.
+Appens källa är `mobile/` i **`birdiebook/Golf-sg`**, och det är den mappens
+`.github/workflows/deploy.yml` som kör `wrangler deploy` mot produktionen — med
+hemligheterna på det repot. Läs `mobile/CLAUDE.md` där.
 
-Kräver två hemligheter under Settings → Secrets and variables → Actions:
-`CLOUDFLARE_API_TOKEN` och `CLOUDFLARE_ACCOUNT_ID`. Saknas de fallerar jobbet
-med flit — ett grönt jobb som inte deployade är värre än ett rött.
+Det stod länge något annat här, och det kostade en hel session (2026-08-23):
+en fix för bakgrunds-GPS:en byggdes och mergades i DET HÄR repot, som då hade
+en egen kopia av `deploy.yml`. Den kunde aldrig gå grön — hemligheterna ligger
+på `Golf-sg` och går inte att läsa härifrån — så koden låg på `main` i två
+dygn utan att någonsin nå telefonen, medan felsökningen letade efter en
+saknad nyckel i stället för efter fel hus. Kopian är borttagen nu. Skulle den
+gå grön vore det värre än att den är röd: två repon som deployar samma värd
+är precis den tvåvägsdelning som en gång gjorde att en grön bock kunde peka
+på fel produktion.
 
-Lokal deploy går fortfarande med `npx wrangler deploy`, men undvik det: då vet
-bara du vad som ligger uppe. `publish.ps1` nämns i `boot.js` som det som speglar
-`mobile/` — den filen ligger inte i det här repot, så kolla vilken kopia som är
-källa innan du ändrar här.
+**Ändringar i appen hör alltså hemma i `Golf-sg/mobile/`, inte här.** Det som
+ligger i det här repot är en frusen spegel av hur `mobile/` såg ut när Pages
+stängdes av; filerna har divergerat sedan dess. En ändring gjord här måste
+porteras för hand för att bli verklig, och den porteringen är inte gratis.
 
 **Bumpa alltid `version.js`.** Deployen stoppar dig om du glömmer det när
 frontendfiler ändrats (nödutgång: `[no-bump]` i commit-meddelandet). `sw.js`

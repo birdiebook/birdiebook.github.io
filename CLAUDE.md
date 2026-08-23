@@ -46,24 +46,32 @@ då blir raden inte en konfliktmagnet mitt i arbetet. Konfliktar den ändå vid 
 merge: bygget är varken den ena grenens sträng eller den andras utan ett nytt,
 så skriv en ny som beskriver det samlade bygget.
 
-## Regel 3: en push till `main` går ut till telefonen
+## Regel 3: en push till `main` går INTE ut till telefonen — inte härifrån
 
-`.github/workflows/deploy.yml` kör `wrangler deploy` mot
-`https://birdiebook.johlsson-j.workers.dev` vid varje push till `main`. Det är
-värden TestFlight-appen laddar. **Det som landar på `main` är alltså ute hos
-användaren några minuter senare** — behandla trunken därefter, och pusha inget
-dit du inte skulle vilja se på banan.
+**Det här repot deployar ingenting.** Appens källa är `mobile/` i
+`birdiebook/Golf-sg`, och deployen till
+`https://birdiebook.johlsson-j.workers.dev` (värden TestFlight-appen laddar)
+körs av det repots workflow, med hemligheterna på det repot.
 
-Två spärrar fäller deployen med flit i stället för att gå igenom halvt:
-frontend ändrad utan bumpad `version.js` (nödutgång: `[no-bump]` i
-commit-meddelandet), och saknad `CLOUDFLARE_API_TOKEN` /
-`CLOUDFLARE_ACCOUNT_ID`. Ett grönt jobb som inte deployade vore värre än ett
-rött.
+Regeln stod tvärtom här fram till 2026-08-23, och den formuleringen kostade en
+session: en fix för bakgrunds-GPS:en byggdes och mergades HÄR, mot en kopia av
+`deploy.yml` som låg i det här repot. Kopian föll varje gång på steget
+"Hemligheterna finns?" — `CLOUDFLARE_API_TOKEN` och `CLOUDFLARE_ACCOUNT_ID`
+ligger på `Golf-sg` och kan inte läsas härifrån — så koden låg på `main` utan
+att någonsin nå telefonen, och felsökningen letade efter en saknad nyckel i
+stället för efter fel repo. Kopian är borttagen.
 
-**Actions-fliken är facit** för vad som faktiskt ligger uppe — inte den här
-filen, inte att pushen gick igenom. Säg "det är live" först när jobbet är
-grönt, aldrig efter en push. `npx wrangler deploy` från en dator fungerar
-fortfarande, men undvik det: då vet bara den som körde det vad som ligger uppe.
+**Lägg inte tillbaka den, och lägg inte hemligheterna här.** En grön deploy
+från det här repot vore värre än den röda: två repon som skriver till samma
+Worker är den tvåvägsdelning som en gång gjorde att en grön bock kunde peka på
+fel produktion. Det står utförligt i `mobile/CLAUDE.md` i `Golf-sg`.
+
+**Det som ligger här är en frusen spegel** av hur `mobile/` såg ut när Pages
+stängdes av 2026-08-17, och filerna har divergerat sedan dess — `spela.html`
+mätbart, samma dag som ovanstående. Får du en uppgift om appens beteende:
+**säg till användaren att arbetet hör hemma i `Golf-sg/mobile/`** innan du
+ändrar en rad här. En ändring gjord här är inte live, och portering för hand är
+inte gratis.
 
 `pages.yml` är något helt annat och ska förbli manuell: `birdiebook.github.io`
 är en frusen kopia som bara visar flyttbannern i `boot.js`.
