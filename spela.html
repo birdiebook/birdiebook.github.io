@@ -295,6 +295,7 @@ function hole(n) { return Store.hole(n); }
 
 /* ---------- GPS ---------- */
 let lastFix = null, watching = false, busy = false, wakeLock = null;
+let avFix = null;                // avregistrerare från Geo.onFix (behövs av stopWatch)
 const fixBuf = [];              // ringbuffer av watch-fixar (senaste ~6 s)
 const FIX_WINDOW = 6000;        // hur långt bakåt bufferten sträcker sig (ms)
 const CAPTURE_COLLECT_MS = 5000; // samla fixar så här länge EFTER tryck (konvergens)
@@ -321,6 +322,14 @@ async function requestWakeLock() {
     wakeLock.addEventListener("release", () => { wakeLock = null; });
   } catch (e) { /* nekad/ej stödd — GPS funkar ändå, ignorera */ }
 }
+// Motparten till requestWakeLock. Förr släpptes låset bara av att sidan
+// försvann; med stopWatch() finns ett läge där rundan är slut men sidan lever
+// kvar (avslutsvyn, molnsvepet), och då ska skärmen få slockna som vanligt.
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  const l = wakeLock; wakeLock = null;
+  try { l.release(); } catch (e) { /* redan släppt av OS — strunt samma */ }
+}
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && watching) requestWakeLock();
 });
@@ -329,12 +338,35 @@ document.addEventListener("visibilitychange", () => {
 // nedanför — ringbuffert, pickBest, medianfilter, acc-vakt — är oförändrat och
 // ligger med flit KVAR här: det är den delade logiken som webb och native-skal
 // ska ha gemensam.
+// VILLKORET FÖR ATT GPS ÖVERHUVUDTAGET SKA GÅ är en aktiv runda, och det står
+// här inne — inte bara hos anroparen. I native-skalet är den här strömmen en
+// bakgrundssession (geo.js §native): startas den utan runda ligger telefonen
+// och loggar position åt ingen, vilket är både batteriet och integriteten.
+// Anroparen nedan kollar redan Store.active(); raden finns för att nästa
+// anropare inte ska behöva komma ihåg det.
 function startWatch() {
   if (watching || !Geo.available()) return;
+  if (!Store.active()) return;
   watching = true;
   requestWakeLock();
-  Geo.onFix(f => { lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip(); });
+  avFix = Geo.onFix(f => { lastFix = f; fixBuf.push(f); pruneBuf(f.ts); updateGpsChip(); });
   Geo.start();
+}
+
+// Motsvarigheten till startWatch — och den saknades ända till 2026-08-23:
+// `Geo.stop()` fanns, men ingenting i appen anropade den. Rundan tog slut,
+// sidan navigerade vidare, och i native-skalet fortsatte pluginens
+// bakgrundswatch att leva utanför både rundan och sidan (se geo.js).
+//
+// Anropas därför på ALLA vägar ut ur en runda: "Spara & avsluta" och "Ta bort
+// runda". Sidbyten täcks av geo.js egen städning, som når även collectFix
+// egen ström.
+function stopWatch() {
+  if (!watching) return;
+  watching = false;
+  if (avFix) { avFix(); avFix = null; }
+  Geo.stop();
+  releaseWakeLock();
 }
 
 const median = arr => {
@@ -817,6 +849,10 @@ function renderSummary() {
     btn.disabled = true; btn.textContent = "Sparar …";
     try { await enrichSharedPins(); } catch (err) {}   // matchens delade pins innan export
     await Store.finishRound();
+    // Rundan är slut i samma ögonblick — då ska GPS:en vara det också, INNAN
+    // molnsvepet nedan (det kan ta sekunder på dåligt nät, och det finns inget
+    // skäl att ligga och logga position under tiden).
+    stopWatch();
     // Utlösare 1/3 för molnsvepet (MOLN_PLAN §6 V2b): rundan är nu "finished"
     // i Store och saknar moln.sant. Tyst vid fel/utan nät — nästa svep
     // (appstart eller online-event) tar den då i stället. Vi INVÄNTAR svepet
@@ -830,6 +866,7 @@ function renderSummary() {
     // aldrig uppladdad (svepet plockar bara "finished") — det som raderas finns
     // bara i telefonen, och då finns det ingenstans efteråt.
     if (!confirm("Ta bort rundan? Den raderas från telefonen och går inte att få tillbaka.")) return;
+    stopWatch();                       // ingen runda kvar att logga i
     const id = S.id || Store.activeId();
     Store.remove(id).then(() => { setView("setup"); location.href = "./index.html"; });
   };

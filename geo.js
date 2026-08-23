@@ -24,6 +24,12 @@
  * fetch. Wake Lock hör INTE hit — den är apppolicy ("håll skärmen tänd medan en
  * runda pågår"), inte en egenskap hos positionskällan.
  *
+ * STRÖMMENS LIVSLÄNGD ligger däremot här, och det är inte samma sak som
+ * apppolicy: VEM som får starta strömmen är rundans fråga (spela.html startar
+ * bara med aktiv runda), men att en startad ström aldrig får bli kvar efter
+ * sidan som startade den är en egenskap hos källan. I native-skalet överlever
+ * den nämligen webbvyn — se städningen vid `beforeunload` nedan.
+ *
  * ETT undantag från "ingen DOM": skärmläget. N3 stryper huvudströmmen när
  * skärmen är släckt, och VILKEN TAKT källan levererar i är en egenskap hos
  * källan — inte hos vyn (NATIVE_APP_PLAN §N3). Modulen lyssnar därför på
@@ -241,6 +247,11 @@ const Geo = (() => {
 
   /* ---------- egen ström (en per slagtryck) ---------- */
 
+  /* Levande handtag från `watch()`. Finns bara för städningen nedan: en ström
+     som ingen hann stänga är på webben en glömd watch, men i native-skalet en
+     bakgrundssession som ligger kvar utanför rundan. */
+  const egnaStrommar = new Set();
+
   /* På webben en RIKTIG andra watch. I native-skalet (N3) blir detta en
      prenumeration på den varma strömmen i stället — samma signatur, samma
      anropare, ingen ändring ovanför lagret. */
@@ -254,9 +265,54 @@ const Geo = (() => {
       p => { if (cbFix) cbFix(fixAv(p)); },
       e => { if (onError) onError(felAv(e)); },
       STROM_OPT);
-    return {
-      stop() { if (id !== null) { g.clearWatch(id); id = null; } },
+    const h = {
+      stop() {
+        egnaStrommar.delete(h);
+        if (id !== null) { g.clearWatch(id); id = null; }
+      },
     };
+    egnaStrommar.add(h);
+    return h;
+  }
+
+  /* ---------- städning när sidan lämnas ----------
+
+     Appen är sidor, inte en enda vy: varje flikbyte river JS-kontexten. På
+     webben spelar det ingen roll — webbläsaren stänger sina egna watchar med
+     dokumentet. I native-skalet lever strömmen NEDANFÖR webbvyn: pluginen har
+     fått ett `addWatcher` och håller en bakgrundssession tills någon säger
+     `removeWatcher`. Ingen säger det när kontexten dör, och id:t vi hade
+     behövt dör med den — nästa sidladdning KAN ALLTSÅ INTE städa upp efter den
+     förra. Enda tillfället att säga stopp är innan vi går.
+
+     Det är den här raden som gör "GPS bara under runda" till något mer än en
+     avsikt: utan den räcker det att spelaren avslutar rundan och navigerar
+     vidare för att telefonen ska fortsätta ligga i bakgrundsläge — utan runda,
+     utan sida, och utan något kvar i appen som kan stänga av den.
+
+     `beforeunload`, INTE `pagehide`: det förra fyras bara när dokumentet
+     faktiskt lämnas, det senare även när systemet fryser sidan för att appen
+     gick i bakgrunden. Att stänga strömmen just då vore att stänga av precis
+     det etappen finns för (N3, skärmen släckt mitt i rundan) — ett fel som är
+     osynligt vid datorn och upptäcks på banan.
+
+     `pageshow` med `persisted` är vägen tillbaka: kommer spelaren bakåt till
+     en sida ur bfcachen lever kontexten och lyssnarna vidare, och då ska
+     strömmen starta om av sig själv. */
+
+  let stoppadAvSidbyte = false;
+
+  function slappVidSidbyte() {
+    stoppadAvSidbyte = igang();
+    stop();
+    for (const h of [...egnaStrommar]) h.stop();
+  }
+
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("beforeunload", slappVidSidbyte);
+    window.addEventListener("pageshow", e => {
+      if (e && e.persisted && stoppadAvSidbyte) { stoppadAvSidbyte = false; start(); }
+    });
   }
 
   /* ---------- engångsfix ---------- */
@@ -292,6 +348,7 @@ const Geo = (() => {
            _useSource(g) {
              injicerad = g; huvudId = null; lyssnare.clear();
              skarmSynlig = true; sistUtskickad = 0;
+             egnaStrommar.clear(); stoppadAvSidbyte = false;
              nativeKalla = null;   // annars läcker en tidigare adapter in i nästa prov
            },
            /* Bara för testerna: tvinga om-uppslaget av native-källan så ett prov
